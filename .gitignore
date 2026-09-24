@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 .superpowers/
 _site/
+
+# Originales de la biblioteca de fotos (28 MB): se publican sus copias reducidas en img/fotos-verificadas
+img/aviones-comerciales-verificados/

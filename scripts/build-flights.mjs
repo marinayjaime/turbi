@@ -32,7 +32,8 @@ async function main() {
   const mode = pickMode();
   console.log(`Modo: ${mode}`);
   await rm(SITE, { recursive: true, force: true });
-  for (const f of APP_FILES) await cp(f, `${SITE}/${f}`, { recursive: true });
+  // Los originales de la biblioteca de fotos (img/aviones-comerciales-verificados) no se publican: solo sus copias reducidas.
+  for (const f of APP_FILES) await cp(f, `${SITE}/${f}`, { recursive: true, filter: src => !src.includes('aviones-comerciales-verificados') });
 
   const { entries, failed } = await fetchAena(mode === 'live');
   const aenaOk = entries.length > 0 && failed.length < AIRPORTS.length; // más de la mitad de las descargas bien

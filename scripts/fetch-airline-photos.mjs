@@ -4,9 +4,10 @@
 // 3. Revisión a mano: en cada combinación, «pick» = índice de la candidata que muestra claramente un avión de esa
 //    aerolínea y ese modelo, o null si ninguna vale. Solo se publican las revisadas («reviewed»: true).
 // 4. Fotos propias: img/fotos/«CÓDIGO Modelo.jpg» (p. ej. «FR Boeing 737-800.jpg»); tienen prioridad.
+//    Y la biblioteca verificada img/aviones-comerciales-verificados (Aerolínea/Modelo/foto.jpg + CSV), aún más prioritaria.
 // 5. node scripts/fetch-airline-photos.mjs --publish → data/airline-photos.json (lo que carga la app)
 // Sin foto de esa aerolínea con ese modelo, la app no muestra ninguna: nunca una de otra aerolínea ni «de ejemplo».
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 const UA = 'Turbi/1.0 (+https://github.com/marinayjaime/turbi)';
@@ -15,6 +16,9 @@ const OUT = 'data/airline-photos-candidates.json';
 const PUBLISHED = 'data/airline-photos.json';
 const COMBOS = 'data/airline-combos.json';
 const OWN = 'img/fotos';
+// Biblioteca verificada de Jaime (Aerolínea/Modelo/foto.jpg + FUENTES_Y_LICENCIAS.csv): prioridad máxima.
+const LIB = 'img/aviones-comerciales-verificados';
+const LIB_OUT = 'img/fotos-verificadas';
 
 // Cómo llama Commons a cada modelo (varias formas posibles).
 const MODEL_NAMES = {
@@ -132,6 +136,23 @@ export async function resolve({ name, model }) {
   return null;
 }
 
+// CSV con comillas (los autores y las páginas llevan comas).
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') quoted = false; else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); if (row.some(Boolean)) rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
 function publish() {
   const combos = JSON.parse(readFileSync(COMBOS, 'utf8'));
   const all = JSON.parse(readFileSync(OUT, 'utf8'));
@@ -148,6 +169,21 @@ function publish() {
       if (!m || !MODEL_NAMES[m[2]]) { console.warn(`img/fotos/${file}: el nombre debe ser «CÓDIGO Modelo.jpg» (p. ej. «FR Boeing 737-800.jpg»)`); continue; }
       execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '75', '--resampleWidth', '1200', `${OWN}/${file}`, '--out', `${OWN}/${file}`], { stdio: 'ignore' });
       photos[`${m[1].toUpperCase()}|${m[2]}`] = { thumb: `${OWN}/${encodeURIComponent(file)}` };
+    }
+  }
+  // Biblioteca verificada: copias reducidas a 1000 px en img/fotos-verificadas, con autor y licencia de su CSV.
+  if (existsSync(`${LIB}/FUENTES_Y_LICENCIAS.csv`)) {
+    mkdirSync(LIB_OUT, { recursive: true });
+    const [head, ...rows] = parseCsv(readFileSync(`${LIB}/FUENTES_Y_LICENCIAS.csv`, 'utf8').replace(/^\uFEFF/, ''));
+    const col = name => head.indexOf(name);
+    for (const r of rows) {
+      const code = r[col('CODIGO_OPERADOR')], model = r[col('MODELO')];
+      const src = `${LIB}/${r[col('ARCHIVO')]}`;
+      if (!code || !model || !existsSync(src)) continue;
+      const name = `${code} ${model}.jpg`.replace(/[/\\]/g, '-');
+      const out = `${LIB_OUT}/${name}`;
+      if (!existsSync(out)) execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '72', '--resampleWidth', '1000', src, '--out', out], { stdio: 'ignore' });
+      photos[`${code}|${model}`] = { thumb: `${LIB_OUT}/${encodeURIComponent(name)}`, artist: r[col('AUTOR')], license: r[col('LICENCIA')], page: r[col('PAGINA_FUENTE')] };
     }
   }
   const airlines = Object.fromEntries(combos.filter(c => c.name).map(c => [c.op, c.name]));
