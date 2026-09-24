@@ -16,7 +16,7 @@ describe('buildLegs', () => {
     expect(legs).toEqual([{
       al: 'IB', icao: 'IBE', name: 'Iberia', n: '1668',
       d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T17:55',
-      sa: '19:25', ea: '2026-09-24T19:25', td: 'N', ta: '4', g: 'D', st: 'SCH', ac: 'A21N',
+      sa: '19:25', ea: '2026-09-24T19:25', td: 'N', ta: '4', g: 'D', st: 'SCH', std: 'SCH', sta: null, ac: 'A21N',
     }]);
   });
   it('llegada al día siguiente se une con la salida de la noche anterior', () => {
@@ -41,6 +41,12 @@ describe('buildLegs', () => {
     ]);
     expect(legs.find(l => l.a === 'LHR')).toMatchObject({ o: 'PMI', sd: '17:55', sa: null, ea: null, ta: null });
     expect(legs.find(l => l.al === 'LH')).toMatchObject({ n: '42', o: 'FRA', a: 'PMI', d: '2026-09-24', sd: null, ed: null, sa: '12:10', ea: '2026-09-24T12:40', g: null });
+  });
+  it('guarda el estado de salida y el de llegada por separado; «Finalizado» de salida lo sustituye la llegada en curso', () => {
+    const [l] = buildLegs([dep({ estado: 'BOR' }), arr({ estado: 'FLY' })]);
+    expect(l).toMatchObject({ std: 'BOR', sta: 'FLY', st: 'FLY' });
+    const [m] = buildLegs([dep({ estado: 'BOR' }), arr({ estado: 'SCH' })]);
+    expect(m).toMatchObject({ std: 'BOR', sta: 'SCH', st: 'BOR' });
   });
   it('estado de la llegada sustituye a uno de salida sin información', () => {
     const [l] = buildLegs([dep({ estado: '' }), arr({ estado: 'ATE' })]);

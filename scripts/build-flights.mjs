@@ -4,6 +4,7 @@ import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
 import { buildLegs, mergeLegs, shardLegs, patchFailed } from './aena.mjs';
 import { fetchMissingLogos } from './fetch-logos.mjs';
 import { buildAviation } from './build-aviation.mjs';
+import { buildPunctuality } from './build-punctuality.mjs';
 import { readFile } from 'node:fs/promises';
 
 const SITE = '_site';
@@ -113,6 +114,17 @@ async function main() {
   const codes = [...new Set(Object.keys(files).map(p => p.split('/')[0]))];
   const saved = await fetchMissingLogos(codes, { dir: new URL(`../${SITE}/img/logos/`, import.meta.url) });
   if (saved) console.log(`Logos nuevos: ${saved} (añádelos al repo con: node scripts/fetch-logos.mjs)`);
+
+  // Histórico de puntualidad (rama «data»). Opcional: un fallo aquí nunca impide publicar.
+  try {
+    const r = await buildPunctuality({
+      entries: aenaOk ? entries : [], legs: aenaOk ? buildLegs(entries) : [],
+      storeDir: process.env.PUNCTUALITY_STORE ?? 'store', outDir: `${SITE}/data/punctuality`, today: madridDate(0),
+    });
+    console.log(`Puntualidad: ${r.records} vuelos en el histórico, ${r.changedDays} días actualizados, ${r.flights} números con datos`);
+  } catch (err) {
+    console.warn(`Puntualidad: ${err.message}`);
+  }
 
   // METAR/TAF/SIGMET/PIREP (opcional: un fallo aquí nunca impide publicar).
   try {
