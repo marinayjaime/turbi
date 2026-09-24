@@ -13,7 +13,11 @@
 }
 
 * { box-sizing: border-box; }
-html { background: url('../img/sky.jpg') center top / cover no-repeat; }
+/* En la app instalada, iOS no deja que la capa fija llegue al borde inferior: esa franja la pinta el fondo de la página.
+   Por eso la foto del fondo de la página mide siempre 1,5 veces el alto de la pantalla (y al menos su ancho).
+   La foto es 3:4 (1170 × 1560): 150lvh de alto = 112,5lvh de ancho. */
+html { background: url('../img/sky.jpg') center top / max(100vw, 112.5vh) auto no-repeat;
+  background-size: max(100vw, 112.5lvh) auto; }
 body { margin: 0; background: transparent; color: var(--text); }
 /* Foto de fondo fija y más alta que la pantalla (1,5 veces), para que llegue siempre hasta abajo. */
 body::before {
@@ -41,6 +45,10 @@ main {
   padding: calc(env(safe-area-inset-top) + 16px) 20px calc(env(safe-area-inset-bottom) + 32px);
 }
 [hidden] { display: none !important; }
+/* Pantalla de inicio: el panel centrado en vertical. */
+#query-view { min-height: calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 48px);
+  display: flex; flex-direction: column; justify-content: center; }
+#query-view > form { margin-top: 0; }
 
 /* Recuadro de consulta: logo arriba y centrado, con más aire. */
 #query-form { padding: 28px 22px 22px; margin-top: 12px; }
