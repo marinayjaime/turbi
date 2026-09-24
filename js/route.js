@@ -22,12 +22,14 @@ function intermediatePoint(a, b, f) {
   return { lat: toDeg(Math.atan2(z, Math.hypot(x, y))), lon: toDeg(Math.atan2(y, x)) };
 }
 
-export function buildRoute(origin, destination, departureMs) {
+// durationMin opcional: duración real del horario; si no, se estima por la distancia.
+export function buildRoute(origin, destination, departureMs, durationMin = null) {
   const km = distanceKm(origin, destination);
   if (km < 1) throw new Error('Origen y destino son el mismo aeropuerto');
 
-  const durationMin = Math.round(km / 800 * 60 + 30);
-  const n = Math.max(10, Math.round(km / 50) + 1);
+  if (!(durationMin > 0)) durationMin = Math.round(km / 800 * 60 + 30);
+  // Un punto cada ~50 km, entre 10 y 40 (más puntos agotan el cupo por minuto de Open-Meteo).
+  const n = Math.min(40, Math.max(10, Math.round(km / 50) + 1));
   const climbMin = durationMin < 60 ? durationMin * 0.4 : 20;
   const descentMin = durationMin < 60 ? durationMin * 0.4 : 25;
 

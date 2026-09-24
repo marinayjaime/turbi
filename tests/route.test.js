@@ -48,6 +48,20 @@ describe('buildRoute', () => {
     }
   });
 
+  it('usa la duración real si se la dan (horario de Aena)', () => {
+    const r = buildRoute(PMI, MAD, DEP, 90);
+    expect(r.durationMin).toBe(90);
+    expect(r.arrivalMs).toBe(DEP + 90 * 60000);
+    expect(r.points.at(-1).min).toBe(90);
+    // duración absurda (≤ 0) → se ignora y se estima
+    expect(buildRoute(PMI, MAD, DEP, 0).durationMin).toBe(buildRoute(PMI, MAD, DEP).durationMin);
+  });
+
+  it('vuelos largos: como máximo 40 puntos (cupo de Open-Meteo)', () => {
+    const FRA = { lat: 50.0333, lon: 8.5706 }, JFK = { lat: 40.6398, lon: -73.7789 };
+    expect(buildRoute(FRA, JFK, DEP).points.length).toBe(40);
+  });
+
   it('lanza error si origen y destino coinciden', () => {
     expect(() => buildRoute(PMI, PMI, DEP)).toThrow('Origen y destino son el mismo aeropuerto');
   });

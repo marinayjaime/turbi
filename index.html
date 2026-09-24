@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#1d5f8c">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Turbi">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="manifest" href="manifest.json">
@@ -17,7 +17,7 @@
     <header class="top"><h1>Turbi</h1></header>
 
     <section id="query-view">
-      <form id="query-form" autocomplete="off" novalidate>
+      <form id="query-form" class="panel" autocomplete="off" novalidate>
         <label class="field" id="number-field">
           <span>Nº de vuelo</span>
           <input id="f-number" autocapitalize="characters" spellcheck="false" placeholder="VY3902">
@@ -30,29 +30,29 @@
         </div>
         <div class="row">
           <label class="field"><span>Fecha</span><input id="f-date" type="date"></label>
-          <label class="field"><span>Salida (hora local)</span><input id="f-time" type="time"></label>
+          <label class="field" id="time-field" hidden><span>Salida (hora local)</span><input id="f-time" type="time"></label>
         </div>
         <p id="notice" class="notice" hidden></p>
-        <button type="submit" class="primary">Consultar</button>
+        <button type="submit" class="primary">Buscar</button>
         <button type="button" id="toggle-manual" class="link">Introducir a mano</button>
       </form>
       <datalist id="airports-list"></datalist>
-      <section id="history" hidden>
+      <section id="history" class="panel" hidden>
         <h3>Últimos vuelos</h3>
         <ul id="history-list"></ul>
       </section>
     </section>
 
     <section id="result-view" hidden>
-      <button type="button" id="back" class="link">‹ Nueva consulta</button>
-      <div id="result"></div>
+      <button type="button" id="back" class="link on-sky">‹ Nueva consulta</button>
+      <div id="result" class="panel"></div>
       <div class="actions">
         <button type="button" id="change-time" class="secondary">Cambiar hora</button>
         <button type="button" id="refresh" class="secondary">Actualizar</button>
       </div>
     </section>
 
-    <div id="loading" hidden><div class="spinner"></div><p>Consultando el pronóstico…</p></div>
+    <div id="loading" class="panel" hidden><div class="spinner"></div><p>Consultando el pronóstico…</p></div>
     <div id="error" class="error" hidden>
       <p id="error-msg"></p>
       <button type="button" id="retry" class="link">Reintentar</button>

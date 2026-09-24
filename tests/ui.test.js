@@ -11,3 +11,17 @@ describe('ui helpers', () => {
     expect(timeTicks(300)).toEqual([0, 60, 120, 180, 240, 300]);
   });
 });
+
+import { formatDuration, dateLabel } from '../js/ui.js';
+
+describe('ficha del vuelo', () => {
+  it('formatDuration', () => {
+    expect(formatDuration(90)).toBe('1h 30min');
+    expect(formatDuration(45)).toBe('45min');
+    expect(formatDuration(120)).toBe('2h');
+  });
+  it('dateLabel en español', () => {
+    expect(dateLabel('2026-09-24')).toBe('jue, 24 sept');
+    expect(dateLabel('2026-10-03')).toBe('sáb, 3 oct');
+  });
+});

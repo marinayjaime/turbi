@@ -40,6 +40,7 @@ export async function fetchLocations(locs, startMs, endMs, fetchFn = fetch) {
   const results = [];
   for (let i = 0; i < locs.length; i += CHUNK) {
     const res = await fetchFn(forecastUrl(locs.slice(i, i + CHUNK), startMs, endMs));
+    if (res.status === 429) throw new Error('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
     if (!res.ok) throw new Error(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
     const json = await res.json();
     results.push(...(Array.isArray(json) ? json : [json]));

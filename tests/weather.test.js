@@ -62,6 +62,11 @@ describe('fetchLocations', () => {
     expect(f).toHaveBeenCalledTimes(2);
     expect(r).toHaveLength(150);
   });
+  it('429: mensaje de esperar un minuto', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 429 }));
+    await expect(fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f))
+      .rejects.toThrow('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
+  });
   it('lanza error legible si Open-Meteo falla', async () => {
     const f = vi.fn(async () => ({ ok: false, status: 503 }));
     await expect(fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f))

@@ -5,7 +5,7 @@ import { buildLegs, mergeLegs, shardLegs } from './aena.mjs';
 
 const SITE = '_site';
 const PAGES_URL = process.env.PAGES_URL ?? 'https://marinayjaime.github.io/turbi/';
-const APP_FILES = ['index.html', 'manifest.json', 'sw.js', '.nojekyll', 'css', 'js', 'icons', 'data/airports.json'];
+const APP_FILES = ['index.html', 'manifest.json', 'sw.js', '.nojekyll', 'css', 'js', 'icons', 'img', 'data/airports.json'];
 const AIRPORTS = [
   'MAD', 'BCN', 'PMI', 'AGP', 'ALC', 'LPA', 'TFS', 'IBZ', 'TFN', 'VLC', 'SVQ', 'BIO', 'ACE', 'FUE', 'MAH',
   'SCQ', 'GRO', 'REU', 'XRY', 'VGO', 'OVD', 'SDR', 'LEI', 'RMU', 'GRX', 'ZAZ', 'SPC', 'VIT', 'PNA', 'GMZ',
