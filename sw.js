@@ -1,10 +1,10 @@
 // Network-first para los archivos propios (así las actualizaciones llegan al momento),
 // con la caché como respaldo sin conexión. Las APIs externas no pasan por aquí.
-const CACHE = 'turbi-v4';
+const CACHE = 'turbi-v5';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.json',
   'js/app.js', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
-  'js/flight.js', 'js/airports.js', 'js/places.js', 'js/history.js', 'js/schedule.js',
+  'js/flight.js', 'js/airports.js', 'js/places.js', 'js/schedule.js',
   'data/airports.json', 'img/sky.jpg', 'icons/icon-32.png', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

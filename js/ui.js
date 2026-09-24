@@ -99,18 +99,3 @@ export function renderResult(el, view) {
     </div>
     <ul class="cards">${cards}</ul>`;
 }
-
-export function renderHistory(listEl, entries, onPick) {
-  listEl.innerHTML = '';
-  for (const e of entries) {
-    const li = document.createElement('li');
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'history-item';
-    btn.innerHTML = `<strong>${esc(e.number || `${e.origin.iata} → ${e.destination.iata}`)}</strong>
-      <span>${esc(e.origin.iata)} → ${esc(e.destination.iata)} · ${esc(e.date)} ${esc(e.time)}</span>`;
-    btn.addEventListener('click', () => onPick(e));
-    li.append(btn);
-    listEl.append(li);
-  }
-}

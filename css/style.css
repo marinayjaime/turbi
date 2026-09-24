@@ -74,14 +74,6 @@ button { font: inherit; cursor: pointer; }
 .error p { margin: 0; }
 .error .link { margin: 8px 0 0; padding: 0; }
 
-#history-list { list-style: none; margin: 0; padding: 0; }
-#history-list li:last-child .history-item { border-bottom: 0; }
-.history-item {
-  width: 100%; text-align: left; border: 0; background: none; padding: 12px 0;
-  border-bottom: 1px solid var(--line); font: inherit; display: flex; flex-direction: column; gap: 2px;
-}
-.history-item strong { font-size: 17px; color: var(--text); }
-.history-item span { font-size: 14px; color: var(--muted); }
 
 .summary .route { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
 .summary .sub { color: var(--muted); margin: 4px 0 20px; font-size: 15px; }

@@ -6,16 +6,14 @@ import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus } from './schedule.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
-import { loadHistory, saveToHistory } from './history.js';
-import { renderResult, renderHistory, esc } from './ui.js';
+import { renderResult, esc } from './ui.js';
 
 const $ = id => document.getElementById(id);
 const els = {
   queryView: $('query-view'), resultView: $('result-view'), form: $('query-form'),
   number: $('f-number'), origin: $('f-origin'), destination: $('f-destination'),
   date: $('f-date'), time: $('f-time'), manual: $('manual'), toggleManual: $('toggle-manual'),
-  notice: $('notice'), airportsList: $('airports-list'), history: $('history'),
-  historyList: $('history-list'), result: $('result'), back: $('back'),
+  notice: $('notice'), airportsList: $('airports-list'), result: $('result'), back: $('back'),
   changeTime: $('change-time'), refresh: $('refresh'), loading: $('loading'), error: $('error'),
   errorMsg: $('error-msg'), retry: $('retry'), timeField: $('time-field'),
 };
@@ -55,21 +53,6 @@ function setManual(on, message = '') {
   els.number.closest('.field').hidden = on;
   els.toggleManual.textContent = on ? 'Buscar por nº de vuelo' : 'Introducir a mano';
   setTimeNeeded(on, message);
-}
-
-function refreshHistory() {
-  const entries = loadHistory();
-  els.history.hidden = entries.length === 0;
-  renderHistory(els.historyList, entries, entry => {
-    setManual(!entry.number);
-    if (entry.number && entry.kind !== 'schedule') setTimeNeeded(true);
-    els.number.value = entry.number || '';
-    els.origin.value = entry.origin.iata;
-    els.destination.value = entry.destination.iata;
-    els.date.value = entry.date;
-    els.time.value = entry.time;
-    submit();
-  });
 }
 
 async function airports() {
@@ -179,10 +162,6 @@ async function run(q) {
     if (stale()) return;
     const { segments, verdict } = analyze(route, weather);
 
-    const time = formatLocal(departureMs, oTz);
-    saveToHistory({ id: `${q.number || 'manual'}-${q.origin.iata}-${q.destination.iata}-${q.date}-${time}`,
-      kind: q.kind ?? 'manual', number: q.number, origin: q.origin, destination: q.destination, date: q.date, time });
-
     const view = {
       title: `${q.origin.iata} → ${q.destination.iata}`,
       subtitle: [q.number, q.airline].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
@@ -239,7 +218,7 @@ for (const input of [els.origin, els.destination]) {
   });
 }
 
-els.back.addEventListener('click', () => { setNotice(); refreshHistory(); show('query'); });
+els.back.addEventListener('click', () => { setNotice(); show('query'); });
 els.changeTime.addEventListener('click', () => { setTimeNeeded(true); show('query'); els.time.focus(); });
 // Actualizar vuelve a pedir el horario (retrasos, puerta, estado).
 els.refresh.addEventListener('click', () => (lastQuery?.kind === 'schedule' ? submit() : lastQuery && run(lastQuery)));
@@ -249,6 +228,7 @@ els.retry.addEventListener('click', () => lastQuery && run(lastQuery));
 const now = new Date();
 els.date.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 els.time.value = `${String((now.getHours() + 1) % 24).padStart(2, '0')}:00`;
-refreshHistory();
+// Borra el historial que guardaban versiones anteriores.
+try { localStorage.removeItem('turbi.history'); } catch { /* sin almacenamiento */ }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
