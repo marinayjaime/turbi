@@ -133,13 +133,28 @@ export function componentScores(diag, ctx) {
     shear: anchorScale(diag.shearKt, ANCHORS.shear),
     ri: isNum(diag.ri) || diag.ri === Infinity ? anchorScale(-diag.ri, ANCHORS.riInv) : null,
     w: anchorScale(diag.w, ANCHORS.w),
-    cape: anchorScale(ctx.cape, ANCHORS.cape),
+    // El CAPE es energía potencial: sin chubascos ni tormentas previstas (código WMO < 80) no pasa de ligera.
+    cape: isNum(ctx.cape) ? Math.min(anchorScale(ctx.cape, ANCHORS.cape), isNum(ctx.weather_code) && ctx.weather_code >= 80 ? 100 : 49) : null,
     storm: stormScore,
     mountain,
   };
 }
 
 const maxOf = xs => (xs.length ? Math.max(...xs) : null);
+
+// Techo convectivo aproximado (FL) según el CAPE de superficie: 1000 J/kg ≈ FL300, 2000 ≈ FL350,
+// con tope en la tropopausa típica de latitudes medias (≈ FL400). Heurística documentada.
+export function convectiveTopFL(cape) {
+  return isNum(cape) ? Math.min(400, 250 + cape / 20) : null;
+}
+
+// Fracción de la convección que alcanza un nivel: completa hasta el techo y se desvanece en 50 FL por encima.
+function convectiveReach(fl, cape) {
+  if (fl < LOW_FL) return 1;
+  const top = convectiveTopFL(cape);
+  if (top === null) return 0;
+  return fl <= top ? 1 : Math.max(0, 1 - (fl - top) / 50);
+}
 
 // ctx = { fl, cape (J/kg sin escalar), windMax (m/s) }
 export function turbiIndex(c, ctx) {
@@ -157,7 +172,7 @@ export function turbiIndex(c, ctx) {
   })();
 
   const high = ctx.fl >= LOW_FL;
-  const reach = !high ? 1 : ctx.cape >= 2000 ? 1 : ctx.cape >= 1000 ? 0.6 : 0.3;
+  const reach = convectiveReach(ctx.fl, ctx.cape);
   const effective = {
     ellrod: c.ellrod, shear: c.shear, ri: c.ri, w: c.w,
     cape: isNum(c.cape) ? c.cape * reach : null,

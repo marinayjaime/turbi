@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  anchorScale, gradient, layerDiagnostics, componentScores, turbiIndex, pointForecast, altitudeForecast, flToPressure, CAUSE_LABELS,
+  anchorScale, gradient, layerDiagnostics, componentScores, turbiIndex, pointForecast, altitudeForecast, flToPressure, CAUSE_LABELS, convectiveTopFL,
 } from '../js/turbi-index.js';
 import { LAYERS } from '../js/altitude.js';
 
@@ -95,6 +95,11 @@ describe('componentScores', () => {
     const c = componentScores({ ti1: 8, shearKt: 5, ri: 1, w: 2, windMax: 45 }, { cape: 1000, weather_code: 95, elevation: 2000, wind700: 25 });
     expect(c).toEqual({ ellrod: 50, shear: 25, ri: 50, w: 75, cape: 50, storm: 75, mountain: 50 });
   });
+  it('CAPE sin chubascos ni tormentas previstas: como mucho ligera (49)', () => {
+    expect(componentScores({}, { cape: 3000, weather_code: 1 }).cape).toBe(49);
+    expect(componentScores({}, { cape: 3000, weather_code: 80 }).cape).toBeGreaterThan(49);
+    expect(componentScores({}, { cape: 300, weather_code: 1 }).cape).toBe(15);
+  });
   it('Ri: grande → 0, negativo (capa inestable) → 75, infinito → 0', () => {
     expect(componentScores({ ri: 10 }, {}).ri).toBe(0);
     expect(componentScores({ ri: -0.2 }, {}).ri).toBe(75);
@@ -132,10 +137,19 @@ describe('turbiIndex', () => {
   it('CAT con diagnósticos ausentes: renormaliza los pesos', () => {
     expect(turbiIndex({ ...none, shear: 50, ri: 50 }, { fl: 340 }).mechanisms.cat).toBeCloseTo(50, 5);
   });
-  it('convección en crucero según alcance del CAPE', () => {
-    expect(turbiIndex({ ...none, cape: 50 }, { fl: 360, cape: 1000 }).mechanisms.conv).toBeCloseTo(30, 5);
+  it('convección según el techo convectivo estimado por el CAPE (varía con la altitud)', () => {
+    // CAPE 1000 → techo FL300: completa por debajo, mitad 25 FL por encima, nada a partir de FL350
+    expect(turbiIndex({ ...none, cape: 50 }, { fl: 280, cape: 1000 }).mechanisms.conv).toBeCloseTo(50, 5);
+    expect(turbiIndex({ ...none, cape: 50 }, { fl: 325, cape: 1000 }).mechanisms.conv).toBeCloseTo(25, 5);
+    expect(turbiIndex({ ...none, cape: 50 }, { fl: 360, cape: 1000 }).mechanisms.conv).toBeCloseTo(0, 5);
     expect(turbiIndex({ ...none, cape: 50 }, { fl: 150, cape: 1000 }).mechanisms.conv).toBeCloseTo(50, 5);
     expect(turbiIndex({ ...none, storm: 75, cape: 80 }, { fl: 360, cape: 3000 }).mechanisms.conv).toBeCloseTo(80, 5);
+  });
+  it('techo convectivo: 250 + CAPE/20, como mucho FL400', () => {
+    expect(convectiveTopFL(1000)).toBe(300);
+    expect(convectiveTopFL(2000)).toBe(350);
+    expect(convectiveTopFL(5000)).toBe(400);
+    expect(convectiveTopFL(null)).toBeNull();
   });
   it('onda de montaña atenuada en crucero', () => {
     expect(turbiIndex({ ...none, mountain: 50 }, { fl: 360 }).mechanisms.mtw).toBeCloseTo(30, 5);

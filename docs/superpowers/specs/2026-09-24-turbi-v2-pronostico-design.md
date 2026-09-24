@@ -108,7 +108,11 @@ CAT  = max( 0,8·base + 0,2·Ri ,  máx(Ellrod, Cizalladura) − 15 )
         Ri solo refuerza: su peso es fijo y no entra en ese suelo, porque en capas casi neutras
         sale bajo aunque apenas haya cizalladura. Comprobado con datos reales el 24/09/2026)
 CONV = CAPE_componente · alcance(FL) ; max con Tormenta · alcance(FL) ; max con |w| en la capa
-       alcance = 1 por debajo de FL200; en crucero 1 si CAPE ≥ 2000, 0,6 si 1000–2000, 0,3 si < 1000
+       techo convectivo ≈ min(FL400, 250 + CAPE/20)   (1000 J/kg ≈ FL300 · 2000 ≈ FL350 · tope en la tropopausa típica)
+       alcance = 1 por debajo de FL200 y hasta el techo; se desvanece linealmente en los 50 FL por encima
+       CAPE sin chubascos ni tormentas previstas (código WMO < 80) → componente ≤ 49 (como mucho ligera):
+       el CAPE es energía potencial y sin disparo no hay convección
+       (corregido el 24/09/2026: con el alcance fijo, la convección salía igual en FL300 y FL400)
 MTW  = Onda · (1 por debajo de FL200; 0,6 en crucero)
 Turbi Index = max(CAT, CONV, MTW), entero de 0 a 100
 Nivel = 0 (<25) · 1 (25–49) · 2 (50–74) · 3 (≥75)

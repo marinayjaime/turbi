@@ -66,7 +66,7 @@ export function summarize(segments, durationMin) {
     verdict: v,
     maxLevel,
     maxDurationMin: top.reduce((a, s) => a + s.endMin - s.startMin, 0),
-    moments: top.slice(0, 2).map(s => ({ startMin: s.startMin, endMin: s.endMin })),
+    moments: top.map(s => ({ startMin: s.startMin, endMin: s.endMin })),
     percentages: percentages(minutes, durationMin),
   };
 }

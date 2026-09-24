@@ -42,6 +42,12 @@ describe('summarize', () => {
     expect(s).toMatchObject({ headline: 'Turbulento', maxLevel: 2, maxDurationMin: 20, moments: [{ startMin: 35, endMin: 55 }] });
     expect(s.percentages).toEqual([60, 20, 20, 0]);
   });
+  it('guarda todos los tramos de nivel máximo (la vista decide cuántos enseña)', () => {
+    const levels = [0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0];
+    const s = summarize(buildSegmentsV2(pts(levels), res(levels)), 100);
+    expect(s.moments).toHaveLength(4);
+    expect(s.maxDurationMin).toBe(s.moments.reduce((a, m) => a + m.endMin - m.startMin, 0));
+  });
   it('sin turbulencia: Tranquilo y sin momentos', () => {
     const s = summarize(buildSegmentsV2(pts(Array(11).fill(0)), res(Array(11).fill(0))), 100);
     expect(s).toMatchObject({ headline: 'Tranquilo', maxLevel: 0, moments: [], percentages: [100, 0, 0, 0] });

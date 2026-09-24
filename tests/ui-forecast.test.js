@@ -20,6 +20,11 @@ describe('resumen', () => {
       'Nula', '60 %', 'Ligera', '30 %', 'Moderada', '10 %', 'Fuerte', '0 %']) expect(h).toContain(t);
     for (const r of view.confidence.reasons) expect(h).toContain(r);
   });
+  it('con más de dos tramos indica cuántos más hay (coherente con la duración total)', () => {
+    const moments = [{ startMin: 111, endMin: 128 }, { startMin: 264, endMin: 281 }, { startMin: 300, endMin: 320 }, { startMin: 340, endMin: 371 }];
+    const h = summaryHtml({ ...view, summary: { ...view.summary, maxDurationMin: 85, moments } });
+    expect(h).toContain('aprox. 111–128 y 264–281 min después del despegue, y 2 tramos más');
+  });
   it('sin turbulencia no muestra duración ni momento', () => {
     const h = summaryHtml({ ...view, summary: { headline: 'Tranquilo', maxLevel: 0, maxDurationMin: 0, moments: [], percentages: [100, 0, 0, 0] } });
     expect(h).toContain('Sin turbulencia prevista');

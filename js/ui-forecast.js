@@ -39,7 +39,9 @@ export function summaryHtml(view) {
   const facts = [['Máximo previsto', s.maxLevel > 0 ? `Turbulencia ${LEVELS[s.maxLevel].toLowerCase()}` : 'Sin turbulencia prevista']];
   if (s.maxLevel > 0) {
     facts.push(['Duración estimada', `${s.maxDurationMin} min`]);
-    facts.push(['Momento', `aprox. ${s.moments.map(m => `${m.startMin}–${m.endMin}`).join(' y ')} min después del despegue`]);
+    const shown = s.moments.slice(0, 2).map(m => `${m.startMin}–${m.endMin}`).join(' y ');
+    const more = s.moments.length - 2;
+    facts.push(['Momento', `aprox. ${shown} min después del despegue${more > 0 ? `, y ${more} ${more === 1 ? 'tramo' : 'tramos'} más` : ''}`]);
   }
   const bar = s.percentages.map((p, l) => (p ? `<span class="lvl${l}" style="flex:${p}"></span>` : '')).join('');
   return `
