@@ -66,3 +66,16 @@ describe('explicación del veredicto y los tramos', () => {
     }
   });
 });
+
+describe('logo de la aerolínea', () => {
+  it('se sirve desde la propia web, con respaldo a pics.avs.io', () => {
+    const el = { innerHTML: '' };
+    renderResult(el, {
+      note: 'x',
+      flight: { al: 'IB', title: 'Iberia IB 1668', route: 'Palma a Madrid', tabs: [], status: { text: 'Programado', tone: 'ok' },
+        o: 'PMI', a: 'MAD', duration: 90, dep: null, arr: null, aircraft: null },
+    });
+    expect(el.innerHTML).toContain('src="img/logos/IB.png"');
+    expect(el.innerHTML).toContain('https://pics.avs.io/200/80/IB.png');
+  });
+});

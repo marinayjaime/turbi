@@ -5,6 +5,27 @@ const HOUR_MS = 3600000;
 // Error de red o del servicio: tiene sentido que la app ofrezca «Reintentar».
 const retryable = message => Object.assign(new Error(message), { retryable: true });
 
+const TIMEOUT_MS = 15000;
+const RETRY_DELAY_MS = 600;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// En el móvil la red puede cortarse un instante: un fallo de red o un 5xx se reintenta una vez.
+async function getJson(url, fetchFn, tries = 2) {
+  for (let attempt = 1; ; attempt++) {
+    let res;
+    try {
+      res = await fetchFn(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    } catch {
+      if (attempt < tries) { await sleep(RETRY_DELAY_MS); continue; }
+      throw retryable('No se pudo conectar con el servicio del tiempo (Open-Meteo). Revisa la conexión e inténtalo de nuevo.');
+    }
+    if (res.status === 429) throw retryable('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
+    if (res.status >= 500 && attempt < tries) { await sleep(RETRY_DELAY_MS); continue; }
+    if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
+    return res.json();
+  }
+}
+
 export const HOURLY_VARS = [
   'wind_speed_300hPa', 'wind_direction_300hPa', 'geopotential_height_300hPa',
   'wind_speed_250hPa', 'wind_direction_250hPa', 'geopotential_height_250hPa',
@@ -42,10 +63,7 @@ function forecastUrl(locs, startMs, endMs) {
 export async function fetchLocations(locs, startMs, endMs, fetchFn = fetch) {
   const results = [];
   for (let i = 0; i < locs.length; i += CHUNK) {
-    const res = await fetchFn(forecastUrl(locs.slice(i, i + CHUNK), startMs, endMs));
-    if (res.status === 429) throw retryable('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
-    if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
-    const json = await res.json();
+    const json = await getJson(forecastUrl(locs.slice(i, i + CHUNK), startMs, endMs), fetchFn);
     results.push(...(Array.isArray(json) ? json : [json]));
   }
   return results;
@@ -87,7 +105,5 @@ export async function fetchTimezone(point, fetchFn = fetch) {
     timezone: 'auto',
     forecast_days: '1',
   });
-  const res = await fetchFn(`${BASE}?${params}`);
-  if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
-  return (await res.json()).timezone;
+  return (await getJson(`${BASE}?${params}`, fetchFn)).timezone;
 }

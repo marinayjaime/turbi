@@ -41,7 +41,8 @@ function flightCardHtml(c) {
   return `
     <section class="flight">
       <div class="flight-head">
-        <img class="logo" src="https://pics.avs.io/200/80/${esc(c.al)}.png" alt="" onerror="this.remove()">
+        <img class="logo" src="img/logos/${esc(c.al)}.png" alt=""
+          onerror="if (!this.dataset.retry) { this.dataset.retry = 1; this.src = 'https://pics.avs.io/200/80/${esc(c.al)}.png'; } else this.remove();">
         <div><h2>${esc(c.title)}</h2><p>${esc(c.route)}</p></div>
       </div>
       ${c.tabs.length > 1 ? `<nav class="tabs">${c.tabs.map(t =>

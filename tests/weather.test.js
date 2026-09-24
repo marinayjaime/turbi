@@ -125,3 +125,33 @@ describe('errores reintentables', () => {
     expect(tz.retryable).toBe(true);
   });
 });
+
+describe('fallos momentáneos de Open-Meteo', () => {
+  const okBody = { ok: true, status: 200, json: async () => [fakeLocation()] };
+  it('un corte de red se reintenta y la consulta sale bien', async () => {
+    const f = vi.fn().mockRejectedValueOnce(new TypeError('Load failed')).mockResolvedValueOnce(okBody);
+    await expect(fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f)).resolves.toHaveLength(1);
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+  it('un 503 se reintenta', async () => {
+    const f = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValueOnce(okBody);
+    await expect(fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f)).resolves.toHaveLength(1);
+  });
+  it('si sigue fallando, el mensaje dice qué servicio falla', async () => {
+    const f = vi.fn(async () => { throw new TypeError('Load failed'); });
+    const err = await fetchTimezone({ lat: 40, lon: 3 }, f).catch(e => e);
+    expect(err.message).toBe('No se pudo conectar con el servicio del tiempo (Open-Meteo). Revisa la conexión e inténtalo de nuevo.');
+    expect(err.retryable).toBe(true);
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+  it('429 no se reintenta al momento (es el cupo)', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 429 }));
+    await fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f).catch(() => {});
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('cada petición lleva tiempo límite', async () => {
+    const f = vi.fn(async () => okBody);
+    await fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f);
+    expect(f.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+});

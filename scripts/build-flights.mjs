@@ -2,6 +2,7 @@
 // Uso: MODE=full|live|auto node scripts/build-flights.mjs
 import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
 import { buildLegs, mergeLegs, shardLegs, patchFailed } from './aena.mjs';
+import { fetchMissingLogos } from './fetch-logos.mjs';
 
 const SITE = '_site';
 const PAGES_URL = process.env.PAGES_URL ?? 'https://marinayjaime.github.io/turbi/';
@@ -105,6 +106,11 @@ async function main() {
     await writeFile(`${out}/${path}`, JSON.stringify(body));
   }
   console.log(`${legs.length} tramos, ${Object.keys(files).length} vuelos, ${Object.keys(airlines).length} aerolíneas`);
+
+  // Logos de aerolíneas nuevas (los conocidos ya están en img/logos del repo).
+  const codes = [...new Set(Object.keys(files).map(p => p.split('/')[0]))];
+  const saved = await fetchMissingLogos(codes, { dir: new URL(`../${SITE}/img/logos/`, import.meta.url) });
+  if (saved) console.log(`Logos nuevos: ${saved} (añádelos al repo con: node scripts/fetch-logos.mjs)`);
 }
 
 main().catch(err => {
