@@ -3,25 +3,25 @@
   "op": "FR",
   "name": "Ryanair",
   "model": "Boeing 737-800",
-  "n": 755
+  "n": 758
  },
  {
   "op": "FR",
   "name": "Ryanair",
   "model": "Boeing 737 MAX 8",
-  "n": 423
+  "n": 426
  },
  {
   "op": "YW",
   "name": "Air Nostrum",
   "model": "Bombardier CRJ1000",
-  "n": 272
+  "n": 270
  },
  {
   "op": "LS",
   "name": "Jet2.com",
   "model": "Boeing 737-800",
-  "n": 160
+  "n": 161
  },
  {
   "op": "EW",
@@ -39,7 +39,7 @@
   "op": "V7",
   "name": "Volotea",
   "model": "Airbus A320",
-  "n": 97
+  "n": 96
  },
  {
   "op": "NAY",
@@ -51,7 +51,7 @@
   "op": "EC",
   "name": "easyJet",
   "model": "Airbus A320",
-  "n": 86
+  "n": 87
  },
  {
   "op": "RSC",
@@ -63,37 +63,43 @@
   "op": "EC",
   "name": "easyJet",
   "model": "Airbus A319",
-  "n": 77
- },
- {
-  "op": "W6",
-  "name": "Wizz Air",
-  "model": "Airbus A321neo",
-  "n": 73
- },
- {
-  "op": "W4",
-  "name": "Wizz Air Malta (WMT)",
-  "model": "Airbus A321neo",
-  "n": 72
+  "n": 78
  },
  {
   "op": "YW",
   "name": "Air Nostrum",
   "model": "ATR 72-600",
-  "n": 72
+  "n": 73
  },
  {
   "op": "U2",
   "name": "easyJet UK",
   "model": "Airbus A320",
+  "n": 73
+ },
+ {
+  "op": "W6",
+  "name": "Wizz Air",
+  "model": "Airbus A321neo",
   "n": 72
+ },
+ {
+  "op": "W4",
+  "name": "Wizz Air Malta (WMT)",
+  "model": "Airbus A321neo",
+  "n": 71
  },
  {
   "op": "YW",
   "name": "Air Nostrum",
   "model": "ATR 72-500",
-  "n": 68
+  "n": 71
+ },
+ {
+  "op": "NAY",
+  "name": "Naysa",
+  "model": "ATR 72-500",
+  "n": 64
  },
  {
   "op": "U2",
@@ -102,46 +108,34 @@
   "n": 62
  },
  {
-  "op": "NAY",
-  "name": "Naysa",
-  "model": "ATR 72-500",
-  "n": 59
- },
- {
   "op": "RSC",
   "name": "Canair",
   "model": "ATR 72-500",
-  "n": 57
+  "n": 60
  },
  {
   "op": "IB",
   "name": "Iberia",
   "model": "Airbus A320neo",
-  "n": 56
+  "n": 57
  },
  {
   "op": "LS",
   "name": "Jet2.com",
   "model": "Airbus A321neo",
-  "n": 56
+  "n": 54
  },
  {
-  "op": "JU",
-  "name": null,
+  "op": "HV",
+  "name": "Transavia",
   "model": "Boeing 737-800",
-  "n": 55
+  "n": 51
  },
  {
   "op": "U2",
   "name": "easyJet UK",
   "model": "Airbus A319",
   "n": 49
- },
- {
-  "op": "HV",
-  "name": "Transavia",
-  "model": "Boeing 737-800",
-  "n": 47
  },
  {
   "op": "BY",
@@ -156,16 +150,16 @@
   "n": 44
  },
  {
+  "op": "SK",
+  "name": "SAS Scandinavian Airlines",
+  "model": "Airbus A320neo",
+  "n": 43
+ },
+ {
   "op": "D8",
   "name": "Norwegian SWEDEN (NSZ)",
   "model": "Boeing 737-800",
   "n": 41
- },
- {
-  "op": "SK",
-  "name": "SAS Scandinavian Airlines",
-  "model": "Airbus A320neo",
-  "n": 40
  },
  {
   "op": "D8",
@@ -192,20 +186,26 @@
   "n": 35
  },
  {
-  "op": "LH",
-  "name": "Lufthansa",
-  "model": "Airbus A321",
-  "n": 34
- },
- {
   "op": "TO",
   "name": "Transavia",
   "model": "Airbus A320neo",
   "n": 34
  },
  {
+  "op": "LH",
+  "name": "Lufthansa",
+  "model": "Airbus A321",
+  "n": 34
+ },
+ {
   "op": "VY",
   "name": "Vueling",
+  "model": "Airbus A320",
+  "n": 31
+ },
+ {
+  "op": "EI",
+  "name": "Aer Lingus",
   "model": "Airbus A320",
   "n": 31
  },
@@ -216,34 +216,28 @@
   "n": 31
  },
  {
+  "op": "SN",
+  "name": "Brussels Airlines",
+  "model": "Airbus A320",
+  "n": 29
+ },
+ {
   "op": "IB",
   "name": "Iberia",
   "model": "Airbus A350-900",
   "n": 28
  },
  {
-  "op": "SN",
-  "name": "Brussels Airlines",
-  "model": "Airbus A320",
-  "n": 28
- },
- {
-  "op": "EI",
-  "name": "Aer Lingus",
-  "model": "Airbus A320",
-  "n": 28
- },
- {
   "op": "IB",
   "name": "Iberia",
   "model": "Airbus A320",
-  "n": 27
+  "n": 28
  },
  {
   "op": "V7",
   "name": "Volotea",
   "model": "Airbus A319",
-  "n": 23
+  "n": 24
  },
  {
   "op": "4Y",
@@ -252,15 +246,15 @@
   "n": 22
  },
  {
-  "op": "TO",
-  "name": "Transavia",
-  "model": "Boeing 737-800",
-  "n": 20
- },
- {
   "op": "TB",
   "name": "TUI FLY BELGIUM",
   "model": "Boeing 737 MAX 8",
+  "n": 20
+ },
+ {
+  "op": "TO",
+  "name": "Transavia",
+  "model": "Boeing 737-800",
   "n": 20
  },
  {
@@ -282,10 +276,10 @@
   "n": 18
  },
  {
-  "op": "JL",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 17
+  "op": "W4",
+  "name": "Wizz Air Malta (WMT)",
+  "model": "Airbus A321",
+  "n": 18
  },
  {
   "op": "CJ",
@@ -294,15 +288,15 @@
   "n": 17
  },
  {
-  "op": "W4",
-  "name": "Wizz Air Malta (WMT)",
-  "model": "Airbus A321",
-  "n": 17
- },
- {
   "op": "AF",
   "name": "Air France",
   "model": "Embraer 190",
+  "n": 17
+ },
+ {
+  "op": "EC",
+  "name": "easyJet",
+  "model": "Airbus A320neo",
   "n": 17
  },
  {
@@ -318,25 +312,19 @@
   "n": 16
  },
  {
-  "op": "EC",
-  "name": "easyJet",
+  "op": "DY",
+  "name": "Norwegian (NOZ)",
+  "model": "Boeing 737-800",
+  "n": 16
+ },
+ {
+  "op": "DI",
+  "name": "Marabu Airline OU",
   "model": "Airbus A320neo",
-  "n": 16
- },
- {
-  "op": "LS",
-  "name": "Jet2.com",
-  "model": "Boeing 737-300",
-  "n": 16
- },
- {
-  "op": "LO",
-  "name": "LOT-Polskie Linie Lotnicze",
-  "model": "Boeing 737 MAX 8",
   "n": 15
  },
  {
-  "op": "JL",
+  "op": "A0",
   "name": null,
   "model": "Airbus A321",
   "n": 15
@@ -348,15 +336,15 @@
   "n": 15
  },
  {
-  "op": "U2",
-  "name": "easyJet UK",
-  "model": "Airbus A321neo",
+  "op": "LS",
+  "name": "Jet2.com",
+  "model": "Boeing 737-300",
   "n": 15
  },
  {
-  "op": "DI",
-  "name": "Marabu Airline OU",
-  "model": "Airbus A320neo",
+  "op": "LO",
+  "name": "LOT-Polskie Linie Lotnicze",
+  "model": "Boeing 737 MAX 8",
   "n": 15
  },
  {
@@ -366,27 +354,9 @@
   "n": 14
  },
  {
-  "op": "JU",
-  "name": null,
-  "model": "Boeing 737 MAX 8",
-  "n": 14
- },
- {
-  "op": "DY",
-  "name": "Norwegian (NOZ)",
-  "model": "Boeing 737-800",
-  "n": 14
- },
- {
-  "op": "A0",
-  "name": null,
+  "op": "EW",
+  "name": "Eurowings",
   "model": "Airbus A321",
-  "n": 14
- },
- {
-  "op": "IB",
-  "name": "Iberia",
-  "model": "Airbus A330-200",
   "n": 13
  },
  {
@@ -396,8 +366,26 @@
   "n": 13
  },
  {
-  "op": "JL",
-  "name": null,
+  "op": "IB",
+  "name": "Iberia",
+  "model": "Airbus A330-200",
+  "n": 13
+ },
+ {
+  "op": "X3",
+  "name": "Tui Fly",
+  "model": "Boeing 737-800",
+  "n": 12
+ },
+ {
+  "op": "EW",
+  "name": "Eurowings",
+  "model": "Airbus A321neo",
+  "n": 12
+ },
+ {
+  "op": "U2",
+  "name": "easyJet UK",
   "model": "Airbus A321neo",
   "n": 12
  },
@@ -414,33 +402,9 @@
   "n": 12
  },
  {
-  "op": "EW",
-  "name": "Eurowings",
-  "model": "Airbus A321neo",
-  "n": 12
- },
- {
-  "op": "BY",
-  "name": "Tui Airways",
-  "model": "Boeing 787-8",
-  "n": 12
- },
- {
-  "op": "X3",
-  "name": "Tui Fly",
-  "model": "Boeing 737-800",
-  "n": 12
- },
- {
-  "op": "IB",
-  "name": "Iberia",
-  "model": "Airbus A319",
-  "n": 11
- },
- {
-  "op": "EW",
-  "name": "Eurowings",
-  "model": "Airbus A321",
+  "op": "OS",
+  "name": "Austrian Airlines",
+  "model": "Airbus A320",
   "n": 11
  },
  {
@@ -450,26 +414,20 @@
   "n": 11
  },
  {
-  "op": "JL",
-  "name": null,
-  "model": "Airbus A320neo",
-  "n": 10
- },
- {
-  "op": "AM",
-  "name": "Aeromexico",
-  "model": "Boeing 787-9",
-  "n": 10
+  "op": "IB",
+  "name": "Iberia",
+  "model": "Airbus A319",
+  "n": 11
  },
  {
   "op": "TK",
   "name": "Turkish Airlines",
   "model": "Airbus A321neo",
-  "n": 10
+  "n": 11
  },
  {
-  "op": "PC",
-  "name": "Pegasus Airlines",
+  "op": "HV",
+  "name": "Transavia",
   "model": "Airbus A321neo",
   "n": 10
  },
@@ -480,14 +438,20 @@
   "n": 10
  },
  {
-  "op": "OS",
-  "name": "Austrian Airlines",
-  "model": "Airbus A320",
+  "op": "BY",
+  "name": "Tui Airways",
+  "model": "Boeing 787-8",
   "n": 10
  },
  {
-  "op": "HV",
-  "name": "Transavia",
+  "op": "AM",
+  "name": "Aeromexico",
+  "model": "Boeing 787-9",
+  "n": 10
+ },
+ {
+  "op": "PC",
+  "name": "Pegasus Airlines",
   "model": "Airbus A321neo",
   "n": 10
  },
@@ -496,6 +460,30 @@
   "name": "easyJet",
   "model": "Airbus A321neo",
   "n": 10
+ },
+ {
+  "op": "AT",
+  "name": "Royal Air Maroc",
+  "model": "Boeing 737-800",
+  "n": 10
+ },
+ {
+  "op": "EW",
+  "name": "Eurowings",
+  "model": "Boeing 737-800",
+  "n": 9
+ },
+ {
+  "op": "EW",
+  "name": "Eurowings",
+  "model": "Airbus A319",
+  "n": 9
+ },
+ {
+  "op": "LX",
+  "name": "Swiss International Airlines",
+  "model": "Airbus A320neo",
+  "n": 9
  },
  {
   "op": "IB",
@@ -507,31 +495,43 @@
   "op": "RK",
   "name": "Ryanair",
   "model": "Boeing 737-800",
-  "n": 9
+  "n": 8
  },
  {
-  "op": "EW",
-  "name": "Eurowings",
-  "model": "Airbus A319",
-  "n": 9
- },
- {
-  "op": "LX",
-  "name": "Swiss International Airlines",
-  "model": "Airbus A320neo",
-  "n": 9
- },
- {
-  "op": "AT",
-  "name": "Royal Air Maroc",
+  "op": "XR",
+  "name": "Corendon",
   "model": "Boeing 737-800",
-  "n": 9
+  "n": 8
  },
  {
-  "op": "EW",
-  "name": "Eurowings",
-  "model": "Boeing 737-800",
-  "n": 9
+  "op": "OR",
+  "name": "Tui Airlines Nederland",
+  "model": "Boeing 737 MAX 8",
+  "n": 8
+ },
+ {
+  "op": "TP",
+  "name": "TAP Air Portugal",
+  "model": "Embraer 190",
+  "n": 8
+ },
+ {
+  "op": "LH",
+  "name": "Lufthansa",
+  "model": "Airbus A320",
+  "n": 8
+ },
+ {
+  "op": "A0",
+  "name": null,
+  "model": "Airbus A320",
+  "n": 8
+ },
+ {
+  "op": "CA",
+  "name": "Air China",
+  "model": "Boeing 787-9",
+  "n": 8
  },
  {
   "op": "IB",
@@ -546,57 +546,15 @@
   "n": 8
  },
  {
-  "op": "LH",
-  "name": "Lufthansa",
-  "model": "Airbus A320",
-  "n": 8
- },
- {
-  "op": "TP",
-  "name": "TAP Air Portugal",
-  "model": "Embraer 190",
-  "n": 8
- },
- {
-  "op": "A0",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 8
- },
- {
-  "op": "OR",
-  "name": "Tui Airlines Nederland",
-  "model": "Boeing 737 MAX 8",
-  "n": 8
- },
- {
-  "op": "XR",
-  "name": "Corendon",
-  "model": "Boeing 737-800",
-  "n": 8
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Airbus A321neo",
-  "n": 8
- },
- {
-  "op": "CA",
-  "name": "Air China",
-  "model": "Boeing 787-9",
-  "n": 7
- },
- {
-  "op": "LG",
-  "name": "Luxair",
-  "model": "Embraer E195-E2",
-  "n": 7
- },
- {
   "op": "AH",
   "name": "Air Algerie",
   "model": "Boeing 737-800",
+  "n": 8
+ },
+ {
+  "op": "WK",
+  "name": "Edelweiss",
+  "model": "Airbus A320",
   "n": 7
  },
  {
@@ -606,33 +564,63 @@
   "n": 7
  },
  {
+  "op": "LG",
+  "name": "Luxair",
+  "model": "Embraer E195-E2",
+  "n": 7
+ },
+ {
   "op": "DS",
   "name": "easyJet Switzerland",
   "model": "Airbus A320",
   "n": 7
  },
  {
-  "op": "WK",
-  "name": "Edelweiss",
-  "model": "Airbus A320",
-  "n": 7
- },
- {
-  "op": "KQ",
-  "name": null,
-  "model": "Airbus A321neo",
-  "n": 6
- },
- {
-  "op": "AC",
-  "name": "Air Canada",
-  "model": "Airbus A330-300",
+  "op": "DE",
+  "name": "Condor",
+  "model": "Airbus A320neo",
   "n": 6
  },
  {
   "op": "BA",
   "name": "British Airways",
   "model": "Airbus A320",
+  "n": 6
+ },
+ {
+  "op": "DK",
+  "name": "Sunclass Airlines",
+  "model": "Airbus A321",
+  "n": 6
+ },
+ {
+  "op": "BT",
+  "name": "Air Baltic",
+  "model": "Airbus A220-300",
+  "n": 6
+ },
+ {
+  "op": "DY",
+  "name": "Norwegian (NOZ)",
+  "model": "Boeing 737 MAX 8",
+  "n": 6
+ },
+ {
+  "op": "EW",
+  "name": "Eurowings",
+  "model": "Airbus A320neo",
+  "n": 6
+ },
+ {
+  "op": "UX",
+  "name": "Air Europa",
+  "model": "Boeing 787-9",
+  "n": 6
+ },
+ {
+  "op": "AC",
+  "name": "Air Canada",
+  "model": "Airbus A330-300",
   "n": 6
  },
  {
@@ -648,32 +636,8 @@
   "n": 6
  },
  {
-  "op": "DY",
-  "name": "Norwegian (NOZ)",
-  "model": "Boeing 737 MAX 8",
-  "n": 6
- },
- {
   "op": "VY",
   "name": "Vueling",
-  "model": "Airbus A320neo",
-  "n": 6
- },
- {
-  "op": "BT",
-  "name": "Air Baltic",
-  "model": "Airbus A220-300",
-  "n": 6
- },
- {
-  "op": "DK",
-  "name": "Sunclass Airlines",
-  "model": "Airbus A321",
-  "n": 6
- },
- {
-  "op": "EW",
-  "name": "Eurowings",
   "model": "Airbus A320neo",
   "n": 6
  },
@@ -684,45 +648,21 @@
   "n": 6
  },
  {
-  "op": "E9",
-  "name": "Iberojet",
-  "model": "Airbus A350-900",
+  "op": "LG",
+  "name": "Luxair",
+  "model": "Boeing 737-700",
   "n": 5
  },
  {
-  "op": "UX",
-  "name": "Air Europa",
-  "model": "Boeing 787-9",
+  "op": "DE",
+  "name": "Condor",
+  "model": "Airbus A321neo",
   "n": 5
  },
  {
-  "op": "MK",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 5
- },
- {
-  "op": "VN",
-  "name": null,
-  "model": "Boeing 737 MAX 8",
-  "n": 5
- },
- {
-  "op": "SM",
-  "name": "Air Cairo",
-  "model": "Airbus A320",
-  "n": 5
- },
- {
-  "op": "JU",
-  "name": null,
-  "model": "Boeing 787-8",
-  "n": 5
- },
- {
-  "op": "BA",
-  "name": "British Airways",
-  "model": "Airbus A320neo",
+  "op": "AY",
+  "name": "Finnair",
+  "model": "Airbus A321",
   "n": 5
  },
  {
@@ -732,21 +672,39 @@
   "n": 5
  },
  {
-  "op": "DE",
-  "name": "Condor",
-  "model": "Airbus A321",
+  "op": "UX",
+  "name": "Air Europa",
+  "model": "Boeing 787-8",
   "n": 5
  },
  {
-  "op": "AZ",
-  "name": "ITA Airways",
+  "op": "MU",
+  "name": "China Eastern",
+  "model": "Airbus A350-900",
+  "n": 5
+ },
+ {
+  "op": "SM",
+  "name": "Air Cairo",
   "model": "Airbus A320",
   "n": 5
  },
  {
-  "op": "AY",
-  "name": "Finnair",
+  "op": "BA",
+  "name": "British Airways",
+  "model": "Airbus A320neo",
+  "n": 5
+ },
+ {
+  "op": "W6",
+  "name": "Wizz Air",
   "model": "Airbus A321",
+  "n": 5
+ },
+ {
+  "op": "AF",
+  "name": "Air France",
+  "model": "Airbus A320",
   "n": 5
  },
  {
@@ -762,27 +720,45 @@
   "n": 5
  },
  {
+  "op": "AZ",
+  "name": "ITA Airways",
+  "model": "Airbus A320",
+  "n": 5
+ },
+ {
+  "op": "LS",
+  "name": "Jet2.com",
+  "model": "Airbus A321",
+  "n": 5
+ },
+ {
+  "op": "DE",
+  "name": "Condor",
+  "model": "Airbus A321",
+  "n": 5
+ },
+ {
   "op": "NO",
   "name": "Neos",
   "model": "Boeing 737 MAX 8",
   "n": 5
  },
  {
-  "op": "DE",
-  "name": "Condor",
-  "model": "Airbus A320neo",
-  "n": 5
- },
- {
-  "op": "AS",
+  "op": "JP",
   "name": null,
-  "model": "Airbus A320neo",
-  "n": 5
+  "model": "Boeing 737-800",
+  "n": 4
  },
  {
-  "op": "QR",
-  "name": "Qatar Airways",
-  "model": "Boeing 787-9",
+  "op": "WK",
+  "name": "Edelweiss",
+  "model": "Airbus A320neo",
+  "n": 4
+ },
+ {
+  "op": "LS",
+  "name": "Jet2.com",
+  "model": "Airbus A330-200",
   "n": 4
  },
  {
@@ -792,21 +768,9 @@
   "n": 4
  },
  {
-  "op": "UX",
-  "name": "Air Europa",
-  "model": "Boeing 787-8",
-  "n": 4
- },
- {
-  "op": "KQ",
-  "name": null,
-  "model": "Boeing 737-800",
-  "n": 4
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Boeing 777-200",
+  "op": "QR",
+  "name": "Qatar Airways",
+  "model": "Boeing 787-9",
   "n": 4
  },
  {
@@ -816,27 +780,9 @@
   "n": 4
  },
  {
-  "op": "MU",
-  "name": "China Eastern",
-  "model": "Airbus A350-900",
-  "n": 4
- },
- {
   "op": "SN",
   "name": "Brussels Airlines",
   "model": "Airbus A320neo",
-  "n": 4
- },
- {
-  "op": "VS",
-  "name": null,
-  "model": "Boeing 767-400",
-  "n": 4
- },
- {
-  "op": "GA",
-  "name": null,
-  "model": "Airbus A321neo",
   "n": 4
  },
  {
@@ -858,45 +804,9 @@
   "n": 4
  },
  {
-  "op": "JU",
-  "name": null,
-  "model": "Boeing 787-9",
-  "n": 4
- },
- {
-  "op": "QF",
-  "name": null,
-  "model": "Airbus A380",
-  "n": 4
- },
- {
-  "op": "KQ",
-  "name": null,
-  "model": "Boeing 787-9",
-  "n": 4
- },
- {
-  "op": "JU",
-  "name": null,
-  "model": "Airbus A220-300",
-  "n": 4
- },
- {
-  "op": "W6",
-  "name": "Wizz Air",
-  "model": "Airbus A321",
-  "n": 4
- },
- {
-  "op": "CI",
-  "name": null,
-  "model": "Airbus A321neo",
-  "n": 4
- },
- {
-  "op": "VN",
-  "name": null,
-  "model": "Airbus A320",
+  "op": "E9",
+  "name": "Iberojet",
+  "model": "Airbus A350-900",
   "n": 4
  },
  {
@@ -906,27 +816,9 @@
   "n": 4
  },
  {
-  "op": "VS",
-  "name": null,
-  "model": "Airbus A330-300",
-  "n": 4
- },
- {
-  "op": "EI",
-  "name": "Aer Lingus",
-  "model": "Airbus A320neo",
-  "n": 4
- },
- {
-  "op": "LG",
-  "name": "Luxair",
-  "model": "Boeing 737-700",
-  "n": 4
- },
- {
-  "op": "G3",
-  "name": null,
-  "model": "Airbus A320",
+  "op": "AT",
+  "name": "Royal Air Maroc",
+  "model": "Embraer 190",
   "n": 4
  },
  {
@@ -936,63 +828,15 @@
   "n": 4
  },
  {
-  "op": "AT",
-  "name": "Royal Air Maroc",
-  "model": "Embraer 190",
-  "n": 4
- },
- {
-  "op": "DE",
-  "name": "Condor",
-  "model": "Airbus A321neo",
-  "n": 4
- },
- {
-  "op": "AF",
-  "name": "Air France",
-  "model": "Airbus A320",
-  "n": 4
- },
- {
-  "op": "LS",
-  "name": "Jet2.com",
-  "model": "Airbus A321",
-  "n": 4
- },
- {
   "op": "TB",
   "name": "TUI FLY BELGIUM",
   "model": "Embraer 195",
   "n": 4
  },
  {
-  "op": "WK",
-  "name": "Edelweiss",
+  "op": "EI",
+  "name": "Aer Lingus",
   "model": "Airbus A320neo",
-  "n": 4
- },
- {
-  "op": "JP",
-  "name": null,
-  "model": "Boeing 737-800",
-  "n": 4
- },
- {
-  "op": "LS",
-  "name": "Jet2.com",
-  "model": "Airbus A330-200",
-  "n": 4
- },
- {
-  "op": "E4",
-  "name": "Enter Air",
-  "model": "Boeing 737 MAX 8",
-  "n": 4
- },
- {
-  "op": "NAY",
-  "name": "Naysa",
-  "model": "ATR 72",
   "n": 4
  },
  {
@@ -1002,9 +846,33 @@
   "n": 4
  },
  {
+  "op": "DK",
+  "name": "Sunclass Airlines",
+  "model": "Airbus A321neo",
+  "n": 3
+ },
+ {
+  "op": "DK",
+  "name": "Sunclass Airlines",
+  "model": "Airbus A330neo",
+  "n": 3
+ },
+ {
   "op": "AP",
   "name": "Alba Star",
   "model": "Boeing 737-800",
+  "n": 3
+ },
+ {
+  "op": "TB",
+  "name": "TUI FLY BELGIUM",
+  "model": "Boeing 737-800",
+  "n": 3
+ },
+ {
+  "op": "BY",
+  "name": "Tui Airways",
+  "model": "Boeing 787-9",
   "n": 3
  },
  {
@@ -1014,39 +882,9 @@
   "n": 3
  },
  {
-  "op": "UU",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 3
- },
- {
   "op": "AR",
   "name": "Aerolíneas Argentinas",
   "model": "Airbus A330-200",
-  "n": 3
- },
- {
-  "op": "KQ",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 3
- },
- {
-  "op": "G3",
-  "name": null,
-  "model": "Boeing 737-800",
-  "n": 3
- },
- {
-  "op": "XQ",
-  "name": "Sunexpress",
-  "model": "Boeing 737-800",
-  "n": 3
- },
- {
-  "op": "G3",
-  "name": null,
-  "model": "Airbus A321neo",
   "n": 3
  },
  {
@@ -1062,15 +900,21 @@
   "n": 3
  },
  {
-  "op": "LX",
-  "name": "Swiss International Airlines",
-  "model": "Airbus A320",
+  "op": "LG",
+  "name": "Luxair",
+  "model": "Boeing 737 MAX 8",
   "n": 3
  },
  {
   "op": "FI",
   "name": "Icelandair",
   "model": "Boeing 737 MAX 8",
+  "n": 3
+ },
+ {
+  "op": "LX",
+  "name": "Swiss International Airlines",
+  "model": "Airbus A320",
   "n": 3
  },
  {
@@ -1092,45 +936,9 @@
   "n": 3
  },
  {
-  "op": "LG",
-  "name": "Luxair",
-  "model": "Boeing 737 MAX 8",
-  "n": 3
- },
- {
-  "op": "TB",
-  "name": "TUI FLY BELGIUM",
-  "model": "Boeing 737-800",
-  "n": 3
- },
- {
   "op": "OS",
   "name": "Austrian Airlines",
   "model": "Airbus A320neo",
-  "n": 3
- },
- {
-  "op": "DK",
-  "name": "Sunclass Airlines",
-  "model": "Airbus A321neo",
-  "n": 3
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 3
- },
- {
-  "op": "DK",
-  "name": "Sunclass Airlines",
-  "model": "Airbus A330neo",
-  "n": 3
- },
- {
-  "op": "BY",
-  "name": "Tui Airways",
-  "model": "Boeing 787-9",
   "n": 3
  },
  {
@@ -1140,22 +948,58 @@
   "n": 3
  },
  {
-  "op": "RSC",
-  "name": "Canair",
-  "model": "ATR 72",
-  "n": 3
- },
- {
   "op": "KL",
   "name": "KLM",
   "model": "Embraer 190",
   "n": 3
  },
  {
-  "op": "YW",
-  "name": "Air Nostrum",
-  "model": "ATR 72",
+  "op": "E4",
+  "name": "Enter Air",
+  "model": "Boeing 737 MAX 8",
   "n": 3
+ },
+ {
+  "op": "SR",
+  "name": "Sundair",
+  "model": "Airbus A319",
+  "n": 2
+ },
+ {
+  "op": "5F",
+  "name": "Fly One SRL",
+  "model": "Airbus A320",
+  "n": 2
+ },
+ {
+  "op": "A3",
+  "name": "Aegean Airlines",
+  "model": "Airbus A320neo",
+  "n": 2
+ },
+ {
+  "op": "CS",
+  "name": "Chair Airlines AG",
+  "model": "Airbus A320",
+  "n": 2
+ },
+ {
+  "op": "6B",
+  "name": "Tuifly Nordic",
+  "model": "Boeing 737 MAX 8",
+  "n": 2
+ },
+ {
+  "op": "TP",
+  "name": "TAP Air Portugal",
+  "model": "Airbus A320",
+  "n": 2
+ },
+ {
+  "op": "U5",
+  "name": "SkyUp Airlines",
+  "model": "Boeing 737-800",
+  "n": 2
  },
  {
   "op": "ET",
@@ -1164,27 +1008,15 @@
   "n": 2
  },
  {
-  "op": "CI",
-  "name": null,
-  "model": "Boeing 737 MAX 8",
-  "n": 2
- },
- {
-  "op": "KQ",
-  "name": null,
-  "model": "Boeing 737 MAX 8",
-  "n": 2
- },
- {
-  "op": "VS",
-  "name": null,
-  "model": "Airbus A330neo",
-  "n": 2
- },
- {
   "op": "AM",
   "name": "Aeromexico",
   "model": "Boeing 787-8",
+  "n": 2
+ },
+ {
+  "op": "DY",
+  "name": "Norwegian (NOZ)",
+  "model": "Airbus A320",
   "n": 2
  },
  {
@@ -1218,12 +1050,6 @@
   "n": 2
  },
  {
-  "op": "CM",
-  "name": null,
-  "model": "Boeing 787-9",
-  "n": 2
- },
- {
   "op": "MS",
   "name": "Egyptair",
   "model": "Boeing 737 MAX 8",
@@ -1239,6 +1065,12 @@
   "op": "BA",
   "name": "British Airways",
   "model": "Boeing 777-200",
+  "n": 2
+ },
+ {
+  "op": "XQ",
+  "name": "Sunexpress",
+  "model": "Boeing 737-800",
   "n": 2
  },
  {
@@ -1266,105 +1098,9 @@
   "n": 2
  },
  {
-  "op": "LY",
-  "name": "El Al Israel Airlines",
-  "model": "Boeing 737-900",
-  "n": 2
- },
- {
-  "op": "TK",
-  "name": "Turkish Airlines",
-  "model": "Airbus A321",
-  "n": 2
- },
- {
-  "op": "MH",
-  "name": null,
-  "model": "Boeing 787-9",
-  "n": 2
- },
- {
-  "op": "JU",
-  "name": null,
-  "model": "Airbus A319",
-  "n": 2
- },
- {
-  "op": "AZ",
-  "name": "ITA Airways",
-  "model": "Airbus A321neo",
-  "n": 2
- },
- {
-  "op": "AC",
-  "name": "Air Canada",
-  "model": "Boeing 777-300ER",
-  "n": 2
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Airbus A330-200",
-  "n": 2
- },
- {
-  "op": "PC",
-  "name": "Pegasus Airlines",
-  "model": "Airbus A320neo",
-  "n": 2
- },
- {
-  "op": "QF",
-  "name": null,
-  "model": "Boeing 777-200LR",
-  "n": 2
- },
- {
-  "op": "FI",
-  "name": "Icelandair",
-  "model": "modelo 752W",
-  "n": 2
- },
- {
-  "op": "AZ",
-  "name": "ITA Airways",
-  "model": "Airbus A220-300",
-  "n": 2
- },
- {
-  "op": "U5",
-  "name": "SkyUp Airlines",
-  "model": "Boeing 737-800",
-  "n": 2
- },
- {
-  "op": "QF",
-  "name": null,
-  "model": "Boeing 777-300ER",
-  "n": 2
- },
- {
-  "op": "EY",
-  "name": "Etihad Airways",
-  "model": "Boeing 787-10",
-  "n": 2
- },
- {
-  "op": "VA",
-  "name": null,
-  "model": "Boeing 777-300ER",
-  "n": 2
- },
- {
   "op": "TS",
   "name": "Air Transat",
   "model": "Airbus A330-200",
-  "n": 2
- },
- {
-  "op": "AMQ",
-  "name": "Electra Airways",
-  "model": "Airbus A320",
   "n": 2
  },
  {
@@ -1380,15 +1116,69 @@
   "n": 2
  },
  {
-  "op": "U5",
-  "name": "SkyUp Airlines",
-  "model": "Boeing 737-700",
+  "op": "AZ",
+  "name": "ITA Airways",
+  "model": "Airbus A220-300",
   "n": 2
  },
  {
-  "op": "5F",
-  "name": "Fly One SRL",
+  "op": "LY",
+  "name": "El Al Israel Airlines",
+  "model": "Boeing 737-900",
+  "n": 2
+ },
+ {
+  "op": "TK",
+  "name": "Turkish Airlines",
+  "model": "Airbus A321",
+  "n": 2
+ },
+ {
+  "op": "AZ",
+  "name": "ITA Airways",
+  "model": "Airbus A321neo",
+  "n": 2
+ },
+ {
+  "op": "AC",
+  "name": "Air Canada",
+  "model": "Boeing 777-300ER",
+  "n": 2
+ },
+ {
+  "op": "PC",
+  "name": "Pegasus Airlines",
+  "model": "Airbus A320neo",
+  "n": 2
+ },
+ {
+  "op": "FI",
+  "name": "Icelandair",
+  "model": "modelo 752W",
+  "n": 2
+ },
+ {
+  "op": "EK",
+  "name": "Emirates",
+  "model": "Airbus A380",
+  "n": 2
+ },
+ {
+  "op": "EY",
+  "name": "Etihad Airways",
+  "model": "Boeing 787-10",
+  "n": 2
+ },
+ {
+  "op": "AMQ",
+  "name": "Electra Airways",
   "model": "Airbus A320",
+  "n": 2
+ },
+ {
+  "op": "U5",
+  "name": "SkyUp Airlines",
+  "model": "Boeing 737-700",
   "n": 2
  },
  {
@@ -1410,57 +1200,27 @@
   "n": 2
  },
  {
-  "op": "SR",
-  "name": "Sundair",
-  "model": "Airbus A319",
-  "n": 2
- },
- {
-  "op": "A3",
-  "name": "Aegean Airlines",
-  "model": "Airbus A320neo",
-  "n": 2
- },
- {
-  "op": "CS",
-  "name": "Chair Airlines AG",
-  "model": "Airbus A320",
-  "n": 2
- },
- {
-  "op": "6B",
-  "name": "Tuifly Nordic",
-  "model": "Boeing 737 MAX 8",
-  "n": 2
- },
- {
-  "op": "TP",
-  "name": "TAP Air Portugal",
-  "model": "Airbus A320",
-  "n": 2
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Airbus A321",
-  "n": 2
- },
- {
   "op": "LG",
   "name": "Luxair",
   "model": "Boeing 737-800",
   "n": 2
  },
  {
-  "op": "SN",
-  "name": "Brussels Airlines",
-  "model": "Airbus A319",
+  "op": "NAY",
+  "name": "Naysa",
+  "model": "ATR 72",
   "n": 2
  },
  {
   "op": "BA",
   "name": "British Airways",
   "model": "Airbus A321",
+  "n": 2
+ },
+ {
+  "op": "SN",
+  "name": "Brussels Airlines",
+  "model": "Airbus A319",
   "n": 2
  },
  {
@@ -1476,33 +1236,39 @@
   "n": 2
  },
  {
-  "op": "JL",
-  "name": null,
-  "model": "Airbus A319",
-  "n": 2
- },
- {
-  "op": "QF",
-  "name": null,
-  "model": "Airbus A350-900",
+  "op": "EY",
+  "name": "Etihad Airways",
+  "model": "Airbus A321neo",
   "n": 1
  },
  {
-  "op": "MF",
-  "name": null,
-  "model": "Boeing 787-9",
+  "op": "AC",
+  "name": "Air Canada",
+  "model": "Boeing 787-8",
+  "n": 1
+ },
+ {
+  "op": "SN",
+  "name": "Brussels Airlines",
+  "model": "Airbus A220-300",
+  "n": 1
+ },
+ {
+  "op": "SR",
+  "name": "Sundair",
+  "model": "Airbus A320",
+  "n": 1
+ },
+ {
+  "op": "CAT",
+  "name": "Copenhagen Airtaxi",
+  "model": "Boeing 737-800",
   "n": 1
  },
  {
   "op": "RX",
   "name": "Riyadh Air",
   "model": "Boeing 787-9",
-  "n": 1
- },
- {
-  "op": "DY",
-  "name": "Norwegian (NOZ)",
-  "model": "Airbus A320",
   "n": 1
  },
  {
@@ -1554,18 +1320,6 @@
   "n": 1
  },
  {
-  "op": "GA",
-  "name": null,
-  "model": "Boeing 737 MAX 8",
-  "n": 1
- },
- {
-  "op": "KQ",
-  "name": null,
-  "model": "Airbus A220-300",
-  "n": 1
- },
- {
   "op": "W4",
   "name": "Wizz Air Malta (WMT)",
   "model": "Airbus A320",
@@ -1578,27 +1332,9 @@
   "n": 1
  },
  {
-  "op": "MK",
-  "name": null,
-  "model": "Airbus A220-300",
-  "n": 1
- },
- {
-  "op": "7L",
-  "name": null,
-  "model": "Boeing 777-200LR",
-  "n": 1
- },
- {
   "op": "CZ",
   "name": "China Southern Airlines",
   "model": "Boeing 787-9",
-  "n": 1
- },
- {
-  "op": "VN",
-  "name": null,
-  "model": "Airbus A318",
   "n": 1
  },
  {
@@ -1644,9 +1380,45 @@
   "n": 1
  },
  {
-  "op": "UL",
-  "name": null,
-  "model": "Boeing 787-9",
+  "op": "LX",
+  "name": "Swiss International Airlines",
+  "model": "Airbus A220-100",
+  "n": 1
+ },
+ {
+  "op": "TB",
+  "name": "TUI FLY BELGIUM",
+  "model": "Embraer E195-E2",
+  "n": 1
+ },
+ {
+  "op": "AT",
+  "name": "Royal Air Maroc",
+  "model": "Boeing 737 MAX 8",
+  "n": 1
+ },
+ {
+  "op": "QR",
+  "name": "Qatar Airways",
+  "model": "Airbus A350-900",
+  "n": 1
+ },
+ {
+  "op": "TK",
+  "name": "Turkish Airlines",
+  "model": "Airbus A330-200",
+  "n": 1
+ },
+ {
+  "op": "KL",
+  "name": "KLM",
+  "model": "Boeing 737-900",
+  "n": 1
+ },
+ {
+  "op": "KL",
+  "name": "KLM",
+  "model": "Boeing 737-700",
   "n": 1
  },
  {
@@ -1665,18 +1437,6 @@
   "op": "EY",
   "name": "Etihad Airways",
   "model": "Boeing 787-9",
-  "n": 1
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Boeing 787-8",
-  "n": 1
- },
- {
-  "op": "XC",
-  "name": null,
-  "model": "Boeing 737-800",
   "n": 1
  },
  {
@@ -1716,21 +1476,9 @@
   "n": 1
  },
  {
-  "op": "EK",
-  "name": "Emirates",
-  "model": "Airbus A380",
-  "n": 1
- },
- {
   "op": "VY",
   "name": "Vueling",
   "model": "Airbus A319",
-  "n": 1
- },
- {
-  "op": "MH",
-  "name": null,
-  "model": "Boeing 777-300ER",
   "n": 1
  },
  {
@@ -1758,6 +1506,12 @@
   "n": 1
  },
  {
+  "op": "UX",
+  "name": "Air Europa",
+  "model": "Airbus A319",
+  "n": 1
+ },
+ {
   "op": "3F",
   "name": "FlyOne Armenia",
   "model": "Airbus A320",
@@ -1770,15 +1524,9 @@
   "n": 1
  },
  {
-  "op": "MH",
-  "name": null,
-  "model": "Airbus A320neo",
-  "n": 1
- },
- {
-  "op": "AS",
-  "name": null,
-  "model": "Boeing 787-9",
+  "op": "EK",
+  "name": "Emirates",
+  "model": "Boeing 777-300ER",
   "n": 1
  },
  {
@@ -1824,12 +1572,6 @@
   "n": 1
  },
  {
-  "op": "MH",
-  "name": null,
-  "model": "Airbus A320",
-  "n": 1
- },
- {
   "op": "IZ",
   "name": "Arkia Israeli Airlines",
   "model": "Airbus A321neo",
@@ -1839,48 +1581,6 @@
   "op": "TW",
   "name": "Trinity Airways",
   "model": "Airbus A330-200",
-  "n": 1
- },
- {
-  "op": "LX",
-  "name": "Swiss International Airlines",
-  "model": "Airbus A220-100",
-  "n": 1
- },
- {
-  "op": "TB",
-  "name": "TUI FLY BELGIUM",
-  "model": "Embraer E195-E2",
-  "n": 1
- },
- {
-  "op": "AT",
-  "name": "Royal Air Maroc",
-  "model": "Boeing 737 MAX 8",
-  "n": 1
- },
- {
-  "op": "QR",
-  "name": "Qatar Airways",
-  "model": "Airbus A350-900",
-  "n": 1
- },
- {
-  "op": "TK",
-  "name": "Turkish Airlines",
-  "model": "Airbus A330-200",
-  "n": 1
- },
- {
-  "op": "KL",
-  "name": "KLM",
-  "model": "Boeing 737-900",
-  "n": 1
- },
- {
-  "op": "JU",
-  "name": null,
-  "model": "Airbus A320",
   "n": 1
  },
  {
@@ -1926,54 +1626,6 @@
   "n": 1
  },
  {
-  "op": "EY",
-  "name": "Etihad Airways",
-  "model": "Airbus A321neo",
-  "n": 1
- },
- {
-  "op": "AC",
-  "name": "Air Canada",
-  "model": "Boeing 787-8",
-  "n": 1
- },
- {
-  "op": "SN",
-  "name": "Brussels Airlines",
-  "model": "Airbus A220-300",
-  "n": 1
- },
- {
-  "op": "SR",
-  "name": "Sundair",
-  "model": "Airbus A320",
-  "n": 1
- },
- {
-  "op": "JU",
-  "name": null,
-  "model": "Embraer 195",
-  "n": 1
- },
- {
-  "op": "CAT",
-  "name": "Copenhagen Airtaxi",
-  "model": "Boeing 737-800",
-  "n": 1
- },
- {
-  "op": "PWF",
-  "name": null,
-  "model": "modelo D328",
-  "n": 1
- },
- {
-  "op": "XZ",
-  "name": null,
-  "model": "Boeing 737-800",
-  "n": 1
- },
- {
   "op": "TP",
   "name": "TAP Air Portugal",
   "model": "Airbus A319",
@@ -1986,21 +1638,9 @@
   "n": 1
  },
  {
-  "op": "TK",
-  "name": "Turkish Airlines",
-  "model": "Boeing 737 MAX 8",
-  "n": 1
- },
- {
-  "op": "KL",
-  "name": "KLM",
-  "model": "Embraer 175",
-  "n": 1
- },
- {
-  "op": "PC",
-  "name": "Pegasus Airlines",
-  "model": "Airbus A320",
+  "op": "RSC",
+  "name": "Canair",
+  "model": "ATR 72",
   "n": 1
  },
  {
@@ -2022,6 +1662,24 @@
   "n": 1
  },
  {
+  "op": "TK",
+  "name": "Turkish Airlines",
+  "model": "Boeing 737 MAX 8",
+  "n": 1
+ },
+ {
+  "op": "KL",
+  "name": "KLM",
+  "model": "Embraer 175",
+  "n": 1
+ },
+ {
+  "op": "PC",
+  "name": "Pegasus Airlines",
+  "model": "Airbus A320",
+  "n": 1
+ },
+ {
   "op": "BQ",
   "name": "Sky Alps",
   "model": "Dash 8-400",
@@ -2034,21 +1692,15 @@
   "n": 1
  },
  {
+  "op": "YW",
+  "name": "Air Nostrum",
+  "model": "ATR 72",
+  "n": 1
+ },
+ {
   "op": "KK",
   "name": "LEAV",
   "model": "Airbus A320",
-  "n": 1
- },
- {
-  "op": "7O",
-  "name": null,
-  "model": "Boeing 737-800",
-  "n": 1
- },
- {
-  "op": "FRO",
-  "name": null,
-  "model": "modelo SB20",
   "n": 1
  }
 ]

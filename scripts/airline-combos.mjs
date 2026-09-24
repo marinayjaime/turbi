@@ -8,7 +8,7 @@ const names = {};
 for (const { row } of entries) if (row.iataCompania && row.nombreCompania) names[row.iataCompania] = row.nombreCompania;
 const g = new Map();
 for (const { airport, type, row } of entries) {
-  if (type !== 'S') continue;
+  if (type !== 'S' || !row.iataCompania || row.iataCompania === 'null') continue; // filas sin aerolínea: se ignoran (como en buildLegs)
   const k = `${airport}|${row.fecha}|${row.horaProgramada}|${row.iataOtro}`;
   (g.get(k) ?? g.set(k, []).get(k)).push(row);
 }
