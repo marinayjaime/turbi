@@ -146,3 +146,16 @@ export async function forecastRoute(profile, fetchFn = fetch) {
     agreement: ok.length === 2 ? agreement(ok[0].points, ok[1].points) : { level: 'no disponible' },
   };
 }
+
+// Hora de inicialización de la última ejecución de cada modelo (meta.json de Open-Meteo).
+export async function fetchModelRuns(labels, fetchFn = fetch) {
+  const out = {};
+  await Promise.all(MODELS.filter(m => labels.includes(m.label)).map(async m => {
+    try {
+      const res = await fetchFn(`https://api.open-meteo.com/data/${m.meta}/static/meta.json`, { signal: AbortSignal.timeout(8000) });
+      const t = res.ok ? (await res.json()).last_run_initialisation_time : null;
+      if (typeof t === 'number') out[m.label] = t * 1000;
+    } catch { /* sin dato: no se muestra */ }
+  }));
+  return Object.fromEntries(labels.filter(l => l in out).map(l => [l, out[l]]));
+}

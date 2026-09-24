@@ -123,3 +123,22 @@ describe('analyzeModel', () => {
     expect(typeof analyzeModel).toBe('function');
   });
 });
+
+import { fetchModelRuns } from '../js/models.js';
+
+describe('fetchModelRuns', () => {
+  it('hora de inicialización de cada modelo desde meta.json', async () => {
+    const f = vi.fn(async url => ({ ok: true, json: async () => ({ last_run_initialisation_time: url.includes('ecmwf') ? 1790208000 : 1790229600 }) }));
+    const r = await fetchModelRuns(['ECMWF', 'GFS'], f);
+    expect(f.mock.calls.map(c => c[0])).toEqual([
+      'https://api.open-meteo.com/data/ecmwf_ifs025/static/meta.json',
+      'https://api.open-meteo.com/data/ncep_gfs025/static/meta.json',
+    ]);
+    expect(r).toEqual({ ECMWF: 1790208000000, GFS: 1790229600000 });
+  });
+  it('si falla, ese modelo no aparece (nunca se inventa la hora)', async () => {
+    const f = vi.fn(async url => (url.includes('ecmwf') ? { ok: false, status: 500 } : { ok: true, json: async () => ({ last_run_initialisation_time: 1790229600 }) }));
+    expect(await fetchModelRuns(['ECMWF', 'GFS'], f)).toEqual({ GFS: 1790229600000 });
+    expect(await fetchModelRuns(['GFS'], vi.fn(async () => { throw new TypeError('x'); }))).toEqual({});
+  });
+});
