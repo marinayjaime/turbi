@@ -3,10 +3,12 @@
 import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
 import { buildLegs, mergeLegs, shardLegs, patchFailed } from './aena.mjs';
 import { fetchMissingLogos } from './fetch-logos.mjs';
+import { buildAviation } from './build-aviation.mjs';
+import { readFile } from 'node:fs/promises';
 
 const SITE = '_site';
 const PAGES_URL = process.env.PAGES_URL ?? 'https://marinayjaime.github.io/turbi/';
-const APP_FILES = ['index.html', 'manifest.json', 'sw.js', '.nojekyll', 'css', 'js', 'icons', 'img', 'data/airports.json'];
+const APP_FILES = ['index.html', 'manifest.json', 'sw.js', '.nojekyll', 'css', 'js', 'icons', 'img', 'data/airports.json', 'data/icao.json'];
 const AIRPORTS = [
   'MAD', 'BCN', 'PMI', 'AGP', 'ALC', 'LPA', 'TFS', 'IBZ', 'TFN', 'VLC', 'SVQ', 'BIO', 'ACE', 'FUE', 'MAH',
   'SCQ', 'GRO', 'REU', 'XRY', 'VGO', 'OVD', 'SDR', 'LEI', 'RMU', 'GRX', 'ZAZ', 'SPC', 'VIT', 'PNA', 'GMZ',
@@ -111,6 +113,17 @@ async function main() {
   const codes = [...new Set(Object.keys(files).map(p => p.split('/')[0]))];
   const saved = await fetchMissingLogos(codes, { dir: new URL(`../${SITE}/img/logos/`, import.meta.url) });
   if (saved) console.log(`Logos nuevos: ${saved} (añádelos al repo con: node scripts/fetch-logos.mjs)`);
+
+  // METAR/TAF/SIGMET/PIREP (opcional: un fallo aquí nunca impide publicar).
+  try {
+    const icaoMap = JSON.parse(await readFile('data/icao.json', 'utf8'));
+    const icaos = [...new Set(legs.flatMap(l => [l.o, l.a]))].map(c => icaoMap[c]).filter(Boolean).sort();
+    await buildAviation(icaos, `${SITE}/data/aviation`, async name => {
+      try { return await fetchJson(`${PAGES_URL}data/aviation/${name}.json`, 2); } catch { return null; }
+    });
+  } catch (err) {
+    console.warn(`Aviation Weather: ${err.message}`);
+  }
 }
 
 main().catch(err => {
