@@ -15,6 +15,11 @@ import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText }
 import { loadAviation } from './aviation-weather.js';
 import { renderMap } from './map.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
+import { currentPunctuality, fetchPunctuality, dowOf, slotOf } from './punctuality.js';
+import { punctualityHtml } from './ui-punctuality.js';
+import { aircraftName } from './plain.js';
+
+const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
 const $ = id => document.getElementById(id);
 const els = {
@@ -148,8 +153,23 @@ function flightCard(q, durationMin) {
     o: leg.o, a: leg.a, duration: durationMin,
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
     arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : null,
-    aircraft: leg.ac,
+    aircraft: aircraftName(leg.ac),
   };
+}
+
+// Situación de hoy (inmediata) + histórico (se carga después). Solo vuelos con horario de Aena.
+function punctualityState(q) {
+  const { leg, schedule } = q;
+  return {
+    current: currentPunctuality(leg), history: undefined, flight: q.number, airline: schedule.name ?? schedule.al,
+    route: [leg.o, leg.a], dow: dowOf(leg.d), slot: leg.sd ? slotOf(leg.sd) : null, since: PUNCTUALITY_SINCE,
+  };
+}
+
+async function loadPunctualityHistory(q, punct, stale) {
+  punct.history = await fetchPunctuality(q.schedule.al, q.schedule.n, `${q.leg.o}-${q.leg.a}`);
+  const el = $in('punctuality');
+  if (!stale() && el) el.innerHTML = punctualityHtml(punct);
 }
 
 async function run(q) {
@@ -163,6 +183,7 @@ async function run(q) {
     const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
     const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
     const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin) : null;
+    const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
     const note = profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.'
@@ -173,7 +194,9 @@ async function run(q) {
       if (!flight) throw new Error(note);
       currentView = null;
       renderResult(els.result, { flight, note });
+      els.result.querySelector('.flight')?.insertAdjacentHTML('afterend', `<section id="punctuality">${punctualityHtml(punct)}</section>`);
       show('result');
+      await safely(() => loadPunctualityHistory(q, punct, stale));
       return;
     }
 
@@ -189,6 +212,7 @@ async function run(q) {
       return await runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale);
     }
     if (stale()) return;
+    Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz });
     showForecast(view, q, stale).catch(() => { if (!stale()) showError('Algo ha fallado al mostrar el pronóstico.', true); });
   } catch (err) {
     if (stale()) return;
@@ -246,6 +270,7 @@ async function showForecast(view, q, stale, saved = false) {
     if (view.trend && el) { el.textContent = view.trend; el.hidden = false; }
   });
   await Promise.all([
+    safely(async () => { if (view.punctuality) await loadPunctualityHistory(q, view.punctuality, stale); }),
     safely(async () => {
       await nameSegments(view.segments, view.originIata);
       if (stale()) return;

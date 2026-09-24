@@ -130,3 +130,14 @@ export function trend(recent, base) {
   if (diff >= 0.1) return 'La puntualidad reciente está por encima de su media de 90 días.';
   return 'Sin cambios relevantes.';
 }
+
+// Histórico agregado de un vuelo y ruta (data/punctuality/<AL>/<N>.json). Sin archivo o sin red → null.
+export async function fetchPunctuality(al, n, route, fetchFn = fetch) {
+  try {
+    const res = await fetchFn(`data/punctuality/${al}/${n}.json`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    return (await res.json()).routes?.[route] ?? null;
+  } catch {
+    return null;
+  }
+}

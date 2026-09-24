@@ -4,6 +4,7 @@ import { CAUSE_LABELS } from './turbi-index.js';
 import { NO_PIREPS } from './aviation-weather.js';
 import { agoText } from './storage.js';
 import { altitudeText, altitudeRange, localHour } from './plain.js';
+import { punctualityHtml } from './ui-punctuality.js';
 
 const LEVELS = ['Nula', 'Ligera', 'Moderada', 'Fuerte'];
 const HEAD = {
@@ -198,8 +199,9 @@ export function explainHtml(current) {
 }
 
 export function renderForecast(el, view, nowMs) {
+  const punct = view.punctuality ? `<section id="punctuality">${punctualityHtml(view.punctuality)}</section>` : '';
   const head = view.flight
-    ? `${flightCardHtml(view.flight)}<h3 class="section">Turbulencias</h3>`
+    ? `${flightCardHtml(view.flight)}${punct}<h3 class="section">Turbulencias</h3>`
     : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>`;
   el.innerHTML = `
     <div class="summary">
