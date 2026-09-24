@@ -6,7 +6,7 @@ import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc, dateLabel } from './ui.js';
+import { renderResult, esc, dateLabel, flightCardHtml } from './ui.js';
 import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
@@ -18,6 +18,7 @@ import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
+import { wantsRadar, fetchRadar, withRadar, departedText, endedNote } from './radar.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
@@ -149,7 +150,7 @@ function flightCard(q, durationMin) {
     title: `${schedule.name ?? schedule.al} ${schedule.al} ${schedule.n}`,
     route: `${origin.city} a ${destination.city}`,
     tabs: tabDates(schedule.legs, leg.d).map(date => ({ date, active: date === leg.d })),
-    status: flightStatus(leg),
+    status: departedText(leg, destination.city) ? { text: departedText(leg, destination.city), tone: 'info' } : flightStatus(leg),
     o: leg.o, a: leg.a, duration: durationMin,
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
     arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : null,
@@ -168,6 +169,15 @@ function punctualityState(q) {
     route: [leg.o, leg.a], dow: dowOf(leg.d), slot: leg.sd ? slotOf(leg.sd) : null, since: PUNCTUALITY_SINCE,
     dayLabel: leg.d === new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date()) ? 'Hoy' : dateLabel(leg.d),
   };
+}
+
+// Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga.
+async function showRadar(q, flight, stale) {
+  if (!flight || flight.stale || !q.leg || !wantsRadar(q.leg)) return;
+  const card = withRadar(flight, await fetchRadar(q.schedule.al, q.schedule.n));
+  const el = els.result.querySelector('.flight');
+  if (stale() || card === flight || !el) return;
+  el.outerHTML = flightCardHtml(card);
 }
 
 async function loadPunctualityHistory(q, punct, stale) {
@@ -190,7 +200,7 @@ async function run(q) {
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
-    const note = profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.'
+    const note = profile.arrivalMs < Date.now() ? (q.leg ? endedNote(q.leg) : 'Este vuelo ya ha aterrizado.')
       : rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'
       : null;
@@ -200,7 +210,7 @@ async function run(q) {
       renderResult(els.result, { flight, note });
       els.result.querySelector('.flight')?.insertAdjacentHTML('afterend', `<section id="punctuality">${punctualityHtml(punct)}</section>`);
       show('result');
-      await safely(() => loadPunctualityHistory(q, punct, stale));
+      await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale))]);
       return;
     }
 
@@ -275,6 +285,7 @@ async function showForecast(view, q, stale, saved = false) {
   });
   await Promise.all([
     safely(async () => { if (view.punctuality) await loadPunctualityHistory(q, view.punctuality, stale); }),
+    safely(() => showRadar(q, view.flight, stale)),
     safely(async () => {
       await nameSegments(view.segments, view.originIata);
       if (stale()) return;

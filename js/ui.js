@@ -25,6 +25,22 @@ export function formatDuration(min) {
 const DATE_FMT = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 export const dateLabel = iso => DATE_FMT.format(new Date(`${iso}T12:00:00Z`)).replace('.', '');
 
+// Miles con punto (4.800), también con 4 cifras (Intl en español no lo pone).
+const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+function radarHtml(r) {
+  if (!r) return '';
+  if (r.state === 'volando') {
+    const alt = `a ${thousands(Math.round(r.altM / 100) * 100)} m (${thousands(Math.round(r.altFt / 100) * 100)} pies)`;
+    const speed = r.kmh ? `, a ${r.kmh} km/h` : '';
+    return `<p class="radar">Según el radar (adsb.lol): ${esc(alt)}${esc(speed)}. Última señal hace ${esc(r.seenS)} s, con el indicativo ${esc(r.callsign)}.</p>`;
+  }
+  if (r.state === 'sin-datos') {
+    return `<p class="radar muted">El radar no lo encuentra con el indicativo ${esc(r.callsign)}: puede haber aterrizado o emitir con otro indicativo.</p>`;
+  }
+  return '<p class="radar muted">El radar no responde ahora mismo.</p>';
+}
+
 // card = { al, title, route, tabs: [{ date, active }], status: { text, tone }, o, a, duration,
 //          dep: { date, time, est, late, terminal, gate }, arr: { date, time, est, late, terminal } | null, aircraft }
 export function flightCardHtml(c) {
@@ -53,6 +69,7 @@ export function flightCardHtml(c) {
       <p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>`
         : `<span class="status tone-${esc(c.status.tone)}${c.status.flying ? ' flying' : ''}">${esc(c.status.text)}${c.status.flying
           ? '<span class="fly" aria-hidden="true"><span class="fly-plane">✈</span></span>' : ''}</span>`}
+      ${c.stale ? '' : radarHtml(c.radar)}
       <div class="route-line">
         <strong>${esc(c.o)}</strong>
         <span class="line"><em>${esc(formatDuration(c.duration))}</em><span class="plane">✈</span></span>

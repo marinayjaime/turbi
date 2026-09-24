@@ -129,6 +129,22 @@ describe('en vuelo', () => {
   });
 });
 
+describe('radar', () => {
+  const c = { al: 'EI', title: 'x', route: 'y', tabs: [], status: { text: 'Volando', tone: 'info', flying: true }, o: 'PMI', a: 'DUB', duration: 160,
+    dep: { date: '2026-09-24', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 3 min', stale: false };
+  it('volando: altura, velocidad, señal y con qué indicativo, en lenguaje llano', () => {
+    const html = flightCardHtml({ ...c, radar: { state: 'volando', callsign: 'EIN737', altM: 4808, altFt: 15775, kmh: 669, seenS: 12 } });
+    expect(html).toContain('Según el radar (adsb.lol): a 4.800 m (15.800 pies), a 669 km/h. Última señal hace 12 s, con el indicativo EIN737.');
+  });
+  it('sin datos: se dice sin deducir nada', () => {
+    const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-datos', callsign: 'EIN737' } });
+    expect(html).toContain('El radar no lo encuentra con el indicativo EIN737: puede haber aterrizado o emitir con otro indicativo.');
+  });
+  it('no disponible', () => {
+    expect(flightCardHtml({ ...c, radar: { state: 'no-disponible' } })).toContain('El radar no responde ahora mismo.');
+  });
+});
+
 describe('datos de Aena antiguos', () => {
   it('aviso visible si tienen más de 40 min', () => {
     const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90,
