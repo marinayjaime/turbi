@@ -73,3 +73,16 @@ describe('flightStatus', () => {
     expect(flightStatus(leg({ st: 'RET', ed: '2026-09-25T00:40', sd: '23:50' }))).toEqual({ text: 'Retrasado · sale 00:40', tone: 'warn' });
   });
 });
+
+import { isLate } from '../js/schedule.js';
+
+describe('isLate', () => {
+  it('salida y llegada, también cuando el retraso cruza la medianoche', () => {
+    expect(isLate(leg({ ed: '2026-09-24T18:10' }), 'dep')).toBe(true);
+    expect(isLate(leg(), 'dep')).toBe(false);
+    expect(isLate(leg({ ea: '2026-09-24T19:16' }), 'arr')).toBe(false); // llega antes
+    expect(isLate(leg({ sd: '23:00', sa: '23:50', ea: '2026-09-25T00:20' }), 'arr')).toBe(true);
+    expect(isLate(leg({ sd: '23:30', sa: '00:30', ea: '2026-09-25T00:20' }), 'arr')).toBe(false);
+    expect(isLate(leg({ sa: null, ea: null }), 'arr')).toBe(false);
+  });
+});

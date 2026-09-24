@@ -51,14 +51,18 @@ export function legDeparture(leg) {
   return null;
 }
 
-export function legArrival(leg) {
-  if (leg.ea) return split(leg.ea);
+// Llegada programada: si es antes que la salida, es del día siguiente.
+function scheduledArrival(leg) {
   if (!leg.sa) return null;
   if (leg.sd && leg.sa < leg.sd) {
     const next = new Date(Date.parse(`${leg.d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
     return { date: next, time: leg.sa };
   }
   return { date: leg.d, time: leg.sa };
+}
+
+export function legArrival(leg) {
+  return leg.ea ? split(leg.ea) : scheduledArrival(leg);
 }
 
 const STATES = {
@@ -83,4 +87,12 @@ export function flightStatus(leg) {
     return { text: `Retrasado · sale ${legDeparture(leg).time}`, tone: 'warn' };
   }
   return STATES[leg.st] ?? { text: 'Programado', tone: 'ok' };
+}
+
+// ¿La hora estimada es posterior a la programada? (compara fecha y hora, no solo HH:MM)
+export function isLate(leg, which) {
+  if (which === 'dep') return delayMin(leg) > 0;
+  const sched = scheduledArrival(leg);
+  if (!sched || !leg.ea) return false;
+  return Date.parse(`${leg.ea}:00Z`) > Date.parse(`${sched.date}T${sched.time}:00Z`);
 }

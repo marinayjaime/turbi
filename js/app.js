@@ -3,7 +3,7 @@ import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, fetchTimezone } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
-import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus } from './schedule.js';
+import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
 import { renderResult, esc } from './ui.js';
@@ -128,8 +128,8 @@ function flightCard(q, durationMin) {
     tabs: tabDates(schedule.legs, leg.d).map(date => ({ date, active: date === leg.d })),
     status: flightStatus(leg),
     o: leg.o, a: leg.a, duration: durationMin,
-    dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, terminal: leg.td, gate: leg.g } : null,
-    arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, terminal: leg.ta } : null,
+    dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
+    arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : null,
     aircraft: leg.ac,
   };
 }
@@ -177,8 +177,9 @@ async function run(q) {
   } catch (err) {
     if (stale()) return;
     // fetch lanza TypeError sin conexión; su mensaje viene en inglés.
-    const msg = err instanceof TypeError ? 'Sin conexión o el servicio no responde.' : err.message;
-    showError(msg || 'Algo ha fallado. Inténtalo de nuevo.', true);
+    const network = err instanceof TypeError;
+    const msg = network ? 'Sin conexión o el servicio no responde.' : err.message;
+    showError(msg || 'Algo ha fallado. Inténtalo de nuevo.', network || err.retryable === true);
   }
 }
 
@@ -212,7 +213,9 @@ els.toggleManual.addEventListener('click', () => setManual(els.manual.hidden));
 
 for (const input of [els.origin, els.destination]) {
   input.addEventListener('input', async () => {
-    const results = searchAirports(await airports(), input.value);
+    let db;
+    try { db = await airports(); } catch { return; } // sin lista: simplemente no hay sugerencias
+    const results = searchAirports(db, input.value);
     els.airportsList.innerHTML = results
       .map(a => `<option value="${esc(a.iata)}">${esc(a.city)} · ${esc(a.name)}</option>`).join('');
   });

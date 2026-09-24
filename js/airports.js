@@ -2,8 +2,13 @@ let cache = null;
 
 export async function loadAirports(fetchFn = fetch) {
   if (!cache) {
-    const res = await fetchFn('data/airports.json');
-    cache = await res.json();
+    try {
+      const res = await fetchFn('data/airports.json');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      cache = await res.json();
+    } catch {
+      throw Object.assign(new Error('No se pudo cargar la lista de aeropuertos.'), { retryable: true });
+    }
   }
   return cache;
 }

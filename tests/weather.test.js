@@ -114,3 +114,14 @@ describe('fetchTimezone', () => {
     await expect(fetchTimezone({ lat: 39.55, lon: 2.74 }, f)).rejects.toThrow('No se pudo obtener el pronóstico (HTTP 500)');
   });
 });
+
+describe('errores reintentables', () => {
+  it('los fallos de Open-Meteo se marcan como reintentables', async () => {
+    for (const status of [429, 503]) {
+      const err = await fetchLocations([{ lat: 40, lon: 3 }], T0, T0, vi.fn(async () => ({ ok: false, status }))).catch(e => e);
+      expect(err.retryable).toBe(true);
+    }
+    const tz = await fetchTimezone({ lat: 40, lon: 3 }, vi.fn(async () => ({ ok: false, status: 500 }))).catch(e => e);
+    expect(tz.retryable).toBe(true);
+  });
+});

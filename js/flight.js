@@ -11,7 +11,8 @@ export async function lookupFlight(number, fetchFn = fetch, timeoutMs = 8000) {
     const res = await fetchFn(ADSBDB + code, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
     const route = (await res.json())?.response?.flightroute;
-    if (!route?.origin || !route?.destination) return null;
+    const located = a => Number.isFinite(a?.latitude) && Number.isFinite(a?.longitude);
+    if (!located(route?.origin) || !located(route?.destination)) return null;
     return {
       number: route.callsign_iata || code,
       airline: route.airline?.name ?? '',

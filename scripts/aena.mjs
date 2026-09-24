@@ -106,3 +106,27 @@ export function shardLegs(legs) {
   }
   return { files, airlines };
 }
+
+// Si alguna descarga de Aena falla, rellena ese hueco con la publicación anterior.
+// failed: [{ airport, type: 'S' | 'L' }]; aenaAirports: aeropuertos de la red Aena.
+export function patchFailed(fresh, old, failed, aenaAirports = []) {
+  if (!failed.length) return fresh;
+  const key = l => `${l.al}|${l.n}|${l.d}|${l.o}|${l.a}`;
+  let out = fresh.slice();
+  for (const { airport, type } of failed) {
+    if (type === 'S') {
+      out = out.filter(l => l.o !== airport).concat(old.filter(l => l.o === airport));
+      continue;
+    }
+    const oldByKey = new Map(old.filter(l => l.a === airport).map(l => [key(l), l]));
+    out = out.map(l => {
+      const prev = l.a === airport && l.sa === null ? oldByKey.get(key(l)) : null;
+      return prev ? { ...l, sa: prev.sa, ea: prev.ea, ta: prev.ta } : l;
+    });
+    const present = new Set(out.map(key));
+    for (const l of oldByKey.values()) {
+      if (!aenaAirports.includes(l.o) && !present.has(key(l))) out.push(l);
+    }
+  }
+  return out;
+}

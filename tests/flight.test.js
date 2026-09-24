@@ -40,6 +40,11 @@ describe('lookupFlight', () => {
     expect(await lookupFlight('VY3902', hang, 50)).toBeNull();
     expect(Date.now() - t0).toBeLessThan(1000);
   }, 2000);
+  it('aeropuerto sin coordenadas → null (se abre la entrada manual)', async () => {
+    const body = structuredClone(ADSBDB_OK);
+    delete body.response.flightroute.destination.latitude;
+    expect(await lookupFlight('VY3902', ok(body))).toBeNull();
+  });
   it('formato inválido → null sin llamar a la API', async () => {
     const f = ok(ADSBDB_OK);
     expect(await lookupFlight('hola', f)).toBeNull();

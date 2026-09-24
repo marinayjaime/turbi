@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildLegs, mergeLegs, shardLegs } from '../scripts/aena.mjs';
+import { buildLegs, mergeLegs, shardLegs, patchFailed } from '../scripts/aena.mjs';
 
 const row = over => ({
   iataCompania: 'IB', oaciCompania: 'IBE', nombreCompania: 'Iberia', numVuelo: '1668',
@@ -78,5 +78,33 @@ describe('shardLegs', () => {
     expect(ib.legs.map(l => l.d)).toEqual(['2026-09-24', '2026-09-25']);
     expect(ib.legs[0].al).toBeUndefined();
     expect(airlines).toEqual({ IBE: 'IB', VLG: 'VY' });
+  });
+});
+
+describe('patchFailed', () => {
+  const L = over => ({ al: 'IB', n: '1', d: '2026-09-24', o: 'PMI', a: 'LPA', sd: '10:00', ed: null, sa: '12:00', ea: null, td: null, ta: '1', g: null, st: null, ac: null, ...over });
+  it('llegadas fallidas en X: completa la llegada con los datos anteriores', () => {
+    const fresh = [L({ sa: null, ta: null }), L({ n: '2', a: 'MAD', sa: null })];
+    const old = [L({ sa: '12:05', ea: '2026-09-24T12:10', ta: '2' }), L({ n: '2', a: 'MAD', sa: '11:00' })];
+    const out = patchFailed(fresh, old, [{ airport: 'LPA', type: 'L' }]);
+    expect(out[0]).toMatchObject({ sa: '12:05', ea: '2026-09-24T12:10', ta: '2' });
+    expect(out[1].sa).toBeNull(); // MAD no falló: no se toca
+  });
+  it('llegadas fallidas en X: recupera vuelos desde el extranjero que solo estaban en las llegadas', () => {
+    const foreign = L({ n: '9', o: 'FRA', sd: null });
+    const out = patchFailed([], [foreign, L({ n: '8', o: 'PMI' })], [{ airport: 'LPA', type: 'L' }], ['PMI', 'LPA']);
+    expect(out).toEqual([foreign]);
+  });
+  it('salidas fallidas en X: sustituye los tramos que salen de X por los anteriores', () => {
+    const fresh = [L({ o: 'LPA', a: 'MAD', sd: null, sa: '15:00' }), L({ n: '5' })];
+    const old = [L({ o: 'LPA', a: 'MAD', sd: '12:30', sa: '15:00', g: 'B' })];
+    const out = patchFailed(fresh, old, [{ airport: 'LPA', type: 'S' }]);
+    expect(out).toContainEqual(old[0]);
+    expect(out).toContainEqual(L({ n: '5' }));
+    expect(out).toHaveLength(2);
+  });
+  it('sin fallos devuelve lo mismo', () => {
+    const fresh = [L()];
+    expect(patchFailed(fresh, [L({ sa: '99:99' })], [])).toBe(fresh);
   });
 });

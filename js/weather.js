@@ -2,6 +2,9 @@ const BASE = 'https://api.open-meteo.com/v1/forecast';
 const CHUNK = 100;
 const HOUR_MS = 3600000;
 
+// Error de red o del servicio: tiene sentido que la app ofrezca «Reintentar».
+const retryable = message => Object.assign(new Error(message), { retryable: true });
+
 export const HOURLY_VARS = [
   'wind_speed_300hPa', 'wind_direction_300hPa', 'geopotential_height_300hPa',
   'wind_speed_250hPa', 'wind_direction_250hPa', 'geopotential_height_250hPa',
@@ -40,8 +43,8 @@ export async function fetchLocations(locs, startMs, endMs, fetchFn = fetch) {
   const results = [];
   for (let i = 0; i < locs.length; i += CHUNK) {
     const res = await fetchFn(forecastUrl(locs.slice(i, i + CHUNK), startMs, endMs));
-    if (res.status === 429) throw new Error('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
-    if (!res.ok) throw new Error(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
+    if (res.status === 429) throw retryable('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
+    if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
     const json = await res.json();
     results.push(...(Array.isArray(json) ? json : [json]));
   }
@@ -85,6 +88,6 @@ export async function fetchTimezone(point, fetchFn = fetch) {
     forecast_days: '1',
   });
   const res = await fetchFn(`${BASE}?${params}`);
-  if (!res.ok) throw new Error(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
+  if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
   return (await res.json()).timezone;
 }

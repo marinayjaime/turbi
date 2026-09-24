@@ -40,3 +40,16 @@ describe('build-airports', () => {
     expect(toEntry(noService, header)).toBeNull();
   });
 });
+
+import { vi } from 'vitest';
+import { loadAirports } from '../js/airports.js';
+
+describe('loadAirports', () => {
+  it('si no carga, error en español y se puede reintentar', async () => {
+    const msg = 'No se pudo cargar la lista de aeropuertos.';
+    await expect(loadAirports(vi.fn(async () => ({ ok: false, status: 404 })))).rejects.toThrow(msg);
+    await expect(loadAirports(vi.fn(async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } })))).rejects.toThrow(msg);
+    await expect(loadAirports(vi.fn(async () => { throw new TypeError('Failed to fetch'); }))).rejects.toThrow(msg);
+    expect(await loadAirports(vi.fn(async () => ({ ok: true, json: async () => ({ PMI: ['P', 'Palma', 1, 2] }) })))).toHaveProperty('PMI');
+  });
+});

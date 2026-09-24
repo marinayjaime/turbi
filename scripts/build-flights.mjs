@@ -1,7 +1,7 @@
 // Construye _site/ (la app + horarios de Aena) para desplegar en GitHub Pages.
 // Uso: MODE=full|live|auto node scripts/build-flights.mjs
 import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
-import { buildLegs, mergeLegs, shardLegs } from './aena.mjs';
+import { buildLegs, mergeLegs, shardLegs, patchFailed } from './aena.mjs';
 
 const SITE = '_site';
 const PAGES_URL = process.env.PAGES_URL ?? 'https://marinayjaime.github.io/turbi/';
@@ -24,7 +24,8 @@ function pickMode() {
   return scheduled && new Date().getUTCHours() % 6 !== 0 ? 'live' : 'full';
 }
 
-async function fetchJson(url, tries = 3) {
+// Aena a veces responde con un cuerpo roto; se reintenta con esperas crecientes.
+async function fetchJson(url, tries = 4) {
   for (let i = 1; i <= tries; i++) {
     try {
       const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(90000) });
@@ -32,7 +33,7 @@ async function fetchJson(url, tries = 3) {
       return await res.json();
     } catch (err) {
       if (i === tries) throw err;
-      await new Promise(r => setTimeout(r, 2000 * i));
+      await new Promise(r => setTimeout(r, 5000 * i));
     }
   }
 }
@@ -40,7 +41,7 @@ async function fetchJson(url, tries = 3) {
 async function fetchAena(twoDays) {
   const jobs = AIRPORTS.flatMap(airport => ['S', 'L'].map(type => ({ airport, type })));
   const entries = [];
-  let failures = 0;
+  const failed = [];
   const worker = async () => {
     while (jobs.length) {
       const { airport, type } = jobs.shift();
@@ -49,14 +50,14 @@ async function fetchAena(twoDays) {
         const rows = await fetchJson(url);
         if (Array.isArray(rows)) for (const row of rows) entries.push({ airport, type, row });
       } catch (err) {
-        failures++;
+        failed.push({ airport, type });
         console.warn(`Aena ${airport} ${type}: ${err.message}`);
       }
     }
   };
   await Promise.all(Array.from({ length: 4 }, worker));
-  console.log(`Aena: ${entries.length} filas, ${failures} fallos de ${AIRPORTS.length * 2}`);
-  return { entries, failures };
+  console.log(`Aena: ${entries.length} filas, ${failed.length} fallos de ${AIRPORTS.length * 2}`);
+  return { entries, failed };
 }
 
 async function previousLegs() {
@@ -73,14 +74,21 @@ async function main() {
   await rm(SITE, { recursive: true, force: true });
   for (const f of APP_FILES) await cp(f, `${SITE}/${f}`, { recursive: true });
 
-  const { entries, failures } = await fetchAena(mode === 'live');
-  const aenaOk = entries.length > 0 && failures < AIRPORTS.length; // más de la mitad de las descargas bien
-  const fresh = aenaOk ? buildLegs(entries) : [];
+  const { entries, failed } = await fetchAena(mode === 'live');
+  const aenaOk = entries.length > 0 && failed.length < AIRPORTS.length; // más de la mitad de las descargas bien
+  const freshDates = [madridDate(0), madridDate(1)];
+  const old = mode === 'live' || failed.length || !aenaOk ? await previousLegs() : null;
+  let fresh = aenaOk ? buildLegs(entries) : [];
+  if (aenaOk && failed.length && old) {
+    // En modo live solo se recuperan las fechas que se están refrescando.
+    const oldScope = mode === 'live' ? old.filter(l => freshDates.includes(l.d)) : old;
+    fresh = patchFailed(fresh, oldScope, failed, AIRPORTS);
+    console.log(`Recuperados de la publicación anterior: ${failed.map(f => `${f.airport} ${f.type}`).join(', ')}`);
+  }
   let legs;
   if (mode === 'live' || !aenaOk) {
-    const old = await previousLegs();
     if (!aenaOk) console.warn('Aena no disponible: se conservan los horarios anteriores');
-    legs = old ? (aenaOk ? mergeLegs(old, fresh, [madridDate(0), madridDate(1)], madridDate(0)) : old) : fresh;
+    legs = old ? (aenaOk ? mergeLegs(old, fresh, freshDates, madridDate(0)) : old) : fresh;
   } else {
     legs = fresh;
   }
