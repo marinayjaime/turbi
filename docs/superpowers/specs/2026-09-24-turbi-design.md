@@ -22,9 +22,8 @@ PWA personal para iPhone que, dado un vuelo concreto, estima si tendrá turbulen
 | Servicio | Uso |
 |---|---|
 | `api.adsbdb.com/v0/callsign/{nº}` | Nº de vuelo → aerolínea, aeropuerto origen y destino con coordenadas. No da horarios. CORS abierto (verificado). |
-| Open-Meteo Forecast API | Viento, temperatura, CAPE y código de tiempo por niveles de presión, para muchas coordenadas en una petición. |
-| Open-Meteo Elevation API | Altura del terreno bajo cada punto (onda de montaña). |
-| Nominatim (OpenStreetMap) | Geocodificación inversa para nombrar los tramos con turbulencia. Máx. 1 petición/s. |
+| Open-Meteo Forecast API | Viento, altura geopotencial, CAPE y código de tiempo por niveles de presión, para muchas coordenadas en una petición. Cada respuesta incluye también `elevation` (altura del terreno), que se usa para la onda de montaña. |
+| Nominatim (OpenStreetMap) | Geocodificación inversa para nombrar los tramos con turbulencia. Máx. 1 petición/s. Sobre el mar responde `Unable to geocode` → se usa "a X km de ORIGEN". |
 
 ### Módulos
 
@@ -33,7 +32,8 @@ PWA personal para iPhone que, dado un vuelo concreto, estima si tendrá turbulen
 | `js/flight.js` | Nº de vuelo → `{airline, origin, destination}` | adsbdb |
 | `js/airports.js` | Código IATA → `{name, lat, lon}` para la entrada manual | `data/airports.json` (incluido, de OurAirports, solo aeropuertos con código IATA y servicio regular) |
 | `js/route.js` | Ruta por círculo máximo, puntos cada ~50 km, perfil de vuelo, hora y nivel de cada punto | — |
-| `js/weather.js` | Descarga los datos de Open-Meteo (pronóstico y elevación) de todos los puntos y sus vecinos | Open-Meteo |
+| `js/time.js` | Hora local ↔ UTC | — |
+| `js/weather.js` | Descarga los datos de Open-Meteo de todos los puntos y sus vecinos; zona horaria de los aeropuertos | Open-Meteo |
 | `js/turbulence.js` | Índices, intensidad por punto, agrupación en tramos, veredicto | — (funciones puras) |
 | `js/places.js` | Nombre del lugar de cada tramo | Nominatim |
 | `js/history.js` | Últimos 5 vuelos en `localStorage` | — |
@@ -77,11 +77,10 @@ nº vuelo + fecha + hora salida ──► flight.js ──► origen/destino
   - Subida: primeros 20 min.
   - Bajada: últimos 25 min.
   - Crucero: el resto.
-  - Si el vuelo dura menos de 45 min, se reparte 45 % subida, 10 % crucero y 45 % bajada.
-- **Nivel de crucero:** FL360 si la duración es de 1 h o más; FL300 si es menor.
+  - Si el vuelo dura menos de 60 min, se reparte 40 % subida, 20 % crucero y 40 % bajada.
 - **Niveles de presión que se consultan:**
-  - Crucero: 300 / 250 / 200 hPa.
-  - Subida y bajada: 850 / 700 / 500 hPa.
+  - Crucero: capa 300–250 hPa (≈ FL300–FL340), representativa del crucero en corto y medio radio.
+  - Subida y bajada: 700 hPa (onda de montaña) más CAPE y código de tiempo en superficie.
 - Open-Meteo es horario: cada punto usa la hora más cercana a su paso.
 
 ## 5. Cálculo de turbulencia
@@ -93,7 +92,8 @@ Cada punto recibe una intensidad por indicador: `0 nula · 1 ligera · 2 moderad
 - `TI1 = VWS × DEF`
   - VWS: cizalladura vertical entre 300 y 250 hPa (usando la altura geopotencial de Open-Meteo).
   - DEF: deformación horizontal, calculada por diferencias finitas con 4 vecinos a ±50 km (N, S, E, O) en el nivel de 250 hPa.
-- Unidades: 10⁻⁷ s⁻².
+- Unidades: 10⁻⁷ s⁻². Los umbrales se aplican con `≥` (TI1 = 4 → 1).
+- Un dato que falte (`null`) en Open-Meteo hace que ese indicador valga 0; nunca rompe la consulta.
 
 | TI1 | Intensidad |
 |---|---|
@@ -104,8 +104,8 @@ Cada punto recibe una intensidad por indicador: `0 nula · 1 ligera · 2 moderad
 
 ### 5.2 Cizalladura vertical (solo crucero)
 
-- La misma VWS, expresada en m/s por 1.000 ft.
-- ≥ 6 → 1; ≥ 9 → 2.
+- La misma VWS, expresada en nudos por 1.000 ft.
+- ≥ 5 → 1; ≥ 8 → 2.
 
 ### 5.3 Convección (todas las fases)
 
@@ -119,7 +119,7 @@ Cada punto recibe una intensidad por indicador: `0 nula · 1 ligera · 2 moderad
 
 ### 5.4 Onda de montaña (todas las fases)
 
-- Requiere terreno ≥ 1.500 m.
+- Requiere terreno ≥ 1.500 m (campo `elevation` de Open-Meteo).
 - Viento a 700 hPa > 15 m/s → 1; > 25 m/s → 2.
 
 ### 5.5 Tramos y veredicto
