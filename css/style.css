@@ -210,3 +210,7 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .disclaimer { font-size: 12px; color: var(--muted); margin: 8px 0 0; font-style: italic; }
 .offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: #fff4e5; color: #b25e00; font-size: 14px; font-weight: 500; }
 #saved-link { margin-top: 4px; }
+.facts > .conf-row:has(details[open]) { grid-template-columns: 1fr; }
+.facts .conf ul { padding-left: 18px; margin: 8px 0 0; }
+.facts .conf li { padding: 2px 0; font-weight: 400; }
+.facts .conf p { font-weight: 400; }

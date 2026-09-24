@@ -264,6 +264,11 @@ async function showForecast(view, q, stale, saved = false) {
 
 async function submit() {
   els.error.hidden = true;
+  if (navigator.onLine === false) {
+    // Sin red ni el horario ni adsbdb responden: decir «no encuentro ese vuelo» sería engañoso.
+    showError('Sin conexión: no se puede consultar el pronóstico ahora.', true);
+    return;
+  }
   show('loading'); // buscar el vuelo también puede tardar unos segundos
   try {
     const q = await resolveFlight();

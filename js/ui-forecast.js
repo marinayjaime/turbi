@@ -51,7 +51,7 @@ export function summaryHtml(view) {
     </div>
     <dl class="facts">
       ${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}
-      <div><dt>Confianza</dt><dd>${confidenceHtml(view.confidence)}</dd></div>
+      <div class="conf-row"><dt>Confianza</dt><dd>${confidenceHtml(view.confidence)}</dd></div>
     </dl>
     <div class="shares">
       <div class="sharebar">${bar}</div>
