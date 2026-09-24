@@ -123,7 +123,7 @@ export function freshnessHtml(view, nowMs, timeZone = undefined) {
   if (runs.length) parts.push(`Previsión del tiempo calculada ${runs.map(([m, t]) => `a las ${localHour(t, timeZone)} (modelo ${NAMES[m] ?? m})`).join(' y ')}`);
   parts.push(view.models.length > 1
     ? `Los dos modelos ${AGREEMENT[view.agreement?.level] ?? 'no se han podido comparar'}`
-    : `Solo se ha podido consultar el modelo ${view.models[0]}`);
+    : `Solo se ha podido consultar el modelo ${{ ECMWF: 'europeo (ECMWF)', GFS: 'estadounidense (GFS)' }[view.models[0]] ?? view.models[0]}`);
   return parts.map(esc).join(' · ');
 }
 

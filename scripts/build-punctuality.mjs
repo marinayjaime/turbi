@@ -1,6 +1,6 @@
 // Histórico de puntualidad: observaciones finales de Aena → registros en la rama «data» → agregados por vuelo.
 // Diseño: docs/superpowers/specs/2026-09-24-turbi-punctuality-design.md
-import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { normalize } from './aena.mjs';
 import {
   delayMinutes, stats, lastFlights, withinDays, slotOf, dowOf, pack, unpack,
@@ -59,10 +59,28 @@ export function observe(entries, legs) {
   return out;
 }
 
-// Fusiona observaciones en el almacén (Map clave física → registro). Devuelve los días modificados.
+const storeKey = r => `${physKey(r)}|${r.f[0]}`;
+const arrDateOf = r => (r.sd && r.sa && r.sa < r.sd ? nextDay(r.d) : r.d);
+const arrKey = r => `${r.o}|${r.a}|${r.sa}|${arrDateOf(r)}`;
+const shares = (a, b) => a.f.some(x => b.f.includes(x));
+
+// Fusiona observaciones en el almacén (Map clave → registro). Devuelve los días modificados.
+// Un vuelo es el mismo si coincide su clave física Y comparte algún número de vuelo.
+// Una llegada sin salida (Aena ya retiró la fila de salida) se une al vuelo ya guardado con esa llegada.
 export function mergeRecords(store, observations) {
+  const byPhys = new Map(), byArr = new Map();
+  const index = (key, r) => {
+    (byPhys.get(physKey(r)) ?? byPhys.set(physKey(r), []).get(physKey(r))).push(key);
+    if (r.sd && r.sa) (byArr.get(arrKey(r)) ?? byArr.set(arrKey(r), []).get(arrKey(r))).push(key);
+  };
+  for (const [key, r] of store) index(key, r);
+  const find = (keys, o) => keys?.find(k => store.has(k) && shares(store.get(k), o));
+
   const changed = new Set();
-  for (const [k, o] of observations) {
+  for (const o of observations.values()) {
+    let k = (!o.sd && o.sa ? find(byArr.get(arrKey(o)), o) : null) ?? find(byPhys.get(physKey(o)), o);
+    const isNew = !k;
+    if (isNew) k = storeKey(o);
     const before = store.has(k) ? JSON.stringify(store.get(k)) : null;
     const r = store.get(k) ?? { d: o.d, o: o.o, a: o.a, sd: o.sd, sa: o.sa, x: 0, f: [] };
     if (o.dd !== undefined) r.dd = o.dd;
@@ -73,6 +91,7 @@ export function mergeRecords(store, observations) {
     else if (operated && r.x === 1) r.x = 0;
     for (const f of o.f) if (!r.f.includes(f)) r.f.push(f);
     store.set(k, r);
+    if (isNew) index(k, r);
     if (JSON.stringify(r) !== before) changed.add(r.d);
   }
   return changed;
@@ -141,7 +160,7 @@ async function loadStore(daysDir) {
     try {
       for (const row of JSON.parse(await readFile(`${daysDir}/${name}`, 'utf8'))) {
         const r = unpack(row);
-        store.set(physKey(r), r);
+        store.set(storeKey(r), r);
       }
     } catch (err) {
       console.warn(`Puntualidad: no se pudo leer ${name}: ${err.message}`);
@@ -166,6 +185,8 @@ async function saveDays(daysDir, store, days, today) {
 // storeDir: copia local de la rama «data». outDir: _site/data/punctuality.
 export async function buildPunctuality({ entries, legs, storeDir, outDir, today }) {
   const daysDir = `${storeDir}/punctuality/days`;
+  // Sin copia de la rama «data» (p. ej. fallo de red al clonar) no se toca nada: mejor sin datos una hora que un histórico vacío.
+  try { await access(`${storeDir}/.git`); } catch { throw new Error(`no hay copia del histórico en ${storeDir}`); }
   const store = await loadStore(daysDir);
   const changed = mergeRecords(store, observe(entries, legs));
   prune(store, today);

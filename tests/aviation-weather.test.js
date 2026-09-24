@@ -35,6 +35,10 @@ describe('summarizeTaf', () => {
       'Visibilidad reducida cambiando de 18:00 a 20:00',
     ]);
   });
+  it('periodo «a partir de» (FM) bien redactado', () => {
+    const taf = { fcsts: [{ from: H(14), to: H(18), change: 'FM', wx: 'SHRA' }] };
+    expect(summarizeTaf(taf)).toEqual(['Chubascos a partir de las 14:00']);
+  });
   it('sin TAF → null', () => {
     expect(summarizeTaf(null)).toBeNull();
   });
@@ -56,6 +60,10 @@ describe('sigmetsNearRoute', () => {
     expect(r).toHaveLength(2);
     expect(r[0]).toMatchObject({ label: 'Turbulencia fuerte', levels: 'entre 9,1 y 12,2 km de altura', crosses: true });
     expect(r[1].crosses).toBe(false);
+  });
+  it('etiquetas en lenguaje llano', () => {
+    const mtw = { ...base, hazard: 'MTW', qualifier: 'SEV', coords: sq(40.0, 0.5, 0.5) };
+    expect(sigmetsNearRoute([mtw], route, DEP, ARR)[0].label).toBe('Viento fuerte sobre montañas');
   });
   it('sin coordenadas o lista vacía → []', () => {
     expect(sigmetsNearRoute([{ ...base, coords: [] }], route, DEP, ARR)).toEqual([]);

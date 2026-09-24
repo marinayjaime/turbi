@@ -68,7 +68,8 @@ export function summarizeTaf(t, timeZone = 'UTC') {
   for (const f of t.fcsts ?? []) {
     const h = s => localHour(s * 1000, timeZone);
     const change = CHANGE[f.change] ? `${CHANGE[f.change]} ` : '';
-    const when = `${change}de ${h(f.from)} a ${h(f.to)}${f.prob ? ` (probabilidad ${f.prob} %)` : ''}`;
+    const span = f.change === 'FM' ? `a partir de las ${h(f.from)}` : `${change}de ${h(f.from)} a ${h(f.to)}`;
+    const when = `${span}${f.prob ? ` (probabilidad ${f.prob} %)` : ''}`;
     const wx = f.wx ?? '';
     if (wx.includes('TS')) out.push(`Posibles tormentas ${when}`);
     else if (wx.includes('SH')) out.push(`Chubascos ${when}`);
@@ -140,7 +141,11 @@ function distToRoute(point, route) {
 
 // --- SIGMET ---
 
-const HAZARDS = { TURB: 'Turbulencia', TS: 'Tormentas', MTW: 'Onda de montaña', TC: 'Ciclón tropical' };
+// [normal, fuerte]
+const HAZARDS = {
+  TURB: ['Turbulencia', 'Turbulencia fuerte'], TS: ['Tormentas', 'Tormentas fuertes'],
+  MTW: ['Viento sobre montañas', 'Viento fuerte sobre montañas'], TC: ['Ciclón tropical', 'Ciclón tropical'],
+};
 const km = ft => String(Math.round((ft * 0.3048) / 100) / 10).replace('.', ',');
 
 export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
@@ -156,7 +161,7 @@ export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
     }))
     .filter(({ d }) => d <= maxKm)
     .map(({ s, d }) => ({
-      label: `${HAZARDS[s.hazard]}${s.qualifier === 'SEV' ? ' fuerte' : ''}`,
+      label: HAZARDS[s.hazard][s.qualifier === 'SEV' ? 1 : 0],
       levels: s.top ? (s.base ? `entre ${km(s.base)} y ${km(s.top)} km de altura` : `hasta ${km(s.top)} km de altura`) : null,
       crosses: d === 0,
       distanceKm: Math.round(d),

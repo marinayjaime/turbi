@@ -15,7 +15,7 @@ on:
         default: 'full'
 
 permissions:
-  contents: write # para guardar el histórico de puntualidad en la rama «data»
+  contents: read
   pages: write
   id-token: write
 
@@ -26,19 +26,30 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # solo este trabajo: guardar el histórico de puntualidad en la rama «data»
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Los pasos del histórico nunca bloquean la publicación (continue-on-error).
       - name: Traer el histórico de puntualidad (rama «data»)
+        continue-on-error: true
         env:
           REPO: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}
         run: |
-          if git ls-remote --exit-code --heads "$REPO" data > /dev/null; then
+          set +e
+          git ls-remote --exit-code --heads "$REPO" data > /dev/null
+          rc=$?
+          set -e
+          if [ "$rc" = "0" ]; then
             git clone --quiet --depth 1 --branch data "$REPO" store
-          else
+          elif [ "$rc" = "2" ]; then
+            # La rama aún no existe (primera ejecución)
             mkdir store && git -C store init --quiet -b data && git -C store remote add origin "$REPO"
+          else
+            echo "No se pudo consultar la rama data (código $rc): esta vez no se actualiza el histórico"
           fi
       - name: Descargar horarios de Aena y montar la web
         run: node scripts/build-flights.mjs
@@ -46,7 +57,9 @@ jobs:
           MODE: ${{ inputs.mode || 'auto' }}
           PUNCTUALITY_STORE: store
       - name: Guardar el histórico de puntualidad
+        continue-on-error: true
         run: |
+          [ -d store/.git ] || { echo "Sin copia del histórico"; exit 0; }
           cd store
           git add -A
           if git diff --cached --quiet; then echo "Sin cambios en el histórico"; exit 0; fi

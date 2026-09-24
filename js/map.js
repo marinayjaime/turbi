@@ -55,7 +55,7 @@ export async function renderMap(el, view) {
     L.polygon(s.coords.map(c => [c.lat, c.lon]), { color: '#ff3b30', weight: 1, dashArray: '4 4', fillOpacity: 0.08 }).bindTooltip(esc(s.label)).addTo(map);
   }
   for (const p of view.aviation?.pireps ?? []) {
-    L.circleMarker([p.lat, p.lon], { radius: 5, color: '#5856d6', fillOpacity: 0.8 }).bindTooltip(`PIREP: ${esc(p.label)}`).addTo(map);
+    L.circleMarker([p.lat, p.lon], { radius: 5, color: '#5856d6', fillOpacity: 0.8 }).bindTooltip(`Informe de piloto: ${esc(p.label)}`).addTo(map);
   }
   map.fitBounds(L.latLngBounds(view.route.map(p => [p.lat, p.lon])).pad(0.15));
   return map;

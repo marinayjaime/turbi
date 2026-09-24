@@ -35,7 +35,7 @@ const AIRCRAFT = {
   A321: 'Airbus A321', 321: 'Airbus A321', A21N: 'Airbus A321neo', '32Q': 'Airbus A321neo', A32A: 'Airbus A320', A32B: 'Airbus A321',
   A332: 'Airbus A330-200', 332: 'Airbus A330-200', A333: 'Airbus A330-300', 333: 'Airbus A330-300', A339: 'Airbus A330neo', A359: 'Airbus A350-900', 359: 'Airbus A350-900',
   A35K: 'Airbus A350-1000', A388: 'Airbus A380', BCS1: 'Airbus A220-100', BCS3: 'Airbus A220-300', 223: 'Airbus A220-300',
-  B737: 'Boeing 737-700', '73G': 'Boeing 737-700', B738: 'Boeing 737-800', 738: 'Boeing 737-800', B38M: 'Boeing 737 MAX 8', '7M8': 'Boeing 737 MAX 8',
+  B737: 'Boeing 737-700', '73G': 'Boeing 737-700', '73W': 'Boeing 737-700', B738: 'Boeing 737-800', 738: 'Boeing 737-800', '73H': 'Boeing 737-800', '73J': 'Boeing 737-900', B739: 'Boeing 737-900', B38M: 'Boeing 737 MAX 8', '7M8': 'Boeing 737 MAX 8',
   B39M: 'Boeing 737 MAX 9', B752: 'Boeing 757-200', B763: 'Boeing 767-300', B772: 'Boeing 777-200', B77W: 'Boeing 777-300ER', '77W': 'Boeing 777-300ER',
   B788: 'Boeing 787-8', 788: 'Boeing 787-8', B789: 'Boeing 787-9', 789: 'Boeing 787-9', B78X: 'Boeing 787-10',
   E190: 'Embraer 190', E195: 'Embraer 195', E295: 'Embraer E195-E2', CRJ9: 'Bombardier CRJ900', CRJX: 'Bombardier CRJ1000',
@@ -44,5 +44,5 @@ const AIRCRAFT = {
 
 export function aircraftName(code) {
   if (!code) return null;
-  return AIRCRAFT[String(code).toUpperCase()] ?? code;
+  return AIRCRAFT[String(code).toUpperCase()] ?? `modelo ${code}`;
 }

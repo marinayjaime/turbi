@@ -18,14 +18,14 @@ const bandOf = min => (min <= 15 ? 'ok' : min <= 30 ? 'warn' : min <= 60 ? 'late
 function nowRow(label, side, doneWord) {
   if (!side) return '';
   const changed = side.time && side.time !== side.sched;
-  const times = changed ? `${side.sched} → ${side.time}` : `${side.sched} <small>(sin cambios)</small>`;
+  const times = changed ? `${esc(side.sched)} → ${esc(side.time)}` : `${esc(side.sched)} <small>(sin cambios)</small>`;
   const delay = typeof side.delay === 'number' && changed ? `<span class="pdelay pband-${bandOf(side.delay)}">${signedDelay(side.delay)}</span>` : '';
   return `<div class="prow"><span class="pk">${label}</span><span>${times}</span>${delay}<small>${side.final ? doneWord : 'prevista'}</small></div>`;
 }
 
-function todayHtml(c) {
+function todayHtml(c, dayLabel = 'Hoy') {
   return `
-    <p class="apt-sub">Hoy</p>
+    <p class="apt-sub">${esc(dayLabel)}</p>
     ${nowRow('Salida', c.dep, 'salió')}${nowRow('Llegada', c.arr, 'llegó')}
     <p class="pbadge pband-${c.band ?? 'ok'}">${esc(c.text)}</p>
     <p class="note-small">Horas publicadas por Aena. «Prevista» es una estimación y puede cambiar.</p>`;
@@ -70,7 +70,7 @@ function historyHtml(p) {
       <div><dt>Retraso habitual</dt><dd>${signedDelay(d90.median)}</dd></div>
       <div><dt>3 de cada 4</dt><dd>${within(d90.p75)}</dd></div>
       <div><dt>9 de cada 10</dt><dd>${within(d90.p90)}</dd></div>
-      <div><dt>Cancelaciones</dt><dd>${pct1(d90.cancelRate ?? 0)}</dd></div>
+      <div><dt>Cancelaciones o desvíos</dt><dd>${pct1(d90.cancelRate ?? 0)}</dd></div>
       ${label ? `<div><dt>Valoración</dt><dd>Puntualidad ${label}</dd></div>` : ''}
     </dl>
     <p class="note-small">${d90.sample} vuelos analizados. El «retraso habitual» es el valor típico (la mediana), que no se deja arrastrar por unos pocos vuelos muy retrasados.</p>
@@ -84,11 +84,11 @@ function historyHtml(p) {
     </details>`;
 }
 
-// p = { current, history (undefined = cargando, null = sin datos), flight, airline, route: [o, a], dow, slot, since }
+// p = { current, history (undefined = cargando, null = sin datos), flight, airline, route: [o, a], dow, slot, since, dayLabel }
 export function punctualityHtml(p) {
   return `
     <h3 class="section">Puntualidad</h3>
-    ${todayHtml(p.current)}
+    ${todayHtml(p.current, p.dayLabel)}
     ${historyHtml(p)}`;
 }
 

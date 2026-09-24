@@ -6,7 +6,7 @@ import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc } from './ui.js';
+import { renderResult, esc, dateLabel } from './ui.js';
 import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
@@ -163,6 +163,7 @@ function punctualityState(q) {
   return {
     current: currentPunctuality(leg), history: undefined, flight: q.number, airline: schedule.name ?? schedule.al,
     route: [leg.o, leg.a], dow: dowOf(leg.d), slot: leg.sd ? slotOf(leg.sd) : null, since: PUNCTUALITY_SINCE,
+    dayLabel: leg.d === new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date()) ? 'Hoy' : dateLabel(leg.d),
   };
 }
 

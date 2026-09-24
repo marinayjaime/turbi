@@ -96,6 +96,12 @@ export function flightStatus(leg) {
   if (ARRIVAL_STATES[sta]) return ARRIVAL_STATES[sta];
   if (std === 'BOR') return { text: 'Ha salido', tone: 'info' };
   if (GATE_STATES[std]) return GATE_STATES[std];
+  // Llegada desde el extranjero: solo hay hora de llegada.
+  if (!std && sta) {
+    const sched = scheduledArrival(leg);
+    const late = leg.ea && sched && (Date.parse(`${leg.ea}:00Z`) - Date.parse(`${sched.date}T${sched.time}:00Z`)) / 60000 > DELAY_MIN;
+    if (sta === 'RET' || late) return { text: `Retrasado · llega ${legArrival(leg).time}`, tone: 'warn' };
+  }
   if (std === 'RET' || delayMin(leg) > DELAY_MIN) {
     return { text: `Retrasado · sale ${legDeparture(leg).time}`, tone: 'warn' };
   }

@@ -43,7 +43,8 @@ describe('mergeRecords', () => {
   it('sin duplicados: la última observación sustituye; se unen números', () => {
     const store = new Map();
     mergeRecords(store, new Map([['k', { ...base, dd: 12 }]]));
-    mergeRecords(store, new Map([['k', { ...base, dd: 14, ad: 6, f: ['I21668'] }]]));
+    // en la descarga siguiente aparecen los dos códigos compartidos (IB e I2) del mismo vuelo
+    mergeRecords(store, new Map([['k', { ...base, dd: 14, ad: 6, f: ['IB1668', 'I21668'] }]]));
     expect([...store.values()]).toEqual([{ ...base, dd: 14, ad: 6, x: 0, f: ['IB1668', 'I21668'] }]);
   });
   it('una cancelación no borra un vuelo que ya operó', () => {
@@ -98,5 +99,39 @@ describe('aggregateFlights', () => {
   it('destino extranjero: puntualidad de salida', () => {
     expect(files['FR/100.json'].routes['PMI-LHR']).toMatchObject({ basis: 'dep' });
     expect(files['FR/100.json'].routes['PMI-LHR'].d90).toMatchObject({ sample: 5, quality: 'insuficiente' });
+  });
+});
+
+describe('dos ejecuciones: Aena retira antes la fila de salida que la de llegada', () => {
+  const run = (store, entries) => mergeRecords(store, obsOf(entries));
+  it('la llegada sola de la ejecución siguiente se une al vuelo ya guardado (no se duplica)', () => {
+    const store = new Map();
+    run(store, [S(), L()]);                 // 12:07: salida y llegada
+    run(store, [L({ horaEstimada: '19:58:00' })]); // 13:07: solo queda la llegada
+    expect([...store.values()]).toHaveLength(1);
+    expect([...store.values()][0]).toMatchObject({ d: '2026-09-24', sd: '18:25', dd: 12, ad: 8 });
+  });
+  it('vuelo nocturno: la llegada sola del día siguiente va al día de salida', () => {
+    const store = new Map();
+    const dep = S({ horaProgramada: '23:30:00', horaEstimada: '23:40:00' });
+    const arr = over => L({ fecha: '25/09/2026', fechaEstimada: '25/09/2026', horaProgramada: '00:45:00', horaEstimada: '00:50:00', estado: 'LND', ...over });
+    run(store, [dep, arr()]);
+    run(store, [arr({ estado: 'IBK' })]);
+    expect([...store.values()]).toHaveLength(1);
+    expect([...store.values()][0]).toMatchObject({ d: '2026-09-24', sd: '23:30', ad: 5 });
+  });
+  it('cancelación por las dos filas: una sola', () => {
+    const store = new Map();
+    run(store, [S({ estado: 'CAN' }), L({ estado: 'CAN' })]);
+    run(store, [L({ estado: 'CAN' })]);
+    expect([...store.values()]).toHaveLength(1);
+  });
+  it('dos vuelos distintos con la misma ruta y horas no se fusionan', () => {
+    const store = new Map();
+    run(store, [S(), L()]);
+    const other = { iataCompania: 'UX', oaciCompania: 'AEA', numVuelo: '6000', horaEstimada: '19:05:00' };
+    run(store, [S({ ...other }), L({ ...other, horaEstimada: '20:20:00' })]);
+    expect([...store.values()]).toHaveLength(2);
+    expect([...store.values()].map(r => r.f[0]).sort()).toEqual(['IB1668', 'UX6000']);
   });
 });

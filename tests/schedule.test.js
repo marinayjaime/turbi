@@ -71,6 +71,11 @@ describe('flightStatus', () => {
     expect(flightStatus(leg({ st: 'IBK', std: 'BOR', sta: 'IBK' }))).toEqual({ text: 'Ha llegado', tone: 'ok' });
     expect(flightStatus(leg({ st: 'ZZZ' }))).toEqual({ text: 'Programado', tone: 'ok' });
   });
+  it('llegada desde el extranjero retrasada: no sale «Programado»', () => {
+    const l = leg({ sd: null, ed: null, st: 'RET', std: null, sta: 'RET', ea: '2026-09-24T20:10' });
+    expect(flightStatus(l)).toEqual({ text: 'Retrasado · llega 20:10', tone: 'warn' });
+    expect(flightStatus(leg({ sd: null, ed: null, st: 'SCH', std: null, sta: 'SCH', ea: '2026-09-24T19:50' }))).toEqual({ text: 'Retrasado · llega 19:50', tone: 'warn' });
+  });
   it('horarios antiguos sin estados separados siguen funcionando', () => {
     expect(flightStatus(leg({ st: 'FLY' }))).toEqual({ text: 'En vuelo', tone: 'info' });
   });

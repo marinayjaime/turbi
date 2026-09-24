@@ -38,7 +38,8 @@ describe('aircraftName', () => {
     expect(aircraftName('A21N')).toBe('Airbus A321neo');
     expect(aircraftName('B738')).toBe('Boeing 737-800');
     expect(aircraftName('321')).toBe('Airbus A321');
-    expect(aircraftName('XYZ9')).toBe('XYZ9');
+    expect(aircraftName('73H')).toBe('Boeing 737-800');
+    expect(aircraftName('XYZ9')).toBe('modelo XYZ9');
     expect(aircraftName(null)).toBeNull();
   });
 });

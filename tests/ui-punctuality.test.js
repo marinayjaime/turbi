@@ -27,6 +27,16 @@ describe('punctualityHtml', () => {
     const h = punctualityHtml(base);
     for (const t of ['Hoy', 'Salida', '18:25 → 18:37', '+12 min', 'salió', 'Llegada', '19:50 → 19:56', '+6 min', 'prevista', 'Llegada prevista puntual']) expect(h).toContain(t);
   });
+  it('el encabezado es la fecha del vuelo cuando no es hoy', () => {
+    const h = punctualityHtml({ ...base, dayLabel: 'vie, 3 oct' });
+    expect(h).toContain('vie, 3 oct');
+    expect(h).not.toContain('>Hoy<');
+  });
+  it('horas escapadas y desvíos contados junto a cancelaciones', () => {
+    const h = punctualityHtml({ ...base, current: { ...current, dep: { ...current.dep, sched: '<b>' } } });
+    expect(h).not.toContain('<b>');
+    expect(punctualityHtml(base)).toContain('Cancelaciones o desvíos');
+  });
   it('histórico: OTP15 destacado, mediana, P75, P90, cancelaciones y n', () => {
     const h = punctualityHtml(base);
     for (const t of ['82 %', 'llegaron con 15 min de retraso o menos', 'Retraso habitual', '+6 min', '3 de cada 4', '17 min', '9 de cada 10', '34 min', 'Cancelaciones', '1,5 %', '67 vuelos analizados', 'buena']) expect(h).toContain(t);
