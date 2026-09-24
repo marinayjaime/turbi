@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { esc, timeTicks } from '../js/ui.js';
+import { esc, timeTicks, skippedText } from '../js/ui.js';
 
 describe('ui helpers', () => {
   it('esc escapa HTML', () => {
@@ -142,6 +142,26 @@ describe('radar', () => {
   });
   it('no disponible', () => {
     expect(flightCardHtml({ ...c, radar: { state: 'no-disponible' } })).toContain('El radar no responde ahora mismo.');
+  });
+});
+
+describe('fecha pedida sin vuelo (EI737: Aena ya lo retiró y la app enseñaba el del domingo como si fuera hoy)', () => {
+  it('hoy: lo dice y explica por qué puede faltar', () => {
+    expect(skippedText('2026-09-24', '2026-09-27', '2026-09-24')).toBe(
+      'Aena ya no publica este vuelo para hoy: retira cada vuelo unas 2 h después de su salida (o puede que hoy no opere). Se muestra el siguiente: dom, 27 sept.');
+  });
+  it('otra fecha: Aena no lo tiene ese día', () => {
+    expect(skippedText('2026-09-25', '2026-09-27', '2026-09-24')).toBe('Aena no tiene este vuelo el vie, 25 sept. Se muestra el siguiente: dom, 27 sept.');
+  });
+  it('misma fecha: nada', () => {
+    expect(skippedText('2026-09-27', '2026-09-27', '2026-09-24')).toBeNull();
+  });
+  it('en la ficha, arriba del todo, antes del estado', () => {
+    const c = { al: 'EI', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'DUB', duration: 160,
+      dep: { date: '2026-09-27', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, skipped: 'Aena ya no publica este vuelo para hoy…' };
+    const html = flightCardHtml(c);
+    expect(html.indexOf('class="skipped"')).toBeGreaterThan(-1);
+    expect(html.indexOf('class="skipped"')).toBeLessThan(html.indexOf('class="status'));
   });
 });
 

@@ -25,6 +25,15 @@ export function formatDuration(min) {
 const DATE_FMT = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 export const dateLabel = iso => DATE_FMT.format(new Date(`${iso}T12:00:00Z`)).replace('.', '');
 
+// La fecha pedida no está en Aena y se enseña otra: se dice siempre (si no, parece el vuelo de ese día).
+export function skippedText(requested, shown, today) {
+  if (!requested || requested === shown) return null;
+  const next = `Se muestra el siguiente: ${dateLabel(shown)}.`;
+  return requested === today
+    ? `Aena ya no publica este vuelo para hoy: retira cada vuelo unas 2 h después de su salida (o puede que hoy no opere). ${next}`
+    : `Aena no tiene este vuelo el ${dateLabel(requested)}. ${next}`;
+}
+
 // Miles con punto (4.800), también con 4 cifras (Intl en español no lo pone).
 const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
@@ -63,6 +72,7 @@ export function flightCardHtml(c) {
       </div>
       ${c.tabs.length > 1 ? `<nav class="tabs">${c.tabs.map(t =>
         `<button type="button" data-date="${esc(t.date)}"${t.active ? ' class="active"' : ''}>${esc(dateLabel(t.date))}</button>`).join('')}</nav>` : ''}
+      ${c.skipped ? `<p class="skipped">${esc(c.skipped)}</p>` : ''}
       ${c.stale
         // Un estado viejo («Embarcando» de hace 2 h) no se presenta como actual: se dice de cuándo es.
         ? `<span class="status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>

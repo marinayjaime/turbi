@@ -6,7 +6,7 @@ import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc, dateLabel, flightCardHtml } from './ui.js';
+import { renderResult, esc, dateLabel, flightCardHtml, skippedText } from './ui.js';
 import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
@@ -90,7 +90,7 @@ async function scheduleQuery(schedule, date) {
   const origin = findAirport(db, leg.o);
   const destination = findAirport(db, leg.a);
   if (!origin || !destination) throw new Error(`No conozco el aeropuerto «${!origin ? leg.o : leg.a}».`);
-  return { kind: 'schedule', number: `${schedule.al}${schedule.n}`, schedule, leg, origin, destination, date: leg.d };
+  return { kind: 'schedule', number: `${schedule.al}${schedule.n}`, schedule, leg, origin, destination, date: leg.d, requestedDate: date };
 }
 
 async function resolveFlight() {
@@ -158,6 +158,7 @@ function flightCard(q, durationMin) {
     gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
     updatedAgo: schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
     stale: schedule.updated ? Date.now() - Date.parse(schedule.updated) > 40 * 60000 : false,
+    skipped: skippedText(q.requestedDate, leg.d, new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date())),
   };
 }
 

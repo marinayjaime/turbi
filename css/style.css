@@ -146,6 +146,7 @@ button { font: inherit; cursor: pointer; }
 .tone-warn { background: #fff4e5; color: #b25e00; }
 .tone-bad { background: #fff2f1; color: #c4271c; }
 .tone-stale { background: #f2f2f7; color: #6e6e73; }
+.skipped { margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: #fff4e5; color: #8a4a00; font-size: 14px; font-weight: 500; }
 .radar { margin: 10px 0 0; font-size: 14px; line-height: 1.4; color: var(--text, #1d1d1f); }
 .radar.muted { color: var(--muted); }
 /* En vuelo: un avión cruza en bucle junto al texto (decorativo; no indica la posición real). */
