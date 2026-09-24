@@ -1,6 +1,8 @@
 // Mapa sencillo con Leaflet + OpenStreetMap. Se carga después del resultado y es prescindible:
 // si falla, la app sigue igual (la timeline es la visualización principal).
 
+import { esc } from './ui.js';
+
 const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const SRI = {
   js: 'sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==',
@@ -48,12 +50,12 @@ export async function renderMap(el, view) {
   for (const l of routeLines(view.route)) L.polyline(l.coords, { color: COLORS[l.level], weight: 5, opacity: 0.9 }).addTo(map);
   const ends = [view.route[0], view.route.at(-1)];
   ends.forEach((p, i) => L.circleMarker([p.lat, p.lon], { radius: 6, color: '#007aff', fillOpacity: 1 })
-    .bindTooltip(i ? view.destinationIata : view.originIata, { permanent: true, direction: 'top' }).addTo(map));
+    .bindTooltip(esc(i ? view.destinationIata : view.originIata), { permanent: true, direction: 'top' }).addTo(map));
   for (const s of view.aviation?.sigmets ?? []) {
-    L.polygon(s.coords.map(c => [c.lat, c.lon]), { color: '#ff3b30', weight: 1, dashArray: '4 4', fillOpacity: 0.08 }).bindTooltip(s.label).addTo(map);
+    L.polygon(s.coords.map(c => [c.lat, c.lon]), { color: '#ff3b30', weight: 1, dashArray: '4 4', fillOpacity: 0.08 }).bindTooltip(esc(s.label)).addTo(map);
   }
   for (const p of view.aviation?.pireps ?? []) {
-    L.circleMarker([p.lat, p.lon], { radius: 5, color: '#5856d6', fillOpacity: 0.8 }).bindTooltip(`PIREP: ${p.label}`).addTo(map);
+    L.circleMarker([p.lat, p.lon], { radius: 5, color: '#5856d6', fillOpacity: 0.8 }).bindTooltip(`PIREP: ${esc(p.label)}`).addTo(map);
   }
   map.fitBounds(L.latLngBounds(view.route.map(p => [p.lat, p.lon])).pad(0.15));
   return map;

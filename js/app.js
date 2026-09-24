@@ -182,12 +182,13 @@ async function run(q) {
       view = await forecastView({ q, profile, flight, times, nowMs: Date.now() });
     } catch (err) {
       // Sin red o sin cupo, el cálculo simplificado tampoco podría: se muestra el error.
-      if (err instanceof TypeError || /No se pudo conectar|Demasiadas consultas/.test(err.message)) throw err;
+      // (getJson ya convierte los fallos de red en errores en español; un TypeError aquí sería un fallo de código.)
+      if (/No se pudo conectar|Demasiadas consultas/.test(err.message)) throw err;
       if (stale()) return;
-      return runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale);
+      return await runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale);
     }
     if (stale()) return;
-    showForecast(view, q, stale);
+    showForecast(view, q, stale).catch(() => { if (!stale()) showError('Algo ha fallado al mostrar el pronóstico.', true); });
   } catch (err) {
     if (stale()) return;
     // fetch lanza TypeError sin conexión; su mensaje viene en inglés.
@@ -226,7 +227,8 @@ const safely = async fn => { try { await fn(); } catch { /* mejora opcional: si 
 // Pinta el pronóstico y después, sin bloquear, añade lo secundario (cada cosa solo actualiza su hueco).
 async function showForecast(view, q, stale, saved = false) {
   currentView = view;
-  renderForecast(els.result, saved ? { ...view, saved } : view, Date.now());
+  // Guardado: la tendencia era la de aquel momento, así que no se muestra.
+  renderForecast(els.result, saved ? { ...view, saved, trend: null } : view, Date.now());
   show('result');
   const speakBtn = $in('speak');
   if (canSpeak()) {
@@ -254,7 +256,7 @@ async function showForecast(view, q, stale, saved = false) {
     }),
     safely(async () => {
       view.aviation = aviationView(await loadAviation(), view, Date.now());
-      if (!stale()) $in('aviation').innerHTML = aviationHtml(view.aviation);
+      if (!stale()) $in('aviation').innerHTML = aviationHtml(view.aviation, Date.now());
     }),
   ]);
   if (stale()) return;
@@ -266,6 +268,7 @@ async function submit() {
   els.error.hidden = true;
   if (navigator.onLine === false) {
     // Sin red ni el horario ni adsbdb responden: decir «no encuentro ese vuelo» sería engañoso.
+    lastQuery = null; // «Reintentar» debe buscar lo que hay escrito, no la consulta anterior
     showError('Sin conexión: no se puede consultar el pronóstico ahora.', true);
     return;
   }
@@ -323,14 +326,14 @@ els.savedLink.addEventListener('click', () => {
   const last = loadLast();
   if (!last) return;
   runId++; // una consulta en curso ya no debe pintar encima
-  showForecast(last.view, null, () => true, last.savedAt);
+  showForecast(last.view, null, () => true, last.savedAt).catch(() => {});
 });
 window.addEventListener('offline', offerSaved);
 window.addEventListener('online', () => { els.savedLink.hidden = true; });
 els.changeTime.addEventListener('click', () => { setTimeNeeded(true); show('query'); els.time.focus(); });
 // Actualizar vuelve a pedir el horario (retrasos, puerta, estado).
 els.refresh.addEventListener('click', () => (lastQuery?.kind === 'schedule' ? submit() : lastQuery && run(lastQuery)));
-els.retry.addEventListener('click', () => lastQuery && run(lastQuery));
+els.retry.addEventListener('click', () => (lastQuery ? run(lastQuery) : submit()));
 
 // Valores por defecto: hoy y la próxima hora en punto.
 const now = new Date();

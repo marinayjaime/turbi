@@ -16,7 +16,7 @@ const view = {
 describe('resumen', () => {
   it('responde: cómo será, máximo, duración, momento, confianza y porcentajes', () => {
     const h = summaryHtml(view);
-    for (const t of ['Mayormente tranquilo', 'Máximo previsto', 'Turbulencia moderada', 'Duración estimada', '12 min', 'Momento', 'aprox. 42–54 min después del despegue', 'Confianza', 'Alta',
+    for (const t of ['Mayormente tranquilo', 'Máximo previsto', 'Turbulencia moderada', 'Duración estimada', '≈ 10 min', 'Momento', 'aprox. 42–54 min después del despegue', 'Confianza', 'Alta',
       'Nula', '60 %', 'Ligera', '30 %', 'Moderada', '10 %', 'Fuerte', '0 %']) expect(h).toContain(t);
     for (const r of view.confidence.reasons) expect(h).toContain(r);
   });
@@ -32,6 +32,35 @@ describe('resumen', () => {
   });
   it('confianza sin cálculo', () => {
     expect(summaryHtml({ ...view, confidence: { level: null, reasons: ['falta más de una semana: el pronóstico aún no es útil'] } })).toContain('Sin cálculo');
+  });
+});
+
+describe('cobertura, frescura y precisión', () => {
+  it('con cobertura incompleta avisa en el resumen', () => {
+    expect(summaryHtml({ ...view, coverage: 0.8 })).toContain('Faltan datos en el 20 % de la ruta');
+    expect(summaryHtml({ ...view, coverage: 1 })).not.toContain('Faltan datos');
+  });
+  it('la duración se redondea a 5 min', () => {
+    expect(summaryHtml({ ...view, summary: { ...view.summary, maxDurationMin: 23 } })).toContain('≈ 25 min');
+    expect(summaryHtml({ ...view, summary: { ...view.summary, maxDurationMin: 2 } })).toContain('≈ 5 min');
+  });
+  it('tramos sin datos se distinguen en la barra', () => {
+    const h = timelineHtml({ ...view, segments: [seg(0, 0, 90, { missing: true })] });
+    expect(h).toContain('class="seg lvl0 missing"');
+  });
+  it('METAR: antigüedad visible; viejo o ausente, dicho claramente; SIGMET/PIREP no disponibles ≠ ninguno', () => {
+    const av = {
+      updated: new Date(NOW - 2 * 3600000).toISOString(),
+      origin: { icao: 'LEPA', metarText: 'Viento de 230° a 8 kt', metarRaw: 'M', metarAge: 'hace 40 min', metarStale: false, tafText: null },
+      destination: { icao: 'LEMD', metarText: null, metarStale: true, tafText: null },
+      sigmets: null, pireps: null,
+    };
+    const h = aviationHtml(av, NOW);
+    expect(h).toContain('Viento de 230° a 8 kt (hace 40 min)');
+    expect(h).toContain('METAR de hace más de 3 h: no se muestra');
+    expect(h).toContain('SIGMET no disponibles ahora');
+    expect(h).toContain('PIREP no disponibles ahora');
+    expect(h).toContain('descargado hace 2 h');
   });
 });
 
@@ -92,7 +121,7 @@ describe('Aviation Weather', () => {
       sigmets: [{ label: 'Turbulencia fuerte', levels: 'FL300–FL400', crosses: true, distanceKm: 0, raw: 'SIGMET …' }],
       pireps: [],
     };
-    const h = aviationHtml(av);
+    const h = aviationHtml(av, NOW);
     for (const t of ['LEPA', 'Viento de 230° a 8 kt', 'METAR LEPA …', 'TAF LEPA …', 'Turbulencia fuerte', 'FL300–FL400', 'cruza la ruta', 'No hay informes recientes disponibles en esta zona.', 'Sin METAR disponible']) expect(h).toContain(t);
     expect(h).not.toContain('no hay turbulencia');
   });

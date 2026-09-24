@@ -5,9 +5,16 @@ import { layerDiagnostics, componentScores, turbiIndex, pointForecast } from './
 import { fetchModelLocations, sampleVars } from './weather.js';
 
 export const MODELS = [
-  { id: 'ecmwf_ifs025', label: 'ECMWF', meta: 'ecmwf_ifs025' },
-  { id: 'gfs_seamless', label: 'GFS', meta: 'ncep_gfs025' },
+  { id: 'ecmwf_ifs025', label: 'ECMWF', meta: 'ecmwf_ifs025', grid: null },
+  // gfs_seamless devuelve la coordenada de su rejilla fina (0,11°), pero los datos en altura vienen de la de 0,25°:
+  // se ajusta la coordenada para que las distancias de las derivadas sean las reales (revisión del 24/09/2026).
+  { id: 'gfs_seamless', label: 'GFS', meta: 'ncep_gfs025', grid: 0.25 },
 ];
+
+export function snapToGrid(p, grid) {
+  if (!grid) return { lat: p.lat, lon: p.lon };
+  return { lat: Math.round(p.lat / grid) * grid, lon: Math.round(p.lon / grid) * grid };
+}
 
 export const CENTER_VARS = [
   ...PRESSURE_LEVELS.flatMap(p => [`wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `temperature_${p}hPa`]),
@@ -55,13 +62,14 @@ async function fetchModelRoute(profile, model, fetchFn) {
     plan.cross.length ? fetchModelLocations(plan.cross, CROSS_VARS, model.id, t0, t1, fetchFn) : [],
   ]);
   const n = profile.points.length;
+  const sample = (loc, t, vars) => { const s = sampleVars(loc, t, vars); return s && { ...s, ...snapToGrid(s, model.grid) }; };
   return profile.points.map((p, i) => {
-    const center = sampleVars(centers[i], p.time, CENTER_VARS);
+    const center = sample(centers[i], p.time, CENTER_VARS);
     const neighbours = [];
     if (p.fl >= HIGH_FL) {
       // Todos los vecinos se toman a la hora del punto central.
-      for (const j of [i - 1, i + 1]) if (j >= 0 && j < n) neighbours.push(sampleVars(centers[j], p.time, CROSS_VARS));
-      plan.cross.forEach((c, k) => { if (c.i === i) neighbours.push(sampleVars(cross[k], p.time, CROSS_VARS)); });
+      for (const j of [i - 1, i + 1]) if (j >= 0 && j < n) neighbours.push(sample(centers[j], p.time, CROSS_VARS));
+      plan.cross.forEach((c, k) => { if (c.i === i) neighbours.push(sample(cross[k], p.time, CROSS_VARS)); });
     }
     return { center, neighbours: neighbours.filter(Boolean) };
   });
@@ -108,7 +116,7 @@ export function combineModels(results) {
     });
     return {
       score, level: levelOf(score),
-      causes: [...new Set(avail.flatMap(p => p.causes))],
+      causes: [...new Set(avail.flatMap(p => p.causes))].slice(0, 3),
       layers, components: avail[0].components, valid: true,
       byModel: results.map(r => r.points[i].level),
     };

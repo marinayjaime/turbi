@@ -95,3 +95,11 @@ describe('loadAviation', () => {
     expect(r).toEqual({ metar: null, taf: null, sigmet: null, pirep: null, icao: null });
   });
 });
+
+describe('SIGMET que cruza la ruta entre dos puntos', () => {
+  it('un polígono pequeño entre dos puntos de la ruta cuenta como «cruza»', () => {
+    const r2 = [{ lat: 40, lon: 0 }, { lat: 40, lon: 1 }];
+    const small = { hazard: 'TURB', qualifier: 'SEV', validFrom: 0, validTo: 4e9, coords: sq(40, 0.5, 0.05), raw: 'x' };
+    expect(sigmetsNearRoute([small], r2, 0, 1)[0]).toMatchObject({ crosses: true, distanceKm: 0 });
+  });
+});

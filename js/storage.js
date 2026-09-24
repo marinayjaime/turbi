@@ -8,7 +8,8 @@ const MAX_SNAPSHOTS = 6;
 const MIN_GAP_MS = 10 * 60000;
 const VERDICT_RANK = { tranquilo: 0, movimiento: 1, turbulento: 2 };
 
-const store = () => globalThis.localStorage;
+// Solo leer la propiedad localStorage ya puede lanzar (Safari con las cookies bloqueadas).
+const store = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
 const read = (s, key) => { try { return JSON.parse(s.getItem(key)); } catch { return null; } };
 const write = (s, key, value) => { try { s.setItem(key, JSON.stringify(value)); } catch { /* sin almacenamiento */ } };
 

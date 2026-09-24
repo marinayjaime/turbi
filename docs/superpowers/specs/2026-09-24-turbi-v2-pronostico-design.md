@@ -66,7 +66,8 @@ techo = 360 si distancia < 1.000 km · 370 si < 3.000 km · 380 en largo radio
   - a lo largo: se reutilizan los puntos anterior y siguiente de la ruta, que ya se piden;
   - a través: 2 vecinos a ±50 km perpendiculares a la ruta. Antes eran 4 (N, S, E, O).
 - Los vecinos solo se piden en puntos a FL200 o más, donde se evalúan las capas.
-- **Distancias reales:** cada modelo se pide por separado y Open-Meteo devuelve la coordenada de su rejilla. Las derivadas usan la distancia real entre esas coordenadas (auditoría, problema 3).
+- **Distancias reales:** cada modelo se pide por separado y Open-Meteo devuelve la coordenada de su rejilla. Las derivadas usan la distancia real entre esas coordenadas (auditoría, problema 3). Excepción comprobada en la revisión: `gfs_seamless` devuelve la coordenada de su rejilla de 0,11°, pero los datos en altura vienen de la de 0,25°, así que para GFS se ajusta la coordenada a 0,25°.
+- **Cobertura:** los puntos sin datos se muestran rayados en la barra y, si faltan en más del 5 % de la ruta, el resumen lo avisa (no se presentan como nulos sin más).
 - Los vecinos a lo largo de la ruta se muestrean a la **hora del punto central**.
 
 ### 2.3 Modelos y presupuesto
@@ -120,7 +121,7 @@ Nivel = 0 (<25) · 1 (25–49) · 2 (50–74) · 3 (≥75)
 
 - **Richardson:** `Ri = N²/S²`, con `N² = (g/θ̄)·Δθ/Δz`, `θ = T·(1000/p)^0,2857` (T en K) y `S` = cizalladura de la capa (s⁻¹). Entre anclajes se interpola linealmente en Ri. Ri < 0,5 (incluido Ri ≤ 0, capa inestable) → 75; S ≈ 0 → 0.
 - **Pesos de CAT:** Ellrod es el diagnóstico con más validación para CAT en latitudes medias, por eso pesa más. La cizalladura sola es el segundo mejor predictor. Ri aporta la estabilidad, que Ellrod no ve.
-- **Causas:** todos los componentes ≥ 25, ordenados de mayor a menor (máximo 3). Claves: `jet_stream`, `vertical_shear`, `deformation`, `instability`, `convection`, `thunderstorm`, `vertical_motion`, `mountain_wave`.
+- **Causas:** todos los componentes ≥ 25, ordenados de mayor a menor (máximo 3). Claves: `clear_air` (Ellrod: cizalladura × deformación), `vertical_shear`, `instability`, `vertical_motion`, `convection`, `thunderstorm`, `mountain_wave`, y `jet_stream` añadida si procede.
 
 ### 3.4 Altitud de un punto
 - El avión está a FL(t).

@@ -204,7 +204,7 @@ export function pointForecast(layerResults, fl, low) {
   const valid = layerResults.filter(l => isNum(l.score)).sort((a, b) => a.layer.midFL - b.layer.midFL);
   if (!valid.length) return empty;
 
-  let score;
+  let score, bracket = [];
   if (fl <= valid[0].layer.midFL) score = valid[0].score;
   else if (fl >= valid.at(-1).layer.midFL) score = valid.at(-1).score;
   else {
@@ -212,11 +212,14 @@ export function pointForecast(layerResults, fl, low) {
     const a = valid[i - 1], b = valid[i];
     const f = (fl - a.layer.midFL) / (b.layer.midFL - a.layer.midFL);
     score = a.score + f * (b.score - a.score);
+    bracket = [a, b];
   }
   score = Math.round(score);
   const nearest = valid.reduce((a, b) => (Math.abs(b.layer.midFL - fl) < Math.abs(a.layer.midFL - fl) ? b : a));
   const level = scoreToLevel(score);
-  return { score, level, causes: level > 0 ? nearest.causes : [] };
+  // Si la capa más cercana no explica el nivel interpolado, las causas vienen de la otra capa del intervalo.
+  const causes = nearest.causes.length ? nearest.causes : (bracket.find(l => l !== nearest)?.causes ?? []);
+  return { score, level, causes: level > 0 ? causes : [] };
 }
 
 // Presión ISA (hPa) de un nivel de vuelo: inversa de pressureToFL.

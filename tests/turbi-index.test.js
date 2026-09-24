@@ -184,6 +184,11 @@ describe('pointForecast y altitudeForecast', () => {
     const quiet = [10, 12, 30, 0].map((score, i) => ({ score, causes: ['instability'], layer: LAYERS[i] }));
     expect(pointForecast(quiet, 320, null)).toMatchObject({ level: 0, causes: [] });
   });
+  it('si la capa más cercana no tiene causas, usa las de la otra capa del intervalo', () => {
+    const ls = [0, 60, 0, 0].map((score, i) => ({ score, causes: score ? ['vertical_shear'] : [], layer: LAYERS[i] }));
+    const fl = LAYERS[0].midFL + 0.45 * (LAYERS[1].midFL - LAYERS[0].midFL); // más cerca de A (sin causas), nivel ≥ 1
+    expect(pointForecast(ls, fl, null)).toMatchObject({ level: 1, causes: ['vertical_shear'] });
+  });
   it('las causas son las de la capa más cercana', () => {
     expect(pointForecast(layers, 325, null).causes).toEqual(['vertical_shear']);
   });

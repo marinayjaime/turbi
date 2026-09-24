@@ -106,6 +106,25 @@ function distToPolygon(point, coords) {
   return d;
 }
 
+function segmentsCross(a, b, c, d) {
+  const o = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
+}
+
+// Distancia (km) de un tramo de ruta a un polígono; 0 si lo toca o lo cruza.
+function segmentToPolygon(p1, p2, coords) {
+  const poly = coords.map(c => toXY(c, p1));
+  const a = { x: 0, y: 0 }, b = toXY(p2, p1);
+  if (inside(a, poly) || inside(b, poly)) return 0;
+  let d = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const c = poly[i], e = poly[(i + 1) % poly.length];
+    if (segmentsCross(a, b, c, e)) return 0;
+    d = Math.min(d, segDist(c, a, b), segDist(a, c, e), segDist(b, c, e));
+  }
+  return d;
+}
+
 // Distancia (km) de un punto a la ruta (polilínea).
 function distToRoute(point, route) {
   const pts = route.map(r => toXY(r, point));
@@ -125,7 +144,12 @@ export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
   return sigmets
     .filter(s => HAZARDS[s.hazard] && s.coords?.length >= 3)
     .filter(s => s.validFrom * 1000 <= arrMs && s.validTo * 1000 >= depMs)
-    .map(s => ({ s, d: Math.min(...route.map(p => distToPolygon(p, s.coords))) }))
+    .map(s => ({
+      s,
+      d: route.length > 1
+        ? Math.min(...route.slice(1).map((p, i) => segmentToPolygon(route[i], p, s.coords)))
+        : distToPolygon(route[0], s.coords),
+    }))
     .filter(({ d }) => d <= maxKm)
     .map(({ s, d }) => ({
       label: `${HAZARDS[s.hazard]}${s.qualifier === 'SEV' ? ' fuerte' : ''}`,

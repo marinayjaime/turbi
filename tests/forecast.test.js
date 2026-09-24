@@ -62,3 +62,20 @@ describe('routeLines (mapa)', () => {
     ]);
   });
 });
+
+describe('aviationView: frescura y datos que faltan', () => {
+  const route = [{ lat: 39.5, lon: 2.7 }, { lat: 40.4, lon: -3.5 }];
+  const v = { originIata: 'PMI', destinationIata: 'MAD', route, depMs: DEP, arrMs: DEP + 5400000 };
+  const metar = t => ({ raw: 'METAR LEPA', t, wdir: 230, wspd: 8, visib: '6+', clouds: [], wx: '', temp: 27 });
+  it('METAR reciente: con su antigüedad; de más de 3 h: no se muestra como actual', () => {
+    const fresh = aviationView({ metar: { items: { LEPA: metar(NOW - 40 * 60000) } }, icao: { PMI: 'LEPA' } }, v, NOW);
+    expect(fresh.origin).toMatchObject({ metarAge: 'hace 40 min', metarStale: false });
+    const old = aviationView({ metar: { items: { LEPA: metar(NOW - 5 * 3600000) } }, icao: { PMI: 'LEPA' } }, v, NOW);
+    expect(old.origin).toMatchObject({ metarText: null, metarStale: true });
+  });
+  it('archivo de SIGMET o PIREP ausente → null (no «ninguno»)', () => {
+    const r = aviationView({ metar: { items: {} }, icao: {} }, v, NOW);
+    expect(r.sigmets).toBeNull();
+    expect(r.pireps).toBeNull();
+  });
+});

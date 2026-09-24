@@ -38,7 +38,7 @@ export function summaryHtml(view) {
   const head = HEAD[s.headline] ?? HEAD['Algo de movimiento'];
   const facts = [['Máximo previsto', s.maxLevel > 0 ? `Turbulencia ${LEVELS[s.maxLevel].toLowerCase()}` : 'Sin turbulencia prevista']];
   if (s.maxLevel > 0) {
-    facts.push(['Duración estimada', `${s.maxDurationMin} min`]);
+    facts.push(['Duración estimada', `≈ ${Math.max(5, Math.round(s.maxDurationMin / 5) * 5)} min`]);
     const shown = s.moments.slice(0, 2).map(m => `${m.startMin}–${m.endMin}`).join(' y ');
     const more = s.moments.length - 2;
     facts.push(['Momento', `aprox. ${shown} min después del despegue${more > 0 ? `, y ${more} ${more === 1 ? 'tramo' : 'tramos'} más` : ''}`]);
@@ -53,6 +53,9 @@ export function summaryHtml(view) {
       ${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}
       <div class="conf-row"><dt>Confianza</dt><dd>${confidenceHtml(view.confidence)}</dd></div>
     </dl>
+    ${view.coverage !== undefined && view.coverage < 0.95
+      ? `<p class="note-small">Faltan datos en el ${Math.max(5, Math.round(((1 - view.coverage) * 100) / 5) * 5)} % de la ruta: esos tramos (rayados en la barra) se muestran como nulos y podrían no serlo.</p>`
+      : ''}
     <div class="shares">
       <div class="sharebar">${bar}</div>
       <ul>${s.percentages.map((p, l) => `<li><span class="dot lvl${l}"></span>${LEVELS[l]} ${p} %</li>`).join('')}</ul>
@@ -62,7 +65,7 @@ export function summaryHtml(view) {
 const ticks = d => { const step = d <= 90 ? 15 : d <= 240 ? 30 : 60; const t = []; for (let m = 0; m <= d; m += step) t.push(m); return t; };
 
 export function timelineHtml(view) {
-  const bar = view.segments.map((s, i) => `<button type="button" class="seg lvl${s.level}" data-seg="${i}"
+  const bar = view.segments.map((s, i) => `<button type="button" class="seg lvl${s.level}${s.missing ? ' missing' : ''}" data-seg="${i}"
       style="flex:${Math.max(s.endMin - s.startMin, 1)}" aria-label="Min ${s.startMin}–${s.endMin} · ${LEVELS[s.level]}"></button>`).join('');
   const bumpy = view.segments.filter(s => s.level > 0);
   const cards = bumpy.length ? bumpy.map(s => `
@@ -124,23 +127,28 @@ export function freshnessHtml(view, nowMs) {
   return parts.map(esc).join(' · ');
 }
 
+function metarLine(a) {
+  if (a.metarText) return `${a.metarText}${a.metarAge ? ` (${a.metarAge})` : ''}`;
+  return a.metarStale ? 'METAR de hace más de 3 h: no se muestra.' : 'Sin METAR disponible';
+}
+
 function airportBlock(label, a) {
   const taf = a.tafText ? `<ul>${a.tafText.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p>Sin TAF disponible</p>';
   const raw = (name, text) => (text ? `<details class="raw"><summary>${name} original</summary><code>${esc(text)}</code></details>` : '');
   return `
       <div class="apt">
         <p class="apt-title">${label} · ${esc(a.icao ?? a.iata)}</p>
-        <p>${esc(a.metarText ?? 'Sin METAR disponible')}</p>${raw('METAR', a.metarRaw)}
+        <p>${esc(metarLine(a))}</p>${raw('METAR', a.metarRaw)}
         <p class="apt-sub">Previsión (TAF)</p>${taf}${raw('TAF', a.tafRaw)}
       </div>`;
 }
 
-export function aviationHtml(av) {
+export function aviationHtml(av, nowMs = Date.now()) {
   if (!av) return '';
-  const sig = av.sigmets.length ? `<ul>${av.sigmets.map(s => `<li><strong>${esc(s.label)}</strong>${s.levels ? ` · ${esc(s.levels)}` : ''} · ${s.crosses ? 'cruza la ruta' : `a ${s.distanceKm} km de la ruta`}
+  const sig = av.sigmets === null ? '<p>SIGMET no disponibles ahora.</p>' : av.sigmets.length ? `<ul>${av.sigmets.map(s => `<li><strong>${esc(s.label)}</strong>${s.levels ? ` · ${esc(s.levels)}` : ''} · ${s.crosses ? 'cruza la ruta' : `a ${s.distanceKm} km de la ruta`}
         <details class="raw"><summary>SIGMET original</summary><code>${esc(s.raw)}</code></details></li>`).join('')}</ul>`
     : '<p>Ningún SIGMET de turbulencia, tormentas u onda de montaña cerca de la ruta.</p>';
-  const pir = av.pireps.length ? `<ul>${av.pireps.map(p => `<li><strong>${esc(p.label)}</strong>${p.fl ? ` · FL${pad3(p.fl)}` : ''}
+  const pir = av.pireps === null ? '<p>PIREP no disponibles ahora.</p>' : av.pireps.length ? `<ul>${av.pireps.map(p => `<li><strong>${esc(p.label)}</strong>${p.fl ? ` · FL${pad3(p.fl)}` : ''}
         <details class="raw"><summary>Informe original</summary><code>${esc(p.raw)}</code></details></li>`).join('')}</ul>`
     : `<p>${NO_PIREPS}</p>`;
   return `
@@ -149,7 +157,7 @@ export function aviationHtml(av) {
     <p class="apt-sub">SIGMET cerca de la ruta</p>${sig}
     <p class="apt-sub">Informes de pilotos (PIREP)</p>${pir}
     <p class="note-small">Los PIREP cubren sobre todo EE. UU. y el Atlántico Norte: que no haya informes no significa que no haya turbulencia.
-    Fuente: Aviation Weather Center (NOAA)${av.updated ? `, descargado a las ${utcHH(Date.parse(av.updated))}` : ''}.</p>`;
+    Fuente: Aviation Weather Center (NOAA)${av.updated ? `, descargado ${agoText(nowMs - Date.parse(av.updated))}` : ''}.</p>`;
 }
 
 export function offlineBanner(savedAt, nowMs) {
@@ -203,7 +211,7 @@ export function renderForecast(el, view, nowMs) {
     </div>
     <section id="timeline">${timelineHtml(view)}</section>
     <section id="altitudes">${altitudeHtml(view.altitudes)}</section>
-    <section id="aviation">${aviationHtml(view.aviation)}</section>
+    <section id="aviation">${aviationHtml(view.aviation, nowMs)}</section>
     <div id="map" class="map" hidden></div>
     <p id="fresh" class="fresh">${freshnessHtml(view, nowMs)}</p>
     <p class="disclaimer">Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.</p>`;

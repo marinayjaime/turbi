@@ -103,6 +103,10 @@ describe('combineModels y agreement', () => {
     const c = combineModels([{ model: 'ECMWF', points: [pt(60, ['vertical_shear'])] }, { model: 'GFS', points: [pt(30, ['convection'])] }]);
     expect(c[0]).toMatchObject({ score: 45, level: 1, causes: ['vertical_shear', 'convection'] });
   });
+  it('como mucho 3 causas al combinar', () => {
+    const c = combineModels([{ model: 'ECMWF', points: [pt(60, ['vertical_shear', 'jet_stream', 'instability'])] }, { model: 'GFS', points: [pt(50, ['convection', 'clear_air'])] }]);
+    expect(c[0].causes).toHaveLength(3);
+  });
   it('un punto válido solo en un modelo usa ese modelo', () => {
     const c = combineModels([{ model: 'ECMWF', points: [{ score: null, level: null, causes: [], layers: [], valid: false }] }, { model: 'GFS', points: [pt(30)] }]);
     expect(c[0].score).toBe(30);
@@ -140,5 +144,26 @@ describe('fetchModelRuns', () => {
     const f = vi.fn(async url => (url.includes('ecmwf') ? { ok: false, status: 500 } : { ok: true, json: async () => ({ last_run_initialisation_time: 1790229600 }) }));
     expect(await fetchModelRuns(['ECMWF', 'GFS'], f)).toEqual({ GFS: 1790229600000 });
     expect(await fetchModelRuns(['GFS'], vi.fn(async () => { throw new TypeError('x'); }))).toEqual({});
+  });
+});
+
+describe('rejilla real de GFS', () => {
+  it('las coordenadas de GFS se ajustan a 0,25° (sus datos en altura vienen de esa rejilla)', async () => {
+    const seen = [];
+    const base = fakeOpenMeteo(calm);
+    const f = vi.fn(async url => {
+      const res = await base(url);
+      const body = await res.json();
+      const model = new URL(url).searchParams.get('models');
+      // GFS devuelve coordenadas de su rejilla fina (0,11°), no las de 0,25° de sus datos en altura
+      for (const loc of body) { if (model === 'gfs_seamless') { loc.latitude += 0.041; loc.longitude -= 0.03; } seen.push(loc); }
+      return { ok: true, status: 200, json: async () => body };
+    });
+    const { snapToGrid } = await import('../js/models.js');
+    expect(snapToGrid({ lat: 40.709, lon: -3.47 }, 0.25)).toEqual({ lat: 40.75, lon: -3.5 });
+    expect(snapToGrid({ lat: 40.709, lon: -3.47 }, null)).toEqual({ lat: 40.709, lon: -3.47 });
+    const gfs = (await import('../js/models.js')).MODELS.find(m => m.label === 'GFS');
+    expect(gfs.grid).toBe(0.25);
+    await forecastRoute(profile, f);
   });
 });

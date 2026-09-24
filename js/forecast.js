@@ -4,6 +4,9 @@ import { forecastRoute } from './models.js';
 import { buildSegmentsV2, summarize, altitudeTable } from './summary.js';
 import { computeConfidence } from './confidence.js';
 import { summarizeMetar, summarizeTaf, sigmetsNearRoute, pirepsNearRoute } from './aviation-weather.js';
+import { agoText } from './storage.js';
+
+const METAR_MAX_AGE_MS = 3 * 3600000;
 
 export async function forecastView({ q, profile, flight, times, nowMs, fetchFn = fetch }) {
   const fc = await forecastRoute(profile, fetchFn);
@@ -19,6 +22,7 @@ export async function forecastView({ q, profile, flight, times, nowMs, fetchFn =
     originIata: q.origin.iata,
     destinationIata: q.destination.iata,
     durationMin: profile.durationMin,
+    coverage: fc.coverage,
     summary: summarize(segments, profile.durationMin),
     confidence: computeConfidence({
       departureMs: profile.departureMs, nowMs, models: fc.models, agreement: fc.agreement, coverage: fc.coverage, points: fc.points,
@@ -35,13 +39,18 @@ export async function forecastView({ q, profile, flight, times, nowMs, fetchFn =
   };
 }
 
-function airport(av, iata) {
+function airport(av, iata, nowMs) {
   const icao = av.icao?.[iata] ?? null;
   const metar = icao ? av.metar?.items?.[icao] : null;
   const taf = icao ? av.taf?.items?.[icao] : null;
+  // Un METAR viejo (p. ej. republicado porque NOAA falló) nunca se presenta como actual.
+  const metarStale = Boolean(metar) && nowMs - metar.t > METAR_MAX_AGE_MS;
   return {
     iata, icao,
-    metarText: summarizeMetar(metar ?? null), metarRaw: metar?.raw ?? null,
+    metarText: metarStale ? null : summarizeMetar(metar ?? null),
+    metarAge: metar && !metarStale ? agoText(nowMs - metar.t) : null,
+    metarStale,
+    metarRaw: metar?.raw ?? null,
     tafText: summarizeTaf(taf ?? null), tafRaw: taf?.raw ?? null,
   };
 }
@@ -50,9 +59,10 @@ export function aviationView(av, view, nowMs) {
   if (!av.metar && !av.taf && !av.sigmet && !av.pirep) return null;
   return {
     updated: av.metar?.updated ?? av.sigmet?.updated ?? null,
-    origin: airport(av, view.originIata),
-    destination: airport(av, view.destinationIata),
-    sigmets: sigmetsNearRoute(av.sigmet?.items, view.route, view.depMs, view.arrMs),
-    pireps: pirepsNearRoute(av.pirep?.items, view.route, nowMs),
+    origin: airport(av, view.originIata, nowMs),
+    destination: airport(av, view.destinationIata, nowMs),
+    // null = archivo no disponible (distinto de «ninguno cerca»)
+    sigmets: av.sigmet ? sigmetsNearRoute(av.sigmet.items, view.route, view.depMs, view.arrMs) : null,
+    pireps: av.pirep ? pirepsNearRoute(av.pirep.items, view.route, nowMs) : null,
   };
 }

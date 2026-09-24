@@ -75,3 +75,17 @@ describe('agoText', () => {
     expect(agoText(86400000)).toBe('hace 1 día');
   });
 });
+
+describe('localStorage inaccesible (Safari con cookies bloqueadas)', () => {
+  it('ninguna función lanza aunque leer localStorage dé SecurityError', () => {
+    const desc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('SecurityError'); } });
+    try {
+      expect(loadLast()).toBeNull();
+      expect(() => saveLast({ a: 1 }, 1)).not.toThrow();
+      expect(recordSnapshot('A', { t: 1, maxLevel: 0, verdict: 'tranquilo' })).toHaveLength(1);
+    } finally {
+      if (desc) Object.defineProperty(globalThis, 'localStorage', desc); else delete globalThis.localStorage;
+    }
+  });
+});
