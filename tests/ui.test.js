@@ -42,6 +42,27 @@ describe('explicación de la fiabilidad', () => {
       expect(el.innerHTML).toContain(txt);
     }
     expect(el.innerHTML).toMatch(/<li class="current"><strong>Media<\/strong>/);
-    expect(el.innerHTML.match(/class="current"/g)).toHaveLength(1);
+    const block = el.innerHTML.slice(el.innerHTML.indexOf('<details class="reliability">'));
+    expect(block.slice(0, block.indexOf('</details>')).match(/class="current"/g)).toHaveLength(1);
+  });
+});
+
+describe('explicación del veredicto y los tramos', () => {
+  const el = { innerHTML: '' };
+  renderResult(el, {
+    title: 'PMI → MAD', subtitle: 'IB1668', times: '17:55–19:25', verdict: 'movimiento',
+    reliability: 'alta', durationMin: 90, segments: [{ level: 1, startMin: 0, endMin: 90, cause: 'ellrod' }],
+  });
+  const html = el.innerHTML;
+  it('desplegable con los tres veredictos y el actual resaltado', () => {
+    expect(html).toContain('<details class="explain">');
+    expect(html).toContain('<summary>¿Qué significa?');
+    for (const v of ['Tranquilo', 'Algo de movimiento', 'Turbulento']) expect(html).toContain(v);
+    expect(html).toMatch(/<li class="current"><strong>🟡 Algo de movimiento<\/strong>/);
+  });
+  it('explica intensidades y causas', () => {
+    for (const t of ['Ligera', 'Moderada', 'Fuerte', 'Aire claro', 'Cizalladura', 'Tormentas', 'Onda de montaña']) {
+      expect(html).toContain(`<strong>${t}</strong>`);
+    }
   });
 });

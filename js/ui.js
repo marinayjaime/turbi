@@ -77,6 +77,49 @@ function reliabilityHtml(current) {
       </details>`;
 }
 
+const VERDICT_HELP = {
+  tranquilo: 'Como mucho algún bote suelto en menos del 10 % del vuelo.',
+  movimiento: 'Tramos de turbulencia ligera, o moderada durante poco tiempo (15 min o menos).',
+  turbulento: 'Turbulencia moderada durante más de 15 min, o algún tramo fuerte.',
+};
+const LEVEL_HELP = [
+  null,
+  ['Ligera', 'Pequeños botes. Se puede caminar y servir bebidas.'],
+  ['Moderada', 'Movimientos claros: se enciende la señal del cinturón, cuesta caminar y las bebidas pueden derramarse.'],
+  ['Fuerte', 'Movimientos bruscos: los objetos sueltos se mueven. Es poco frecuente.'],
+];
+const CAUSE_HELP = {
+  ellrod: 'Cambios bruscos del viento en altura, típicos cerca de la corriente en chorro. No hay nubes que la anuncien.',
+  shear: 'Mucha diferencia de velocidad del viento entre dos alturas cercanas.',
+  convection: 'Nubes de tormenta. Afecta sobre todo al despegar y aterrizar.',
+  mountain: 'Viento fuerte que cruza cordilleras (Pirineos, Alpes…) y ondula el aire.',
+};
+
+function explainHtml(current) {
+  const verdicts = Object.entries(VERDICTS).map(([key, v]) => `
+          <li${key === current ? ' class="current"' : ''}><strong>${v.emoji} ${v.title}</strong><br>${VERDICT_HELP[key]}</li>`).join('');
+  const levels = LEVEL_HELP.slice(1).map(([name, text], i) => `
+          <li><span class="dot lvl${i + 1}"></span><strong>${name}</strong> · ${text}</li>`).join('');
+  const causes = Object.entries(CAUSE_HELP).map(([key, text]) => `
+          <li><strong>${CAUSES[key]}</strong> · ${text}</li>`).join('');
+  return `
+      <details class="explain">
+        <summary>¿Qué significa? <span class="info">ⓘ</span></summary>
+        <h4>Veredicto</h4>
+        <ul>${verdicts}
+        </ul>
+        <h4>Intensidad de cada tramo</h4>
+        <ul>${levels}
+        </ul>
+        <p>La turbulencia es incómoda pero no pone en peligro el avión. Con el cinturón abrochado no pasa nada.</p>
+        <h4>Causas</h4>
+        <ul>${causes}
+        </ul>
+        <h4>La barra</h4>
+        <p>Va del despegue al aterrizaje. Cada color es un tramo del vuelo, y debajo se detalla en qué minuto empieza y acaba.</p>
+      </details>`;
+}
+
 export function renderResult(el, view) {
   if (view.note) {
     el.innerHTML = `<div class="summary">${flightCardHtml(view.flight)}<p class="note">${esc(view.note)}</p></div>`;
@@ -110,7 +153,7 @@ export function renderResult(el, view) {
         <span class="emoji">${v.emoji}</span>
         <div><h2>${v.title}</h2><p>${v.text}</p></div>
       </div>
-      ${reliabilityHtml(view.reliability)}
+      <div class="pills">${explainHtml(view.verdict)}${reliabilityHtml(view.reliability)}</div>
     </div>
     <div class="timeline">
       <div class="bar">${bar}</div>

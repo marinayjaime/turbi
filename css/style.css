@@ -81,19 +81,23 @@ button { font: inherit; cursor: pointer; }
 .verdict .emoji { font-size: 44px; line-height: 1; }
 .verdict h2 { margin: 0; font-size: 24px; }
 .verdict p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
-.reliability { margin-top: 14px; font-size: 13px; color: var(--muted); }
-.reliability summary {
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.pills details[open] { flex-basis: 100%; order: 1; }
+.reliability, .explain { font-size: 13px; color: var(--muted); }
+.reliability summary, .explain summary {
   display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--field);
   cursor: pointer; list-style: none;
 }
-.reliability summary::-webkit-details-marker { display: none; }
-.reliability .info { color: var(--accent); margin-left: 2px; }
-.reliability[open] summary { background: #e8f1ff; color: var(--accent); }
-.reliability p { margin: 12px 0 8px; font-size: 14px; line-height: 1.4; color: var(--text); }
-.reliability ul { list-style: none; margin: 0; padding: 0; }
-.reliability li { padding: 8px 10px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
-.reliability li strong { color: var(--text); }
-.reliability li.current { background: var(--field); color: var(--text); }
+.reliability summary::-webkit-details-marker, .explain summary::-webkit-details-marker { display: none; }
+.reliability .info, .explain .info { color: var(--accent); margin-left: 2px; }
+.reliability[open] summary, .explain[open] summary { background: #e8f1ff; color: var(--accent); }
+.reliability p, .explain p { margin: 12px 0 8px; font-size: 14px; line-height: 1.4; color: var(--text); }
+.reliability ul, .explain ul { list-style: none; margin: 0; padding: 0; }
+.reliability li, .explain li { padding: 8px 10px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
+.reliability li strong, .explain li strong { color: var(--text); }
+.explain h4 { margin: 16px 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.explain li .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.reliability li.current, .explain li.current { background: var(--field); color: var(--text); }
 
 .timeline { margin: 32px 0 8px; }
 .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; }
