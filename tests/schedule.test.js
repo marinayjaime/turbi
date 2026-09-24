@@ -21,12 +21,12 @@ describe('fetchSchedule', () => {
       ok: true,
       json: async () => (url.endsWith('airlines.json') ? { IBE: 'IB' } : { name: 'Iberia', legs: [leg()] }),
     }));
-    const r = await fetchSchedule('IBE1668', f);
+    const r = await fetchSchedule('IBE1668', f, null); // solo GitHub Pages
     expect(f.mock.calls.map(c => c[0])).toEqual(['data/flights/airlines.json', 'data/flights/IB/1668.json']);
     expect(r).toEqual({ al: 'IB', n: '1668', name: 'Iberia', legs: [leg()] });
   });
   it('404, error de red o ICAO desconocido → null', async () => {
-    expect(await fetchSchedule('IB9999', vi.fn(async () => ({ ok: false, status: 404 })))).toBeNull();
+    expect(await fetchSchedule('IB9999', vi.fn(async () => ({ ok: false, status: 404 })))).toBeNull(); // también con el servidor en directo
     expect(await fetchSchedule('IB1668', vi.fn(async () => { throw new TypeError('Failed to fetch'); }))).toBeNull();
     expect(await fetchSchedule('XXX1', vi.fn(async () => ({ ok: true, json: async () => ({}) })))).toBeNull();
   });
