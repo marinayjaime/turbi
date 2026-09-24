@@ -24,7 +24,7 @@ body::before {
   top: calc(-1 * env(safe-area-inset-top));
   height: calc(100vh + env(safe-area-inset-top) + env(safe-area-inset-bottom) + 200px);
   height: calc(100lvh + env(safe-area-inset-top) + env(safe-area-inset-bottom) + 200px);
-  background: var(--bg) url('../img/sky.jpg') center top / cover no-repeat;
+  background: #90989c url('../img/sky.jpg') center top / cover no-repeat;
 }
 .panel {
   background: var(--glass);

@@ -1,6 +1,6 @@
 // Network-first para los archivos propios (así las actualizaciones llegan al momento),
 // con la caché como respaldo sin conexión. Las APIs externas no pasan por aquí.
-const CACHE = 'turbi-v25';
+const CACHE = 'turbi-v26';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.json',
   'js/app.js', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
@@ -11,7 +11,8 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
+  // cache: 'reload' → la copia sin conexión es la recién publicada, no la que el navegador tenga guardada (GitHub: 10 min).
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))));
   self.skipWaiting();
 });
 
@@ -24,7 +25,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   if (new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache: con red, siempre se pregunta al servidor si hay versión nueva (si no la hay, responde 304 y no se descarga).
+    fetch(e.request, { cache: 'no-cache' })
       .then(res => {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
