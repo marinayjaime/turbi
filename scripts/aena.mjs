@@ -93,13 +93,13 @@ export function mergeLegs(old, fresh, freshDates, today) {
 const SAFE_AL = /^[A-Z0-9]{2}$/;
 const SAFE_N = /^\d{1,4}[A-Z]?$/;
 
-export function shardLegs(legs) {
+export function shardLegs(legs, updated = undefined) {
   const files = {};
   const airlines = {};
   for (const { al, icao, name, n, ...leg } of legs) {
     if (!SAFE_AL.test(al) || !SAFE_N.test(n)) continue;
     const path = `${al}/${n}.json`;
-    files[path] ??= { name, legs: [] };
+    files[path] ??= updated ? { name, updated, legs: [] } : { name, legs: [] };
     files[path].legs.push(leg);
     if (icao) airlines[icao] = al;
   }

@@ -114,3 +114,10 @@ describe('patchFailed', () => {
     expect(patchFailed(fresh, [L({ sa: '99:99' })], [])).toBe(fresh);
   });
 });
+
+describe('fecha de actualización en cada vuelo', () => {
+  it('shardLegs añade updated si se le pasa', () => {
+    const { files } = shardLegs(buildLegs([dep()]), '2026-09-24T10:00:00.000Z');
+    expect(files['IB/1668.json'].updated).toBe('2026-09-24T10:00:00.000Z');
+  });
+});

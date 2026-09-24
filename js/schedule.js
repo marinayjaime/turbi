@@ -27,7 +27,7 @@ export async function fetchSchedule(number, fetchFn = fetch) {
     }
     const data = await getJson(`${BASE}${al}/${parsed.n}.json`, fetchFn);
     if (!data?.legs?.length) return null;
-    return { al, n: parsed.n, name: data.name, legs: data.legs };
+    return { al, n: parsed.n, name: data.name, legs: data.legs, updated: data.updated };
   } catch {
     return null;
   }
@@ -80,6 +80,8 @@ const GATE_STATES = {
   ULL: { text: 'Última llamada', tone: 'info' },
   CER: { text: 'Puerta cerrada', tone: 'info' },
   BTR: { text: 'Próximo embarque', tone: 'info' },
+  NPT: { text: 'Cambio de puerta', tone: 'warn' },
+  NPR: { text: 'Cambio de puerta', tone: 'warn' },
 };
 
 function delayMin(leg) {

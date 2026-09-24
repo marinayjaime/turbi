@@ -154,6 +154,8 @@ function flightCard(q, durationMin) {
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
     arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : null,
     aircraft: aircraftName(leg.ac),
+    gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
+    updatedAgo: schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
   };
 }
 

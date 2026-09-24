@@ -79,3 +79,37 @@ describe('logo de la aerolínea', () => {
     expect(el.innerHTML).toContain('https://pics.avs.io/200/80/IB.png');
   });
 });
+
+import { flightCardHtml } from '../js/ui.js';
+
+describe('puerta de embarque en la ficha', () => {
+  const card = (dep, extra = {}) => ({
+    al: 'IB', title: 'Iberia IB 1668', route: 'Palma a Madrid', tabs: [], status: { text: 'Programado', tone: 'ok' },
+    o: 'PMI', a: 'MAD', duration: 90, dep, arr: null, aircraft: null, ...extra,
+  });
+  const dep = over => ({ date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D71', ...over });
+  it('línea propia y visible con la puerta', () => {
+    const h = flightCardHtml(card(dep()));
+    expect(h).toContain('Puerta de embarque');
+    expect(h).toMatch(/class="gate[^"]*"[^>]*>[\s\S]*D71/);
+  });
+  it('solo zona (una letra): lo explica', () => {
+    const h = flightCardHtml(card(dep({ gate: 'H' })));
+    expect(h).toContain('Zona H');
+    expect(h).toContain('la puerta exacta se anuncia más cerca de la salida');
+  });
+  it('sin asignar: lo dice y explica cuándo suele salir', () => {
+    const h = flightCardHtml(card(dep({ gate: null })));
+    expect(h).toContain('Aún sin asignar');
+    expect(h).toContain('1–2 h antes de la salida');
+  });
+  it('cambio de puerta destacado', () => {
+    expect(flightCardHtml(card(dep(), { gateChanged: true }))).toContain('Cambio de puerta');
+  });
+  it('indica cuándo se actualizó el dato de Aena', () => {
+    expect(flightCardHtml(card(dep(), { updatedAgo: 'hace 25 min' }))).toContain('Datos de Aena actualizados hace 25 min');
+  });
+  it('escapa la puerta', () => {
+    expect(flightCardHtml(card(dep({ gate: '<b>' })))).not.toContain('<b>');
+  });
+});

@@ -35,7 +35,7 @@ export function flightCardHtml(c) {
         <p class="lbl">${label}${label === 'Llegada' ? nextDay(x) : ''}</p>
         <p class="big${x.late ? ' late' : ''}">${esc(x.est ?? x.time)}</p>
         ${x.est ? `<p class="was">Programada ${esc(x.time)}</p>` : ''}
-        <p class="meta">${meta(x.terminal, x.gate)}</p>
+        <p class="meta">${meta(x.terminal, null)}</p>
       </div>` : `
       <div class="side"><p class="lbl">${label}</p><p class="big">—</p></div>`;
   return `
@@ -54,7 +54,15 @@ export function flightCardHtml(c) {
         <strong>${esc(c.a)}</strong>
       </div>
       <div class="sides">${side('Salida', c.dep)}${side('Llegada', c.arr)}</div>
-      <p class="foot">${c.aircraft ? `Avión ${esc(c.aircraft)} · ` : ''}Fuente: Aena · hora local de cada aeropuerto</p>
+      ${c.dep ? `
+      <div class="gate${c.dep.gate ? '' : ' pending'}">
+        <span class="gate-k">Puerta de embarque</span>
+        <span class="gate-v">${!c.dep.gate ? 'Aún sin asignar' : /^[A-Z]$/i.test(c.dep.gate) ? `Zona ${esc(c.dep.gate)}` : esc(c.dep.gate)}</span>
+        ${c.gateChanged ? '<span class="tag warn">Cambio de puerta</span>' : ''}
+        ${!c.dep.gate ? '<small>Aena suele publicarla 1–2 h antes de la salida.</small>'
+          : /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
+      </div>` : ''}
+      <p class="foot">${c.aircraft ? `Avión ${esc(c.aircraft)} · ` : ''}${c.updatedAgo ? `Datos de Aena actualizados ${esc(c.updatedAgo)} · ` : 'Fuente: Aena · '}hora local de cada aeropuerto</p>
     </section>`;
 }
 

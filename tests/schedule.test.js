@@ -98,3 +98,10 @@ describe('isLate', () => {
     expect(isLate(leg({ sa: null, ea: null }), 'arr')).toBe(false);
   });
 });
+
+describe('cambio de puerta', () => {
+  it('estados NPT/NPR de Aena', () => {
+    expect(flightStatus(leg({ st: 'NPT', std: 'NPT' }))).toEqual({ text: 'Cambio de puerta', tone: 'warn' });
+    expect(flightStatus(leg({ st: 'NPR', std: 'NPR' }))).toEqual({ text: 'Cambio de puerta', tone: 'warn' });
+  });
+});

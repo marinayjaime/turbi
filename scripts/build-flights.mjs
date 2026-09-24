@@ -97,7 +97,7 @@ async function main() {
     legs = fresh;
   }
 
-  const { files, airlines } = shardLegs(legs);
+  const { files, airlines } = shardLegs(legs, new Date().toISOString());
   const out = `${SITE}/data/flights`;
   await mkdir(out, { recursive: true });
   await writeFile(`${out}/_legs.json`, JSON.stringify(legs));
