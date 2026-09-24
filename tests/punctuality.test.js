@@ -30,7 +30,7 @@ describe('currentPunctuality (vuelo de hoy)', () => {
   it('vuelo en el aire: llegada prevista puntual (+6), salida final (+12)', () => {
     const c = currentPunctuality(leg(), NOW);
     expect(c.dep).toEqual({ sched: '18:25', time: '18:37', delay: 12, final: true });
-    expect(c.arr).toEqual({ sched: '19:50', time: '19:56', delay: 6, final: false });
+    expect(c.arr).toEqual({ sched: '19:50', time: '19:56', delay: 6, final: false, adjusted: false });
     expect(c.state).toBe('puntual');
     expect(c.text).toBe('Llegada prevista puntual');
   });
@@ -49,9 +49,13 @@ describe('currentPunctuality (vuelo de hoy)', () => {
   });
   it('salida y llegada que no cuadran entre sí (caso real IB1668): aviso', () => {
     const c = currentPunctuality(leg({ o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T18:02', sa: '19:25', ea: '2026-09-24T20:07', st: 'INI', std: 'INI', sta: 'INI' }));
-    expect(c.arr.delay).toBe(42);
     expect(c.dep.delay).toBe(7);
     expect(c.mismatch).toEqual({ dep: 'PMI', arr: 'MAD' });
+  });
+  it('con la estimación de destino desfasada usa programada + retraso de salida y lo marca', () => {
+    const c = currentPunctuality(leg({ sd: '17:55', ed: '2026-09-24T18:02', sa: '19:25', ea: '2026-09-24T20:07', st: 'INI', std: 'INI', sta: 'INI' }));
+    expect(c.arr).toMatchObject({ time: '19:32', delay: 7, adjusted: true });
+    expect(c.state).toBe('puntual');
   });
   it('diferencias normales o vuelo ya aterrizado: sin aviso', () => {
     expect(currentPunctuality(leg()).mismatch).toBeNull();

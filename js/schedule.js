@@ -61,8 +61,30 @@ function scheduledArrival(leg) {
   return { date: leg.d, time: leg.sa };
 }
 
+const DEPARTED = new Set(['BOR', 'FLY', 'FNL', 'LND', 'IBK', 'OPE', 'OPF']);
+const hasDeparted = leg => [leg.std, leg.sta, leg.st].some(s => DEPARTED.has(s));
+const MAX_ARR_GAP = 20; // min
+
+// Llegada estimada. Antes del despegue, la estimación del aeropuerto de destino puede quedarse desfasada
+// (caso real IB1668 el 24/09/2026: 20:07 → 19:50 → 19:31 en una hora). Si va más de 20 min por detrás
+// de lo que implica la salida, se usa programada + retraso de salida (adjusted = true).
+export function arrivalEstimate(leg) {
+  const sched = scheduledArrival(leg);
+  if (!sched) return leg.ea ? { ...split(leg.ea), adjusted: false } : null;
+  if (!leg.ea) return { ...sched, adjusted: false };
+  const est = split(leg.ea);
+  if (hasDeparted(leg) || !leg.sd) return { ...est, adjusted: false };
+  const schedMs = Date.parse(`${sched.date}T${sched.time}:00Z`);
+  const depDelay = Math.max(0, delayMin(leg));
+  const arrDelay = (Date.parse(`${leg.ea}:00Z`) - schedMs) / 60000;
+  if (arrDelay - depDelay <= MAX_ARR_GAP) return { ...est, adjusted: false };
+  const iso = new Date(schedMs + depDelay * 60000).toISOString();
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16), adjusted: true };
+}
+
 export function legArrival(leg) {
-  return leg.ea ? split(leg.ea) : scheduledArrival(leg);
+  const a = arrivalEstimate(leg);
+  return a ? { date: a.date, time: a.time } : null;
 }
 
 // Textos oficiales de Aena (Infovuelos): BOR = «Finalizado», DES = «Desviado», IBK/OPE/OPF = «Entrega equip.».
@@ -114,6 +136,7 @@ export function flightStatus(leg) {
 export function isLate(leg, which) {
   if (which === 'dep') return delayMin(leg) > 0;
   const sched = scheduledArrival(leg);
-  if (!sched || !leg.ea) return false;
-  return Date.parse(`${leg.ea}:00Z`) > Date.parse(`${sched.date}T${sched.time}:00Z`);
+  const est = leg.ea ? arrivalEstimate(leg) : null;
+  if (!sched || !est) return false;
+  return Date.parse(`${est.date}T${est.time}:00Z`) > Date.parse(`${sched.date}T${sched.time}:00Z`);
 }
