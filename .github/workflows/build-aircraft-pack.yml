@@ -217,6 +217,33 @@ jobs:
               candidates.sort(key=lambda x: x[0], reverse=True)
               return candidates[0]
 
+          overrides = {
+              ("Air France", "Airbus A320"): "File:Airbus A320 (Air France) (6107242176).jpg",
+              ("British Airways", "Airbus A380-800"): "File:British Airways Airbus A380-800 G-XLEB MD2.jpg",
+          }
+
+          def find_exact(title):
+              params = {
+                  "action": "query",
+                  "format": "json",
+                  "formatversion": "2",
+                  "titles": title,
+                  "prop": "imageinfo|categories",
+                  "iiprop": "url|extmetadata|mime|size",
+                  "iiurlwidth": "1800",
+                  "cllimit": "max",
+              }
+              r = session.get(API, params=params, timeout=45)
+              r.raise_for_status()
+              pages = r.json().get("query", {}).get("pages", [])
+              if not pages:
+                  return None
+              p = pages[0]
+              ii = (p.get("imageinfo") or [{}])[0]
+              if not (ii.get("thumburl") or ii.get("url")):
+                  return None
+              return (999, p, ii)
+
           rows = []
           missing = []
           total = sum(len(v) for v in fleets.values())
@@ -226,7 +253,7 @@ jobs:
               for model in models:
                   n += 1
                   print(f"[{n}/{total}] {airline} | {model}", flush=True)
-                  found = find_image(airline, model)
+                  found = find_exact(overrides[(airline, model)]) if (airline, model) in overrides else find_image(airline, model)
                   if not found:
                       missing.append(f"{airline} | {model}")
                       continue
