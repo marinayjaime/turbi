@@ -21,14 +21,12 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --quiet requests pillow
 
-      - name: Build photo library
+      - name: Build aircraft reference pack
         shell: bash
         run: |
           cat > /tmp/build_pack.py <<'PY'
-          import csv, html, io, json, os, re, time, unicodedata
+          import csv, io, json, re
           from pathlib import Path
-          from urllib.parse import quote
-
           import requests
           from PIL import Image, ImageOps
 
@@ -36,180 +34,125 @@ jobs:
           ROOT.mkdir(parents=True, exist_ok=True)
 
           fleets = {
-              "Ryanair": ["Boeing 737-800", "Boeing 737 MAX 8-200"],
-              "easyJet": ["Airbus A320", "Airbus A320neo", "Airbus A321neo"],
-              "Vueling": ["Airbus A320", "Airbus A320neo", "Airbus A321"],
-              "Iberia": ["Airbus A320neo", "Airbus A321XLR", "Airbus A330-200", "Airbus A330-300", "Airbus A350-900"],
-              "Air Europa": ["Boeing 737-800", "Boeing 787-8", "Boeing 787-9"],
-              "British Airways": ["Airbus A320neo", "Airbus A321neo", "Airbus A350-1000", "Airbus A380-800", "Boeing 777-300ER", "Boeing 787-9"],
-              "Lufthansa": ["Airbus A320neo", "Airbus A321neo", "Airbus A350-900", "Boeing 747-8", "Boeing 787-9"],
-              "Air France": ["Airbus A220-300", "Airbus A320", "Airbus A350-900", "Boeing 777-300ER", "Boeing 787-9"],
-              "KLM": ["Boeing 737-800", "Airbus A321neo", "Boeing 777-300ER", "Boeing 787-9", "Boeing 787-10"],
-              "TAP Air Portugal": ["Airbus A320neo", "Airbus A321neo", "Airbus A330-900neo"],
-              "SWISS": ["Airbus A220-300", "Airbus A320neo", "Airbus A321neo", "Airbus A330-300", "Boeing 777-300ER"],
-              "SAS": ["Airbus A320neo", "Airbus A321LR", "Airbus A330-300", "Airbus A350-900"],
-              "Norwegian": ["Boeing 737-800", "Boeing 737 MAX 8"],
-              "Wizz Air": ["Airbus A320neo", "Airbus A321neo"],
-              "ITA Airways": ["Airbus A220-300", "Airbus A320neo", "Airbus A330-900neo", "Airbus A350-900"],
-              "Turkish Airlines": ["Airbus A321neo", "Airbus A350-900", "Boeing 737 MAX 8", "Boeing 777-300ER", "Boeing 787-9"],
-              "Emirates": ["Airbus A350-900", "Airbus A380-800", "Boeing 777-300ER"],
-              "Qatar Airways": ["Airbus A350-900", "Airbus A350-1000", "Airbus A380-800", "Boeing 777-300ER", "Boeing 787-9"],
-              "Etihad Airways": ["Airbus A350-1000", "Airbus A380-800", "Boeing 777-300ER", "Boeing 787-9", "Boeing 787-10"],
-              "American Airlines": ["Airbus A321", "Boeing 737-800", "Boeing 737 MAX 8", "Boeing 777-300ER", "Boeing 787-8", "Boeing 787-9"],
-              "Delta Air Lines": ["Airbus A220-300", "Airbus A321neo", "Airbus A330-900neo", "Airbus A350-900", "Boeing 737-900ER"],
-              "United Airlines": ["Airbus A321neo", "Boeing 737-800", "Boeing 737 MAX 9", "Boeing 777-300ER", "Boeing 787-9", "Boeing 787-10"],
-              "Southwest Airlines": ["Boeing 737-800", "Boeing 737 MAX 8"],
-              "Air Canada": ["Airbus A220-300", "Boeing 737 MAX 8", "Boeing 777-300ER", "Boeing 787-9"],
-              "LATAM Airlines": ["Airbus A320neo", "Airbus A321neo", "Boeing 777-300ER", "Boeing 787-9"],
-              "Aeromexico": ["Boeing 737-800", "Boeing 737 MAX 8", "Boeing 737 MAX 9", "Boeing 787-9"],
-              "Singapore Airlines": ["Airbus A350-900", "Airbus A380-800", "Boeing 737 MAX 8", "Boeing 777-300ER", "Boeing 787-10"],
-              "Cathay Pacific": ["Airbus A321neo", "Airbus A330-300", "Airbus A350-900", "Airbus A350-1000", "Boeing 777-300ER"],
-              "ANA All Nippon Airways": ["Airbus A321neo", "Airbus A380-800", "Boeing 777-300ER", "Boeing 787-8", "Boeing 787-9", "Boeing 787-10"],
-              "Japan Airlines": ["Airbus A350-900", "Airbus A350-1000", "Boeing 737-800", "Boeing 787-8", "Boeing 787-9"],
-              "Qantas": ["Airbus A220-300", "Airbus A330-200", "Airbus A330-300", "Airbus A380-800", "Boeing 737-800", "Boeing 787-9"],
-              "Air India": ["Airbus A320neo", "Airbus A321neo", "Airbus A350-900", "Boeing 777-300ER", "Boeing 787-8"],
-              "Korean Air": ["Airbus A321neo", "Airbus A330-300", "Airbus A350-900", "Airbus A380-800", "Boeing 777-300ER", "Boeing 787-9"],
-              "Air New Zealand": ["Airbus A320neo", "Airbus A321neo", "Boeing 777-300ER", "Boeing 787-9"],
+              "Ryanair": [("Boeing 737-800","B738"), ("Boeing 737 MAX 8-200","B38M")],
+              "easyJet": [("Airbus A320","A320"), ("Airbus A320neo","A20N"), ("Airbus A321neo","A21N")],
+              "Vueling": [("Airbus A320","A320"), ("Airbus A320neo","A20N"), ("Airbus A321","A321")],
+              "Iberia": [("Airbus A320neo","A20N"), ("Airbus A321XLR","A21N"), ("Airbus A330-200","A332"), ("Airbus A330-300","A333"), ("Airbus A350-900","A359")],
+              "Air Europa": [("Boeing 737-800","B738"), ("Boeing 787-8","B788"), ("Boeing 787-9","B789")],
+              "British Airways": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Airbus A350-1000","A35K"), ("Airbus A380-800","A388"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "Lufthansa": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Airbus A350-900","A359"), ("Boeing 747-8","B748"), ("Boeing 787-9","B789")],
+              "Air France": [("Airbus A220-300","BCS3"), ("Airbus A320","A320"), ("Airbus A350-900","A359"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "KLM": [("Boeing 737-800","B738"), ("Airbus A321neo","A21N"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789"), ("Boeing 787-10","B78X")],
+              "TAP Air Portugal": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Airbus A330-900neo","A339")],
+              "SWISS": [("Airbus A220-300","BCS3"), ("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Airbus A330-300","A333"), ("Boeing 777-300ER","B77W")],
+              "SAS": [("Airbus A320neo","A20N"), ("Airbus A321LR","A21N"), ("Airbus A330-300","A333"), ("Airbus A350-900","A359")],
+              "Norwegian": [("Boeing 737-800","B738"), ("Boeing 737 MAX 8","B38M")],
+              "Wizz Air": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N")],
+              "ITA Airways": [("Airbus A220-300","BCS3"), ("Airbus A320neo","A20N"), ("Airbus A330-900neo","A339"), ("Airbus A350-900","A359")],
+              "Turkish Airlines": [("Airbus A321neo","A21N"), ("Airbus A350-900","A359"), ("Boeing 737 MAX 8","B38M"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "Emirates": [("Airbus A350-900","A359"), ("Airbus A380-800","A388"), ("Boeing 777-300ER","B77W")],
+              "Qatar Airways": [("Airbus A350-900","A359"), ("Airbus A350-1000","A35K"), ("Airbus A380-800","A388"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "Etihad Airways": [("Airbus A350-1000","A35K"), ("Airbus A380-800","A388"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789"), ("Boeing 787-10","B78X")],
+              "American Airlines": [("Airbus A321","A321"), ("Boeing 737-800","B738"), ("Boeing 737 MAX 8","B38M"), ("Boeing 777-300ER","B77W"), ("Boeing 787-8","B788"), ("Boeing 787-9","B789")],
+              "Delta Air Lines": [("Airbus A220-300","BCS3"), ("Airbus A321neo","A21N"), ("Airbus A330-900neo","A339"), ("Airbus A350-900","A359"), ("Boeing 737-900ER","B739")],
+              "United Airlines": [("Airbus A321neo","A21N"), ("Boeing 737-800","B738"), ("Boeing 737 MAX 9","B39M"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789"), ("Boeing 787-10","B78X")],
+              "Southwest Airlines": [("Boeing 737-800","B738"), ("Boeing 737 MAX 8","B38M")],
+              "Air Canada": [("Airbus A220-300","BCS3"), ("Boeing 737 MAX 8","B38M"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "LATAM Airlines": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "Aeromexico": [("Boeing 737-800","B738"), ("Boeing 737 MAX 8","B38M"), ("Boeing 737 MAX 9","B39M"), ("Boeing 787-9","B789")],
+              "Singapore Airlines": [("Airbus A350-900","A359"), ("Airbus A380-800","A388"), ("Boeing 737 MAX 8","B38M"), ("Boeing 777-300ER","B77W"), ("Boeing 787-10","B78X")],
+              "Cathay Pacific": [("Airbus A321neo","A21N"), ("Airbus A330-300","A333"), ("Airbus A350-900","A359"), ("Airbus A350-1000","A35K"), ("Boeing 777-300ER","B77W")],
+              "ANA All Nippon Airways": [("Airbus A321neo","A21N"), ("Airbus A380-800","A388"), ("Boeing 777-300ER","B77W"), ("Boeing 787-8","B788"), ("Boeing 787-9","B789"), ("Boeing 787-10","B78X")],
+              "Japan Airlines": [("Airbus A350-900","A359"), ("Airbus A350-1000","A35K"), ("Boeing 737-800","B738"), ("Boeing 787-8","B788"), ("Boeing 787-9","B789")],
+              "Qantas": [("Airbus A220-300","BCS3"), ("Airbus A330-200","A332"), ("Airbus A330-300","A333"), ("Airbus A380-800","A388"), ("Boeing 737-800","B738"), ("Boeing 787-9","B789")],
+              "Air India": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Airbus A350-900","A359"), ("Boeing 777-300ER","B77W"), ("Boeing 787-8","B788")],
+              "Korean Air": [("Airbus A321neo","A21N"), ("Airbus A330-300","A333"), ("Airbus A350-900","A359"), ("Airbus A380-800","A388"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
+              "Air New Zealand": [("Airbus A320neo","A20N"), ("Airbus A321neo","A21N"), ("Boeing 777-300ER","B77W"), ("Boeing 787-9","B789")],
           }
 
-          API = "https://commons.wikimedia.org/w/api.php"
+          BASE = "https://raw.githubusercontent.com/laegsgaardTroels/whatisflying-db/master/data"
           session = requests.Session()
-          session.headers.update({"User-Agent": "Turbi-aircraft-reference-pack/1.0 (personal project; Wikimedia Commons attribution preserved)"})
-
-          def clean_html(value):
-              if not value:
-                  return ""
-              value = re.sub(r"<[^>]+>", " ", str(value))
-              return re.sub(r"\s+", " ", html.unescape(value)).strip()
+          session.headers.update({"User-Agent": "Turbi-aircraft-reference-pack/1.0"})
 
           def safe_name(s):
-              s = s.replace("/", "-").replace("\\", "-").strip()
-              return re.sub(r'[<>:"|?*]', "-", s)
+              return re.sub(r'[<>:"/\\|?*]', "-", s).strip()
 
-          def commons_search(query):
-              params = {
-                  "action": "query",
-                  "format": "json",
-                  "formatversion": "2",
-                  "generator": "search",
-                  "gsrsearch": query,
-                  "gsrnamespace": "6",
-                  "gsrlimit": "12",
-                  "prop": "imageinfo",
-                  "iiprop": "url|extmetadata|mime",
-                  "iiurlwidth": "1600",
-              }
-              r = session.get(API, params=params, timeout=30)
-              r.raise_for_status()
-              pages = r.json().get("query", {}).get("pages", [])
-              pages.sort(key=lambda p: p.get("index", 9999))
-              return pages
+          meta_csv = session.get(f"{BASE}/aircraft_types_pictures.csv", timeout=60)
+          meta_csv.raise_for_status()
+          meta_text = meta_csv.content.decode("utf-8-sig")
+          meta = {}
+          for row in csv.DictReader(io.StringIO(meta_text)):
+              vals = list(row.values())
+              code = row.get("aircraft_type") or row.get("icao_code") or (vals[0] if vals else "")
+              meta[code] = row
 
-          def score_page(page, airline, model):
-              title = page.get("title", "").lower()
-              score = 0
-              a_tokens = [x for x in re.findall(r"[a-z0-9]+", airline.lower()) if len(x) > 2]
-              m_tokens = [x for x in re.findall(r"[a-z0-9]+", model.lower()) if len(x) > 1]
-              score += 3 * sum(t in title for t in a_tokens)
-              score += 2 * sum(t in title for t in m_tokens)
-              if any(x in title for x in ["interior", "cabin", "seat", "cockpit", "logo", "meal"]):
-                  score -= 8
-              return score
-
-          def choose_image(airline, model):
-              searches = [
-                  f'"{airline}" "{model}" aircraft',
-                  f'{airline} {model} aircraft',
-              ]
-              for specific, q in [(True, searches[0]), (True, searches[1]), (False, f'"{model}" aircraft')]:
-                  try:
-                      pages = commons_search(q)
-                  except Exception:
-                      continue
-                  candidates = []
-                  for p in pages:
-                      ii = (p.get("imageinfo") or [{}])[0]
-                      mime = ii.get("mime", "")
-                      url = ii.get("thumburl") or ii.get("url")
-                      if not url or not mime.startswith("image/") or mime == "image/svg+xml":
-                          continue
-                      candidates.append((score_page(p, airline, model), p, ii))
-                  if candidates:
-                      candidates.sort(key=lambda x: x[0], reverse=True)
-                      _, p, ii = candidates[0]
-                      return p, ii, specific
-              return None, None, False
-
-          rows = []
+          cache = {}
+          source_rows = []
           catalog = []
           failures = []
-          total = sum(len(v) for v in fleets.values())
-          done = 0
+
+          all_codes = sorted({code for models in fleets.values() for _, code in models})
+          for code in all_codes:
+              url = f"{BASE}/aircraft_types_pictures/{code}.webp"
+              try:
+                  r = session.get(url, timeout=60)
+                  r.raise_for_status()
+                  img = Image.open(io.BytesIO(r.content))
+                  img = ImageOps.exif_transpose(img).convert("RGB")
+                  if img.width > 1600:
+                      h = round(img.height * 1600 / img.width)
+                      img = img.resize((1600, h), Image.Resampling.LANCZOS)
+                  buf = io.BytesIO()
+                  img.save(buf, "JPEG", quality=90, optimize=True, progressive=True)
+                  cache[code] = buf.getvalue()
+              except Exception as e:
+                  failures.append(f"{code}: {e}")
 
           for airline, models in fleets.items():
-              for model in models:
-                  done += 1
-                  print(f"[{done}/{total}] {airline} - {model}", flush=True)
-                  page, ii, specific = choose_image(airline, model)
-                  if not page:
-                      failures.append(f"{airline} | {model}")
+              for model, code in models:
+                  if code not in cache:
+                      failures.append(f"{airline} | {model} | sin imagen para {code}")
                       continue
-                  meta = ii.get("extmetadata", {})
-                  image_url = ii.get("thumburl") or ii.get("url")
-                  try:
-                      rr = session.get(image_url, timeout=45)
-                      rr.raise_for_status()
-                      img = Image.open(io.BytesIO(rr.content))
-                      img = ImageOps.exif_transpose(img).convert("RGB")
-                      if img.width > 1600:
-                          h = round(img.height * 1600 / img.width)
-                          img = img.resize((1600, h), Image.Resampling.LANCZOS)
-                      folder = ROOT / safe_name(airline) / safe_name(model)
-                      folder.mkdir(parents=True, exist_ok=True)
-                      out = folder / "foto.jpg"
-                      img.save(out, "JPEG", quality=88, optimize=True, progressive=True)
-                  except Exception as e:
-                      failures.append(f"{airline} | {model} | descarga/conversion: {e}")
-                      continue
+                  folder = ROOT / safe_name(airline) / safe_name(model)
+                  folder.mkdir(parents=True, exist_ok=True)
+                  out = folder / "foto.jpg"
+                  out.write_bytes(cache[code])
 
-                  title = page.get("title", "")
-                  source_page = "https://commons.wikimedia.org/wiki/" + quote(title.replace(" ", "_"), safe="():,_-")
-                  artist = clean_html(meta.get("Artist", {}).get("value"))
-                  license_name = clean_html(meta.get("LicenseShortName", {}).get("value"))
-                  license_url = clean_html(meta.get("LicenseUrl", {}).get("value"))
-                  description = clean_html(meta.get("ImageDescription", {}).get("value"))
-
-                  row = {
+                  m = meta.get(code, {})
+                  vals = list(m.values())
+                  source_url = m.get("source_url") or (vals[2] if len(vals) > 2 else "")
+                  author = m.get("author") or (vals[3] if len(vals) > 3 else "")
+                  author_url = m.get("author_url") or (vals[4] if len(vals) > 4 else "")
+                  license_name = m.get("license") or (vals[5] if len(vals) > 5 else "")
+                  source_rows.append({
                       "aerolinea": airline,
                       "modelo": model,
+                      "codigo_icao_tipo": code,
                       "archivo": str(out.relative_to(ROOT)),
-                      "foto_especifica_aerolinea": "sí" if specific else "no (foto genérica del modelo)",
-                      "titulo_wikimedia": title,
-                      "autor": artist,
+                      "nota": "Foto representativa del modelo; no garantiza la librea de esta aerolínea.",
+                      "autor": author,
+                      "autor_url": author_url,
                       "licencia": license_name,
-                      "url_licencia": license_url,
-                      "pagina_fuente": source_page,
-                      "url_imagen": image_url,
-                      "descripcion": description,
-                  }
-                  rows.append(row)
+                      "fuente_original": source_url,
+                      "repositorio_fuente": "https://github.com/laegsgaardTroels/whatisflying-db",
+                  })
                   catalog.append({
                       "airline": airline,
                       "model": model,
+                      "icaoType": code,
                       "path": str(out.relative_to(ROOT)),
-                      "airlineSpecific": specific,
-                      "source": source_page,
-                      "author": artist,
+                      "representativePhoto": True,
+                      "airlineLiveryGuaranteed": False,
+                      "source": source_url,
+                      "author": author,
                       "license": license_name,
-                      "licenseUrl": license_url,
                   })
-                  time.sleep(0.15)
 
+          fields = ["aerolinea","modelo","codigo_icao_tipo","archivo","nota","autor","autor_url","licencia","fuente_original","repositorio_fuente"]
           with open(ROOT / "FUENTES_Y_LICENCIAS.csv", "w", encoding="utf-8-sig", newline="") as f:
-              fields = ["aerolinea","modelo","archivo","foto_especifica_aerolinea","titulo_wikimedia","autor","licencia","url_licencia","pagina_fuente","url_imagen","descripcion"]
               w = csv.DictWriter(f, fieldnames=fields)
               w.writeheader()
-              w.writerows(rows)
+              w.writerows(source_rows)
 
           with open(ROOT / "catalogo.json", "w", encoding="utf-8") as f:
               json.dump(catalog, f, ensure_ascii=False, indent=2)
@@ -219,21 +162,21 @@ jobs:
                   "BIBLIOTECA DE AVIONES COMERCIALES INTERNACIONALES PARA TURBI\n"
                   "==========================================================\n\n"
                   "Estructura: Aerolínea / Modelo / foto.jpg\n\n"
-                  "Alcance: selección amplia de grandes aerolíneas internacionales y de los modelos "
-                  "comerciales de uso habitual en sus flotas. No pretende ser un inventario literal de "
-                  "todas las aerolíneas y aeronaves del mundo.\n\n"
-                  "Las fotografías proceden de Wikimedia Commons. FUENTES_Y_LICENCIAS.csv contiene la "
-                  "fuente, autor y licencia de cada imagen. Antes de republicar una foto, respeta la "
-                  "atribución y demás condiciones indicadas en su licencia. Las marcas y libreas de las "
-                  "aerolíneas pertenecen a sus respectivos titulares.\n\n"
-                  "Si no se encontró una imagen específica de aerolínea+modelo, el script pudo utilizar "
-                  "una foto genérica del modelo; esto queda indicado en el CSV.\n"
+                  "Incluye una selección amplia de grandes aerolíneas internacionales y modelos "
+                  "comerciales habituales. No es una lista literal de todas las aerolíneas del mundo.\n\n"
+                  "IMPORTANTE: las fotos son representativas del MODELO de avión. Se organizan dentro "
+                  "de cada aerolínea según los modelos utilizados por esa compañía, pero la fotografía "
+                  "no garantiza que muestre la librea concreta de esa aerolínea.\n\n"
+                  "FUENTES_Y_LICENCIAS.csv contiene autor, licencia y fuente original. Respeta la "
+                  "atribución y las condiciones de cada licencia antes de republicar las fotografías.\n"
               )
 
           if failures:
               (ROOT / "NO_ENCONTRADOS.txt").write_text("\n".join(failures) + "\n", encoding="utf-8")
 
-          print(f"Fotos creadas: {len(rows)} / {total}")
+          print("Aerolíneas:", len(fleets))
+          print("Fotos:", len(catalog))
+          print("Modelos únicos:", len(cache))
           PY
 
           python /tmp/build_pack.py
