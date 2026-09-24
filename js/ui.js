@@ -26,18 +26,18 @@ const DATE_FMT = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: 'nume
 export const dateLabel = iso => DATE_FMT.format(new Date(`${iso}T12:00:00Z`)).replace('.', '');
 
 // card = { al, title, route, tabs: [{ date, active }], status: { text, tone }, o, a, duration,
-//          dep: { city, date, time, est, terminal, gate }, arr: { city, date, time, est, terminal } | null, aircraft }
+//          dep: { date, time, est, terminal, gate }, arr: { date, time, est, terminal } | null, aircraft }
 function flightCardHtml(c) {
   const meta = (t, g) => [t && `Terminal ${esc(t)}`, g && `Puerta ${esc(g)}`].filter(Boolean).join(' · ') || '&nbsp;';
+  const nextDay = x => (c.dep && x.date > c.dep.date ? ' · +1 día' : '');
   const side = (label, x) => x ? `
       <div class="side">
-        <p class="cap">${esc(x.city)} · ${esc(dateLabel(x.date))}</p>
-        <p class="lbl">${label}</p>
-        <p class="big${x.est ? ' late' : ''}">${esc(x.est ?? x.time)}</p>
+        <p class="lbl">${label}${label === 'Llegada' ? nextDay(x) : ''}</p>
+        <p class="big${x.est && x.est > x.time ? ' late' : ''}">${esc(x.est ?? x.time)}</p>
         ${x.est ? `<p class="was">Programada ${esc(x.time)}</p>` : ''}
         <p class="meta">${meta(x.terminal, x.gate)}</p>
       </div>` : `
-      <div class="side"><p class="cap">&nbsp;</p><p class="lbl">${label}</p><p class="big">—</p></div>`;
+      <div class="side"><p class="lbl">${label}</p><p class="big">—</p></div>`;
   return `
     <section class="flight">
       <div class="flight-head">

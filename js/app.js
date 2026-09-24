@@ -128,8 +128,8 @@ function flightCard(q, durationMin) {
     tabs: tabDates(schedule.legs, leg.d).map(date => ({ date, active: date === leg.d })),
     status: flightStatus(leg),
     o: leg.o, a: leg.a, duration: durationMin,
-    dep: leg.sd ? { city: origin.city, date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, terminal: leg.td, gate: leg.g } : null,
-    arr: arr ? { city: destination.city, date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, terminal: leg.ta } : null,
+    dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, terminal: leg.td, gate: leg.g } : null,
+    arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, terminal: leg.ta } : null,
     aircraft: leg.ac,
   };
 }
