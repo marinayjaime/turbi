@@ -16,8 +16,10 @@
 html { background: var(--bg); }
 body { margin: 0; background: transparent; color: var(--text); }
 /* Foto fija de fondo (iOS no admite background-attachment: fixed) */
+/* Alto de la pantalla completa (lvh: con las barras de Safari ocultas), para que la foto no se corte por abajo. */
 body::before {
-  content: ''; position: fixed; inset: 0; z-index: -1;
+  content: ''; position: fixed; top: 0; left: 0; right: 0; z-index: -1;
+  height: 100vh; height: calc(100lvh + env(safe-area-inset-bottom));
   background: var(--bg) url('../img/sky.jpg') center top / cover no-repeat;
 }
 .panel {
@@ -41,9 +43,12 @@ main {
 }
 [hidden] { display: none !important; }
 
-.top { text-align: center; }
-.top h1 { display: inline-block; margin: 12px 0 20px; line-height: 0; }
-.top .brand { height: 60px; width: auto; max-width: 100%; }
+/* Recuadro de consulta: logo arriba y centrado, con más aire. */
+#query-form { padding: 28px 22px 22px; margin-top: 12px; }
+#query-form .brand { margin: 0 0 28px; text-align: center; line-height: 0; }
+#query-form .brand img { height: 64px; width: auto; max-width: 100%; }
+#query-form .field { margin-bottom: 20px; }
+#query-form .primary { margin-top: 8px; }
 h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
 
 .field { display: block; margin-bottom: 14px; }
