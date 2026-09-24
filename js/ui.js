@@ -27,7 +27,7 @@ export const dateLabel = iso => DATE_FMT.format(new Date(`${iso}T12:00:00Z`)).re
 
 // card = { al, title, route, tabs: [{ date, active }], status: { text, tone }, o, a, duration,
 //          dep: { date, time, est, late, terminal, gate }, arr: { date, time, est, late, terminal } | null, aircraft }
-function flightCardHtml(c) {
+export function flightCardHtml(c) {
   const meta = (t, g) => [t && `Terminal ${esc(t)}`, g && `Puerta ${esc(g)}`].filter(Boolean).join(' · ') || '&nbsp;';
   const nextDay = x => (c.dep && x.date > c.dep.date ? ' · +1 día' : '');
   const side = (label, x) => x ? `
