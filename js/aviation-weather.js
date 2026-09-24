@@ -1,3 +1,5 @@
+import { kmh, compass, metres, localHour, altitudeText } from './plain.js';
+
 // METAR, TAF, SIGMET y PIREP de Aviation Weather (NOAA), descargados cada hora por GitHub Actions
 // (la API no admite CORS). Todo es opcional: si falta, el pronóstico sigue funcionando.
 // Diseño: docs/superpowers/specs/2026-09-24-turbi-v2-pronostico-design.md §10
@@ -41,8 +43,8 @@ function cloudText(clouds = []) {
   const layer = clouds.find(c => ['BKN', 'OVC'].includes(c.cover)) ?? clouds[0];
   if (!layer || ['CAVOK', 'NSC', 'SKC', 'CLR', 'NCD'].includes(layer.cover)) return 'sin nubes significativas';
   if (['BKN', 'OVC'].includes(layer.cover)) {
-    if (layer.base < 1000) return `nubes bajas (${layer.base} ft)`;
-    return `${layer.cover === 'OVC' ? 'cielo cubierto' : 'cielo nuboso'} (${layer.base} ft)`;
+    if (layer.base < 1000) return `nubes bajas (a ${metres(layer.base)} m)`;
+    return `${layer.cover === 'OVC' ? 'cielo cubierto' : 'cielo nuboso'} (nubes a ${metres(layer.base)} m)`;
   }
   return layer.cover === 'SCT' ? 'nubes dispersas' : 'algunas nubes';
 }
@@ -50,25 +52,27 @@ function cloudText(clouds = []) {
 export function summarizeMetar(m) {
   if (!m) return null;
   const wind = !m.wspd ? 'Viento en calma'
-    : `${m.wdir === 'VRB' ? 'Viento variable' : `Viento de ${m.wdir}°`} a ${m.wspd} kt${m.wgst ? ` con rachas de ${m.wgst} kt` : ''}`;
+    : `${m.wdir === 'VRB' ? 'Viento de dirección variable' : `Viento ${compass(m.wdir)}`} a ${kmh(m.wspd)} km/h${m.wgst ? ` con rachas de ${kmh(m.wgst)} km/h` : ''}`;
   return [wind, visibilityText(m.visib), wxText(m.wx), cloudText(m.clouds), typeof m.temp === 'number' ? `${m.temp} °C` : null]
     .filter(Boolean).join(' · ');
 }
 
 // --- TAF ---
 
-const utcHour = s => String(new Date(s * 1000).getUTCHours()).padStart(2, '0');
+const CHANGE = { TEMPO: 'a ratos', BECMG: 'cambiando', FM: 'a partir de las' };
 
-export function summarizeTaf(t) {
+// Periodos con fenómenos relevantes, en hora local del aeropuerto (timeZone).
+export function summarizeTaf(t, timeZone = 'UTC') {
   if (!t) return null;
   const out = [];
   for (const f of t.fcsts ?? []) {
-    const tag = [f.prob ? `PROB${f.prob}` : null, f.change].filter(Boolean).join(' ');
-    const when = `(${tag ? `${tag} ` : ''}${utcHour(f.from)}–${utcHour(f.to)} UTC)`;
+    const h = s => localHour(s * 1000, timeZone);
+    const change = CHANGE[f.change] ? `${CHANGE[f.change]} ` : '';
+    const when = `${change}de ${h(f.from)} a ${h(f.to)}${f.prob ? ` (probabilidad ${f.prob} %)` : ''}`;
     const wx = f.wx ?? '';
     if (wx.includes('TS')) out.push(`Posibles tormentas ${when}`);
     else if (wx.includes('SH')) out.push(`Chubascos ${when}`);
-    if (f.wgst >= 25) out.push(`Rachas de hasta ${f.wgst} kt ${when}`);
+    if (f.wgst >= 25) out.push(`Rachas de hasta ${kmh(f.wgst)} km/h ${when}`);
     const v = f.visib === '6+' ? 6 : Number(f.visib);
     if (Number.isFinite(v) && v < 3) out.push(`Visibilidad reducida ${when}`);
   }
@@ -137,7 +141,7 @@ function distToRoute(point, route) {
 // --- SIGMET ---
 
 const HAZARDS = { TURB: 'Turbulencia', TS: 'Tormentas', MTW: 'Onda de montaña', TC: 'Ciclón tropical' };
-const fl = ft => `FL${String(Math.round(ft / 100)).padStart(3, '0')}`;
+const km = ft => String(Math.round((ft * 0.3048) / 100) / 10).replace('.', ',');
 
 export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
   if (!Array.isArray(sigmets)) return [];
@@ -153,7 +157,7 @@ export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
     .filter(({ d }) => d <= maxKm)
     .map(({ s, d }) => ({
       label: `${HAZARDS[s.hazard]}${s.qualifier === 'SEV' ? ' fuerte' : ''}`,
-      levels: s.top ? (s.base ? `${fl(s.base)}–${fl(s.top)}` : `hasta ${fl(s.top)}`) : null,
+      levels: s.top ? (s.base ? `entre ${km(s.base)} y ${km(s.top)} km de altura` : `hasta ${km(s.top)} km de altura`) : null,
       crosses: d === 0,
       distanceKm: Math.round(d),
       validTo: s.validTo * 1000,
@@ -174,5 +178,5 @@ export function pirepsNearRoute(pireps, route, nowMs, maxKm = 150, maxAgeH = 3) 
   return pireps
     .filter(p => p.int && nowMs - p.t <= maxAgeH * 3600000)
     .filter(p => distToRoute(p, route) <= maxKm)
-    .map(p => ({ ...p, label: INTENSITY[p.int] ?? p.int.toLowerCase() }));
+    .map(p => ({ ...p, label: INTENSITY[p.int] ?? p.int.toLowerCase(), altitude: p.fl ? altitudeText(p.fl) : null }));
 }

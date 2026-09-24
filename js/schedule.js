@@ -65,15 +65,21 @@ export function legArrival(leg) {
   return leg.ea ? split(leg.ea) : scheduledArrival(leg);
 }
 
-const STATES = {
-  CAN: { text: 'Cancelado', tone: 'bad' },
-  BOR: { text: 'Embarcando', tone: 'info' },
+// Textos oficiales de Aena (Infovuelos): BOR = «Finalizado», DES = «Desviado», IBK/OPE/OPF = «Entrega equip.».
+const ARRIVAL_STATES = {
+  LND: { text: 'En tierra', tone: 'ok' },
+  IBK: { text: 'Ha llegado', tone: 'ok' },
+  OPE: { text: 'Ha llegado', tone: 'ok' },
+  OPF: { text: 'Ha llegado', tone: 'ok' },
+  BOR: { text: 'Ha llegado', tone: 'ok' },
+  FNL: { text: 'Aproximándose', tone: 'info' },
+  FLY: { text: 'En vuelo', tone: 'info' },
+};
+const GATE_STATES = {
   EMB: { text: 'Embarcando', tone: 'info' },
   ULL: { text: 'Última llamada', tone: 'info' },
   CER: { text: 'Puerta cerrada', tone: 'info' },
-  DES: { text: 'Despegado', tone: 'ok' },
-  ATE: { text: 'Aterrizado', tone: 'ok' },
-  LLE: { text: 'Aterrizado', tone: 'ok' },
+  BTR: { text: 'Próximo embarque', tone: 'info' },
 };
 
 function delayMin(leg) {
@@ -82,11 +88,18 @@ function delayMin(leg) {
 }
 
 export function flightStatus(leg) {
-  if (leg.st === 'CAN') return STATES.CAN;
-  if (leg.st === 'RET' || delayMin(leg) > DELAY_MIN) {
+  // Horarios antiguos solo traen el estado mezclado (st).
+  const sta = leg.sta ?? (['FLY', 'FNL', 'LND', 'IBK', 'OPE', 'OPF'].includes(leg.st) ? leg.st : null);
+  const std = leg.std ?? (sta ? null : leg.st);
+  if ([std, sta, leg.st].includes('CAN')) return { text: 'Cancelado', tone: 'bad' };
+  if ([std, sta, leg.st].includes('DES')) return { text: 'Desviado', tone: 'bad' };
+  if (ARRIVAL_STATES[sta]) return ARRIVAL_STATES[sta];
+  if (std === 'BOR') return { text: 'Ha salido', tone: 'info' };
+  if (GATE_STATES[std]) return GATE_STATES[std];
+  if (std === 'RET' || delayMin(leg) > DELAY_MIN) {
     return { text: `Retrasado · sale ${legDeparture(leg).time}`, tone: 'warn' };
   }
-  return STATES[leg.st] ?? { text: 'Programado', tone: 'ok' };
+  return { text: 'Programado', tone: 'ok' };
 }
 
 // ¿La hora estimada es posterior a la programada? (compara fecha y hora, no solo HH:MM)

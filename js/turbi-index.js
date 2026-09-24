@@ -23,14 +23,14 @@ const JET_MS = 40;
 const LOW_FL = 200; // por debajo no hay capas en altura
 
 export const CAUSE_LABELS = {
-  clear_air: 'Turbulencia en aire claro',
-  vertical_shear: 'Cizalladura vertical',
-  instability: 'Capa poco estable',
-  vertical_motion: 'Movimiento vertical fuerte',
-  convection: 'Nubes convectivas',
+  clear_air: 'Aire revuelto en altura, sin nubes',
+  vertical_shear: 'Cambio brusco del viento con la altura',
+  instability: 'Aire inestable',
+  vertical_motion: 'Corrientes de aire verticales',
+  convection: 'Nubes de tormenta en formación',
   thunderstorm: 'Tormentas',
-  mountain_wave: 'Onda de montaña',
-  jet_stream: 'Corriente en chorro',
+  mountain_wave: 'Viento sobre montañas',
+  jet_stream: 'Corriente de viento muy fuerte en altura',
 };
 const COMPONENT_CAUSE = {
   ellrod: 'clear_air', shear: 'vertical_shear', ri: 'instability', w: 'vertical_motion',

@@ -57,9 +57,9 @@ describe('cobertura, frescura y precisión', () => {
     };
     const h = aviationHtml(av, NOW);
     expect(h).toContain('Viento de 230° a 8 kt (hace 40 min)');
-    expect(h).toContain('METAR de hace más de 3 h: no se muestra');
-    expect(h).toContain('SIGMET no disponibles ahora');
-    expect(h).toContain('PIREP no disponibles ahora');
+    expect(h).toContain('El último parte tiene más de 3 h: no se muestra');
+    expect(h).toContain('Avisos oficiales no disponibles ahora');
+    expect(h).toContain('Informes de pilotos no disponibles ahora');
     expect(h).toContain('descargado hace 2 h');
   });
 });
@@ -69,16 +69,16 @@ describe('timeline', () => {
     const h = timelineHtml(view);
     expect(h.match(/<button[^>]+data-seg="\d+"/g)).toHaveLength(3);
     const d = segmentDetailHtml(view.segments[1], 'PMI');
-    for (const t of ['Min 42–54', 'Moderada', 'Causa probable', 'Cizalladura vertical', 'Corriente en chorro', 'Altitud aproximada', 'FL350', 'Ubicación aproximada', 'sobre el Golfo de León']) expect(d).toContain(t);
+    for (const t of ['Min 42–54', 'Moderada', 'Causa probable', 'Cambio brusco del viento con la altura', 'Corriente de viento muy fuerte en altura', 'Altura del avión', '10,7 km (35.000 pies)', 'Ubicación aproximada', 'sobre el Golfo de León']) expect(d).toContain(t);
   });
   it('sin nombre de lugar usa km desde el origen; tramo nulo sin causas', () => {
     expect(segmentDetailHtml(seg(1, 0, 10), 'PMI')).toContain('a 180 km de PMI');
     expect(segmentDetailHtml(seg(0, 0, 10), 'PMI')).not.toContain('Causa probable');
   });
   it('rango de altitud y suelo', () => {
-    expect(flText(300, 360)).toBe('FL300–FL360');
+    expect(flText(300, 360)).toBe('entre 9,1 y 11 km');
     expect(flText(0, 0)).toBe('cerca del suelo');
-    expect(flText(0, 90)).toBe('suelo–FL090');
+    expect(flText(0, 90)).toBe('del suelo a unos 2,7 km');
   });
   it('tramo sin datos lo indica', () => {
     expect(segmentDetailHtml(seg(0, 0, 10, { missing: true }), 'PMI')).toContain('faltan datos');
@@ -88,9 +88,10 @@ describe('timeline', () => {
 describe('condiciones por altitud', () => {
   it('filas FL300–FL400, destaca la más tranquila, marca el crucero y lleva el aviso', () => {
     const h = altitudeHtml(view.altitudes);
-    for (const fl of ['FL300', 'FL320', 'FL340', 'FL360', 'FL380', 'FL400']) expect(h).toContain(fl);
+    for (const km of ['9,1 km', '9,8 km', '10,4 km', '11 km', '11,6 km', '12,2 km', '30.000 pies']) expect(h).toContain(km);
+    expect(h).not.toMatch(/FL\d/);
     expect(h).toContain('Más tranquila');
-    expect(h).toContain('crucero estimado');
+    expect(h).toContain('altura prevista de tu vuelo');
     expect(h).toContain('La altitud real del vuelo depende del plan de vuelo, tráfico, control aéreo, peso y condiciones operativas.');
     expect(h).not.toMatch(/deber[ií]a volar/i);
   });
@@ -101,14 +102,14 @@ describe('condiciones por altitud', () => {
 
 describe('frescura', () => {
   it('distingue consulta realizada y ejecución del modelo', () => {
-    const h = freshnessHtml(view, NOW);
+    const h = freshnessHtml(view, NOW, 'UTC');
     expect(h).toContain('Consulta realizada hace 18 min');
-    expect(h).toContain('Ejecución del modelo: ECMWF 00 UTC · GFS 06 UTC');
-    expect(h).toContain('ECMWF y GFS');
+    expect(h).toContain('Previsión del tiempo calculada a las 00:00 (modelo europeo) y a las 06:00 (modelo estadounidense)');
+    expect(h).toContain('Los dos modelos coinciden bastante');
   });
   it('sin hora de modelo no la inventa', () => {
-    const h = freshnessHtml({ ...view, runs: {} }, NOW);
-    expect(h).not.toContain('Ejecución del modelo');
+    const h = freshnessHtml({ ...view, runs: {} }, NOW, 'UTC');
+    expect(h).not.toContain('Previsión del tiempo calculada');
   });
 });
 
@@ -122,7 +123,7 @@ describe('Aviation Weather', () => {
       pireps: [],
     };
     const h = aviationHtml(av, NOW);
-    for (const t of ['LEPA', 'Viento de 230° a 8 kt', 'METAR LEPA …', 'TAF LEPA …', 'Turbulencia fuerte', 'FL300–FL400', 'cruza la ruta', 'No hay informes recientes disponibles en esta zona.', 'Sin METAR disponible']) expect(h).toContain(t);
+    for (const t of ['LEPA', 'Viento de 230° a 8 kt', 'METAR LEPA …', 'TAF LEPA …', 'Turbulencia fuerte', 'FL300–FL400', 'cruza la ruta', 'No hay informes recientes disponibles en esta zona.', 'Sin parte meteorológico disponible']) expect(h).toContain(t);
     expect(h).not.toContain('no hay turbulencia');
   });
   it('sin datos → nada', () => {

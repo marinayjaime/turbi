@@ -61,7 +61,7 @@ describe('explicación del veredicto y los tramos', () => {
     expect(html).toMatch(/<li class="current"><strong>🟡 Algo de movimiento<\/strong>/);
   });
   it('explica intensidades y causas', () => {
-    for (const t of ['Ligera', 'Moderada', 'Fuerte', 'Aire claro', 'Cizalladura', 'Tormentas', 'Onda de montaña']) {
+    for (const t of ['Ligera', 'Moderada', 'Fuerte', 'Aire revuelto en altura, sin nubes', 'Cambio brusco del viento con la altura', 'Tormentas', 'Viento sobre montañas']) {
       expect(html).toContain(`<strong>${t}</strong>`);
     }
   });

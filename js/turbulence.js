@@ -1,9 +1,9 @@
 export const LEVELS = ['nula', 'ligera', 'moderada', 'fuerte'];
 export const CAUSES = {
-  ellrod: 'Aire claro',
-  shear: 'Cizalladura',
+  ellrod: 'Aire revuelto en altura, sin nubes',
+  shear: 'Cambio brusco del viento con la altura',
   convection: 'Tormentas',
-  mountain: 'Onda de montaña',
+  mountain: 'Viento sobre montañas',
 };
 
 const NEIGHBOUR_SPACING_M = 50000;

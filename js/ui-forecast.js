@@ -3,6 +3,7 @@ import { esc, flightCardHtml, formatDuration } from './ui.js';
 import { CAUSE_LABELS } from './turbi-index.js';
 import { NO_PIREPS } from './aviation-weather.js';
 import { agoText } from './storage.js';
+import { altitudeText, altitudeRange, localHour } from './plain.js';
 
 const LEVELS = ['Nula', 'Ligera', 'Moderada', 'Fuerte'];
 const HEAD = {
@@ -12,24 +13,20 @@ const HEAD = {
   Turbulento: { emoji: '🔴', text: 'Se esperan tramos de turbulencia moderada o fuerte.' },
 };
 const CONF = { alta: 'Alta', media: 'Media', baja: 'Baja' };
-const AGREEMENT = { alta: 'acuerdo alto', media: 'acuerdo medio', baja: 'acuerdo bajo' };
-const utcHH = ms => `${String(new Date(ms).getUTCHours()).padStart(2, '0')} UTC`;
-const pad3 = n => String(Math.round(n)).padStart(3, '0');
+const AGREEMENT = { alta: 'coinciden bastante', media: 'coinciden en parte', baja: 'coinciden poco' };
 const causeText = causes => causes.map(c => CAUSE_LABELS[c] ?? c).join(' · ');
 
-export function flText(min, max) {
-  if (max === 0) return 'cerca del suelo';
-  const a = min === 0 ? 'suelo' : `FL${pad3(min)}`;
-  return min === max ? a : `${a}–FL${pad3(max)}`;
-}
+// Altura en km y pies (nunca «FL»).
+export const flText = (min, max) => altitudeRange(min, max);
 
 function confidenceHtml(c) {
   return `
       <details class="explain conf">
         <summary>${c.level ? CONF[c.level] : 'Sin cálculo'} <span class="info">ⓘ</span></summary>
         <ul>${c.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
-        <p>La confianza combina la antelación, el acuerdo entre dos modelos meteorológicos (ECMWF y GFS),
-        la cobertura de datos a lo largo de la ruta y la coherencia de los indicadores. No es un porcentaje de acierto.</p>
+        <p>Depende de cuánto falta para el vuelo, de si coinciden los dos modelos del tiempo que usa Turbi
+        (el europeo, ECMWF, y el estadounidense, GFS), de si hay datos de toda la ruta y de si las distintas señales de turbulencia apuntan a lo mismo.
+        No es un porcentaje de acierto.</p>
       </details>`;
 }
 
@@ -89,8 +86,8 @@ export function timelineHtml(view) {
 export function segmentDetailHtml(seg, originIata) {
   const place = seg.place ?? `a ${Math.round(seg.mid.kmFromOrigin)} km de ${originIata}`;
   const rows = [];
-  if (seg.level > 0) rows.push(['Causa probable', causeText(seg.causes) || 'Varios indicadores débiles']);
-  rows.push(['Altitud aproximada', flText(seg.flMin, seg.flMax)]);
+  if (seg.level > 0) rows.push(['Causa probable', causeText(seg.causes) || 'Varias señales débiles a la vez']);
+  rows.push(['Altura del avión', flText(seg.flMin, seg.flMax)]);
   rows.push(['Ubicación aproximada', place]);
   return `
     <p class="seg-title"><span class="dot lvl${seg.level}"></span><strong>Min ${seg.startMin}–${seg.endMin}</strong> · ${LEVELS[seg.level]}</p>
@@ -101,62 +98,64 @@ export function segmentDetailHtml(seg, originIata) {
 export function altitudeHtml(rows) {
   if (!rows?.length) return '';
   const share = r => (r.worst === null ? 'sin datos' : r.worst === 0 ? 'sin turbulencia prevista'
-    : `en el ${Math.max(10, Math.round((r.share * 100) / 10) * 10)} % del crucero`);
+    : `en el ${Math.max(10, Math.round((r.share * 100) / 10) * 10)} % del trayecto`);
   return `
     <h3 class="section">Condiciones por altitud</h3>
     <ul class="alt-table">${rows.map(r => `
       <li${r.calmest ? ' class="calm"' : ''}>
-        <span class="fl">FL${r.flightLevel}</span>
+        <span class="fl">${esc(altitudeText(r.flightLevel).split(' (')[0])}<small>${esc(altitudeText(r.flightLevel).slice(altitudeText(r.flightLevel).indexOf(' (')))}</small></span>
         <span class="dot lvl${r.worst ?? 0}"></span>
         <span class="lvl">${r.worst === null ? '—' : LEVELS[r.worst]}</span>
         <span class="share">${share(r)}</span>
-        ${r.calmest ? '<span class="tag">Más tranquila</span>' : ''}${r.isCruise ? '<span class="tag muted">crucero estimado</span>' : ''}
+        ${r.calmest ? '<span class="tag">Más tranquila</span>' : ''}${r.isCruise ? '<span class="tag muted">altura prevista de tu vuelo</span>' : ''}
       </li>`).join('')}
     </ul>
-    <p class="note-small">Condiciones atmosféricas previstas en cada nivel durante el crucero.
+    <p class="note-small">Cómo se prevé el aire a distintas alturas por las que vuelan los aviones comerciales, en la parte central del viaje
+    (los pilotos anuncian la altura en pies).
     La altitud real del vuelo depende del plan de vuelo, tráfico, control aéreo, peso y condiciones operativas.</p>`;
 }
 
-export function freshnessHtml(view, nowMs) {
+export function freshnessHtml(view, nowMs, timeZone = undefined) {
   const parts = [`Consulta realizada ${agoText(nowMs - view.queriedAt)}`];
   const runs = Object.entries(view.runs ?? {});
-  if (runs.length) parts.push(`Ejecución del modelo: ${runs.map(([m, t]) => `${m} ${utcHH(t)}`).join(' · ')}`);
+  const NAMES = { ECMWF: 'europeo', GFS: 'estadounidense' };
+  if (runs.length) parts.push(`Previsión del tiempo calculada ${runs.map(([m, t]) => `a las ${localHour(t, timeZone)} (modelo ${NAMES[m] ?? m})`).join(' y ')}`);
   parts.push(view.models.length > 1
-    ? `Modelos: ${view.models.join(' y ')} (${AGREEMENT[view.agreement?.level] ?? 'acuerdo no disponible'})`
-    : `Modelo: ${view.models[0]}`);
+    ? `Los dos modelos ${AGREEMENT[view.agreement?.level] ?? 'no se han podido comparar'}`
+    : `Solo se ha podido consultar el modelo ${view.models[0]}`);
   return parts.map(esc).join(' · ');
 }
 
 function metarLine(a) {
   if (a.metarText) return `${a.metarText}${a.metarAge ? ` (${a.metarAge})` : ''}`;
-  return a.metarStale ? 'METAR de hace más de 3 h: no se muestra.' : 'Sin METAR disponible';
+  return a.metarStale ? 'El último parte tiene más de 3 h: no se muestra.' : 'Sin parte meteorológico disponible';
 }
 
 function airportBlock(label, a) {
-  const taf = a.tafText ? `<ul>${a.tafText.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p>Sin TAF disponible</p>';
-  const raw = (name, text) => (text ? `<details class="raw"><summary>${name} original</summary><code>${esc(text)}</code></details>` : '');
+  const taf = a.tafText ? `<ul>${a.tafText.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : '<p>Sin previsión disponible</p>';
+  const raw = (name, text) => (text ? `<details class="raw"><summary>${name}</summary><code>${esc(text)}</code></details>` : '');
   return `
       <div class="apt">
         <p class="apt-title">${label} · ${esc(a.icao ?? a.iata)}</p>
-        <p>${esc(metarLine(a))}</p>${raw('METAR', a.metarRaw)}
-        <p class="apt-sub">Previsión (TAF)</p>${taf}${raw('TAF', a.tafRaw)}
+        <p class="apt-sub">Ahora</p><p>${esc(metarLine(a))}</p>${raw('Ver parte oficial (METAR)', a.metarRaw)}
+        <p class="apt-sub">Previsión en el aeropuerto</p>${taf}${raw('Ver previsión oficial (TAF)', a.tafRaw)}
       </div>`;
 }
 
 export function aviationHtml(av, nowMs = Date.now()) {
   if (!av) return '';
-  const sig = av.sigmets === null ? '<p>SIGMET no disponibles ahora.</p>' : av.sigmets.length ? `<ul>${av.sigmets.map(s => `<li><strong>${esc(s.label)}</strong>${s.levels ? ` · ${esc(s.levels)}` : ''} · ${s.crosses ? 'cruza la ruta' : `a ${s.distanceKm} km de la ruta`}
-        <details class="raw"><summary>SIGMET original</summary><code>${esc(s.raw)}</code></details></li>`).join('')}</ul>`
-    : '<p>Ningún SIGMET de turbulencia, tormentas u onda de montaña cerca de la ruta.</p>';
-  const pir = av.pireps === null ? '<p>PIREP no disponibles ahora.</p>' : av.pireps.length ? `<ul>${av.pireps.map(p => `<li><strong>${esc(p.label)}</strong>${p.fl ? ` · FL${pad3(p.fl)}` : ''}
-        <details class="raw"><summary>Informe original</summary><code>${esc(p.raw)}</code></details></li>`).join('')}</ul>`
+  const sig = av.sigmets === null ? '<p>Avisos oficiales no disponibles ahora.</p>' : av.sigmets.length ? `<ul>${av.sigmets.map(s => `<li><strong>${esc(s.label)}</strong>${s.levels ? ` · ${esc(s.levels)}` : ''} · ${s.crosses ? 'cruza la ruta' : `a ${s.distanceKm} km de la ruta`}
+        <details class="raw"><summary>Ver aviso oficial (SIGMET)</summary><code>${esc(s.raw)}</code></details></li>`).join('')}</ul>`
+    : '<p>Ningún aviso oficial de turbulencia, tormentas o viento sobre montañas cerca de la ruta.</p>';
+  const pir = av.pireps === null ? '<p>Informes de pilotos no disponibles ahora.</p>' : av.pireps.length ? `<ul>${av.pireps.map(p => `<li><strong>${esc(p.label)}</strong>${p.altitude ? ` · a ${esc(p.altitude)}` : ''}
+        <details class="raw"><summary>Ver informe original</summary><code>${esc(p.raw)}</code></details></li>`).join('')}</ul>`
     : `<p>${NO_PIREPS}</p>`;
   return `
-    <h3 class="section">Meteorología aeronáutica</h3>
+    <h3 class="section">El tiempo en los aeropuertos y avisos</h3>
     ${airportBlock('Salida', av.origin)}${airportBlock('Llegada', av.destination)}
-    <p class="apt-sub">SIGMET cerca de la ruta</p>${sig}
-    <p class="apt-sub">Informes de pilotos (PIREP)</p>${pir}
-    <p class="note-small">Los PIREP cubren sobre todo EE. UU. y el Atlántico Norte: que no haya informes no significa que no haya turbulencia.
+    <p class="apt-sub">Avisos oficiales en la ruta</p>${sig}
+    <p class="apt-sub">Informes de otros pilotos</p>${pir}
+    <p class="note-small">Los pilotos informan de turbulencias sobre todo en EE. UU. y el Atlántico Norte: que no haya informes no significa que no haya turbulencia.
     Fuente: Aviation Weather Center (NOAA)${av.updated ? `, descargado ${agoText(nowMs - Date.parse(av.updated))}` : ''}.</p>`;
 }
 
@@ -191,8 +190,9 @@ export function explainHtml(current) {
         <h4>Causas</h4>
         <ul>${Object.entries(CAUSE_HELP).map(([k, t]) => `<li><strong>${CAUSE_LABELS[k]}</strong> · ${t}</li>`).join('')}</ul>
         <h4>Cómo se calcula</h4>
-        <p>Turbi estima la altitud del avión en cada momento y analiza el viento y la temperatura previstos por ECMWF y GFS en varias capas
-        (aprox. FL240–FL440). Combina varios indicadores en un índice interno de 0 a 100 (Turbi Index) que se traduce en nula, ligera, moderada o fuerte.
+        <p>Turbi calcula a qué altura irá el avión en cada momento del vuelo y mira cómo estará el viento y la temperatura a esa altura
+        (entre unos 7 y 13 km) según dos modelos del tiempo: el europeo (ECMWF) y el estadounidense (GFS). Con varias señales conocidas de turbulencia
+        obtiene una puntuación interna de 0 a 100 que se traduce en nula, ligera, moderada o fuerte.
         Es una estimación propia, no la medida de turbulencia que usan las aerolíneas.</p>
       </details>`;
 }

@@ -4,14 +4,14 @@ import { summarizeMetar, summarizeTaf, sigmetsNearRoute, pirepsNearRoute, loadAv
 describe('summarizeMetar', () => {
   it('LEPA real simplificado', () => {
     const m = { raw: 'METAR LEPA 241100Z 23008KT 210V270 9999 FEW018 27/20 Q1023 NOSIG', wdir: 230, wspd: 8, wgst: null, visib: '6+', clouds: [{ cover: 'FEW', base: 1800 }], wx: '', temp: 27 };
-    expect(summarizeMetar(m)).toBe('Viento de 230° a 8 kt · buena visibilidad · algunas nubes · 27 °C');
+    expect(summarizeMetar(m)).toBe('Viento del suroeste a 15 km/h · buena visibilidad · algunas nubes · 27 °C');
   });
   it('rachas, tormenta, nubes bajas, visibilidad reducida, viento variable y calma', () => {
     expect(summarizeMetar({ wdir: 'VRB', wspd: 4, visib: 2, clouds: [{ cover: 'BKN', base: 800 }], wx: 'TSRA', temp: 18 }))
-      .toBe('Viento variable a 4 kt · visibilidad reducida · tormenta con lluvia · nubes bajas (800 ft) · 18 °C');
+      .toBe('Viento de dirección variable a 5 km/h · visibilidad reducida · tormenta con lluvia · nubes bajas (a 250 m) · 18 °C');
     expect(summarizeMetar({ wdir: 0, wspd: 0, visib: '6+', clouds: [{ cover: 'CAVOK' }] })).toBe('Viento en calma · buena visibilidad · sin nubes significativas');
     expect(summarizeMetar({ wdir: 200, wspd: 20, wgst: 35, visib: '6+', clouds: [{ cover: 'OVC', base: 3000 }] }))
-      .toBe('Viento de 200° a 20 kt con rachas de 35 kt · buena visibilidad · cielo cubierto (3000 ft)');
+      .toBe('Viento del sur a 35 km/h con rachas de 65 km/h · buena visibilidad · cielo cubierto (nubes a 900 m)');
   });
   it('sin METAR → null', () => {
     expect(summarizeMetar(null)).toBeNull();
@@ -30,9 +30,9 @@ describe('summarizeTaf', () => {
       { from: H(18), to: H(20), change: 'BECMG', visib: 1.5, wx: 'BR' },
     ] };
     expect(summarizeTaf(taf)).toEqual([
-      'Posibles tormentas (PROB40 TEMPO 13–16 UTC)',
-      'Rachas de hasta 28 kt (PROB40 TEMPO 13–16 UTC)',
-      'Visibilidad reducida (BECMG 18–20 UTC)',
+      'Posibles tormentas a ratos de 13:00 a 16:00 (probabilidad 40 %)',
+      'Rachas de hasta 50 km/h a ratos de 13:00 a 16:00 (probabilidad 40 %)',
+      'Visibilidad reducida cambiando de 18:00 a 20:00',
     ]);
   });
   it('sin TAF → null', () => {
@@ -54,7 +54,7 @@ describe('sigmetsNearRoute', () => {
     const icing = { ...crossing, hazard: 'ICE' };
     const r = sigmetsNearRoute([crossing, near, far, expired, icing], route, DEP, ARR);
     expect(r).toHaveLength(2);
-    expect(r[0]).toMatchObject({ label: 'Turbulencia fuerte', levels: 'FL300–FL400', crosses: true });
+    expect(r[0]).toMatchObject({ label: 'Turbulencia fuerte', levels: 'entre 9,1 y 12,2 km de altura', crosses: true });
     expect(r[1].crosses).toBe(false);
   });
   it('sin coordenadas o lista vacía → []', () => {

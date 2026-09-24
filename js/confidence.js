@@ -13,17 +13,17 @@ function leadTime(hours) {
 
 function modelAgreement(agreement, models) {
   switch (agreement.level) {
-    case 'alta': return { pts: 2, reason: 'ECMWF y GFS muestran un patrón parecido' };
-    case 'media': return { pts: 1, reason: 'ECMWF y GFS coinciden solo en parte' };
-    case 'baja': return { pts: 0, reason: 'ECMWF y GFS discrepan' };
-    default: return { pts: 0, reason: `solo hay un modelo disponible (${models.join(', ')})` };
+    case 'alta': return { pts: 2, reason: 'los dos modelos del tiempo (europeo y estadounidense) prevén algo parecido' };
+    case 'media': return { pts: 1, reason: 'los dos modelos del tiempo coinciden solo en parte' };
+    case 'baja': return { pts: 0, reason: 'los dos modelos del tiempo no coinciden' };
+    default: return { pts: 0, reason: `solo se ha podido consultar un modelo del tiempo (${models.join(', ')})` };
   }
 }
 
 function coverageFactor(coverage) {
-  if (coverage >= 0.95) return { pts: 1, reason: 'cobertura meteorológica completa' };
-  if (coverage >= 0.7) return { pts: 0, reason: 'algunos puntos no tienen todos los datos' };
-  return { pts: -1, reason: 'varios puntos no tienen todos los datos necesarios' };
+  if (coverage >= 0.95) return { pts: 1, reason: 'hay datos del tiempo de toda la ruta' };
+  if (coverage >= 0.7) return { pts: 0, reason: 'faltan datos del tiempo en algún tramo' };
+  return { pts: -1, reason: 'faltan datos del tiempo en bastantes tramos' };
 }
 
 // Saltos de 2 o más niveles entre puntos vecinos válidos.
@@ -52,8 +52,8 @@ export function computeConfidence({ departureMs, nowMs, models, agreement, cover
   if (hours > 168) return { level: null, reasons: ['falta más de una semana: el pronóstico aún no es útil'] };
 
   const factors = [leadTime(hours), modelAgreement(agreement, models), coverageFactor(coverage)];
-  if (unstable(points)) factors.push({ pts: -1, reason: 'el pronóstico cambia mucho de un punto a otro' });
-  if (singleIndicator(points)) factors.push({ pts: -1, reason: 'los indicadores no coinciden entre sí' });
+  if (unstable(points)) factors.push({ pts: -1, reason: 'la previsión cambia mucho de un tramo a otro' });
+  if (singleIndicator(points)) factors.push({ pts: -1, reason: 'las distintas señales de turbulencia no coinciden entre sí' });
 
   const total = factors.reduce((s, f) => s + f.pts, 0);
   let level = total >= 4 ? 'alta' : total >= 2 ? 'media' : 'baja';

@@ -60,12 +60,19 @@ describe('horas', () => {
 });
 
 describe('flightStatus', () => {
-  it('traduce estados de Aena', () => {
+  it('traduce los estados con los textos oficiales de Aena (BOR = Finalizado, DES = Desviado)', () => {
     expect(flightStatus(leg())).toEqual({ text: 'Programado', tone: 'ok' });
     expect(flightStatus(leg({ st: 'CAN' }))).toEqual({ text: 'Cancelado', tone: 'bad' });
-    expect(flightStatus(leg({ st: 'BOR' }))).toEqual({ text: 'Embarcando', tone: 'info' });
-    expect(flightStatus(leg({ st: 'ATE' }))).toEqual({ text: 'Aterrizado', tone: 'ok' });
+    expect(flightStatus(leg({ st: 'DES', sta: 'DES' }))).toEqual({ text: 'Desviado', tone: 'bad' });
+    expect(flightStatus(leg({ st: 'EMB', std: 'EMB' }))).toEqual({ text: 'Embarcando', tone: 'info' });
+    expect(flightStatus(leg({ st: 'BOR', std: 'BOR', sta: 'SCH' }))).toEqual({ text: 'Ha salido', tone: 'info' });
+    expect(flightStatus(leg({ st: 'FLY', std: 'BOR', sta: 'FLY' }))).toEqual({ text: 'En vuelo', tone: 'info' });
+    expect(flightStatus(leg({ st: 'LND', std: 'BOR', sta: 'LND' }))).toEqual({ text: 'En tierra', tone: 'ok' });
+    expect(flightStatus(leg({ st: 'IBK', std: 'BOR', sta: 'IBK' }))).toEqual({ text: 'Ha llegado', tone: 'ok' });
     expect(flightStatus(leg({ st: 'ZZZ' }))).toEqual({ text: 'Programado', tone: 'ok' });
+  });
+  it('horarios antiguos sin estados separados siguen funcionando', () => {
+    expect(flightStatus(leg({ st: 'FLY' }))).toEqual({ text: 'En vuelo', tone: 'info' });
   });
   it('retraso: estado RET o estimada > programada + 15 min', () => {
     expect(flightStatus(leg({ ed: '2026-09-24T18:30' }))).toEqual({ text: 'Retrasado · sale 18:30', tone: 'warn' });

@@ -39,7 +39,7 @@ export async function forecastView({ q, profile, flight, times, nowMs, fetchFn =
   };
 }
 
-function airport(av, iata, nowMs) {
+function airport(av, iata, nowMs, timeZone) {
   const icao = av.icao?.[iata] ?? null;
   const metar = icao ? av.metar?.items?.[icao] : null;
   const taf = icao ? av.taf?.items?.[icao] : null;
@@ -51,7 +51,7 @@ function airport(av, iata, nowMs) {
     metarAge: metar && !metarStale ? agoText(nowMs - metar.t) : null,
     metarStale,
     metarRaw: metar?.raw ?? null,
-    tafText: summarizeTaf(taf ?? null), tafRaw: taf?.raw ?? null,
+    tafText: summarizeTaf(taf ?? null, timeZone), tafRaw: taf?.raw ?? null,
   };
 }
 
@@ -59,8 +59,8 @@ export function aviationView(av, view, nowMs) {
   if (!av.metar && !av.taf && !av.sigmet && !av.pirep) return null;
   return {
     updated: av.metar?.updated ?? av.sigmet?.updated ?? null,
-    origin: airport(av, view.originIata, nowMs),
-    destination: airport(av, view.destinationIata, nowMs),
+    origin: airport(av, view.originIata, nowMs, view.originTz ?? 'UTC'),
+    destination: airport(av, view.destinationIata, nowMs, view.destinationTz ?? 'UTC'),
     // null = archivo no disponible (distinto de «ninguno cerca»)
     sigmets: av.sigmet ? sigmetsNearRoute(av.sigmet.items, view.route, view.depMs, view.arrMs) : null,
     pireps: av.pirep ? pirepsNearRoute(av.pirep.items, view.route, nowMs) : null,

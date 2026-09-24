@@ -42,7 +42,7 @@ describe('aviationView', () => {
   };
   it('resume origen y destino y filtra SIGMET/PIREP por la ruta', () => {
     const r = aviationView(av, { originIata: 'PMI', destinationIata: 'MAD', route: [{ lat: 39.5, lon: 2.7 }, { lat: 40.4, lon: -3.5 }], depMs: DEP, arrMs: DEP + 5400000 }, NOW);
-    expect(r.origin).toMatchObject({ icao: 'LEPA', metarRaw: 'METAR LEPA', metarText: 'Viento de 230° a 8 kt · buena visibilidad · algunas nubes · 27 °C', tafText: null });
+    expect(r.origin).toMatchObject({ icao: 'LEPA', metarRaw: 'METAR LEPA', metarText: 'Viento del suroeste a 15 km/h · buena visibilidad · algunas nubes · 27 °C', tafText: null });
     expect(r.destination).toMatchObject({ icao: 'LEMD', metarText: null, tafRaw: 'TAF LEMD', tafText: ['Sin fenómenos significativos previstos'] });
     expect(r.sigmets).toEqual([]);
     expect(r.pireps).toEqual([]);
