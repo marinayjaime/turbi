@@ -143,11 +143,16 @@ const maxOf = xs => (xs.length ? Math.max(...xs) : null);
 
 // ctx = { fl, cape (J/kg sin escalar), windMax (m/s) }
 export function turbiIndex(c, ctx) {
+  // Ri solo refuerza: su peso (0,2) es fijo y nunca se renormaliza ni entra en el suelo «máx − 15»,
+  // porque en capas casi neutras sale bajo aunque apenas haya cizalladura.
   const cat = (() => {
-    const avail = Object.keys(CAT_WEIGHTS).filter(k => isNum(c[k]));
-    if (!avail.length) return null;
+    const avail = ['ellrod', 'shear'].filter(k => isNum(c[k]));
+    const ri = isNum(c.ri) ? c.ri : null;
+    if (!avail.length && ri === null) return null;
+    if (!avail.length) return CAT_WEIGHTS.ri * ri;
     const wsum = avail.reduce((s, k) => s + CAT_WEIGHTS[k], 0);
-    const mean = avail.reduce((s, k) => s + CAT_WEIGHTS[k] * c[k], 0) / wsum;
+    const base = avail.reduce((s, k) => s + CAT_WEIGHTS[k] * c[k], 0) / wsum;
+    const mean = ri === null ? base : (1 - CAT_WEIGHTS.ri) * base + CAT_WEIGHTS.ri * ri;
     return Math.max(mean, Math.max(...avail.map(k => c[k])) - 15);
   })();
 
@@ -195,7 +200,8 @@ export function pointForecast(layerResults, fl, low) {
   }
   score = Math.round(score);
   const nearest = valid.reduce((a, b) => (Math.abs(b.layer.midFL - fl) < Math.abs(a.layer.midFL - fl) ? b : a));
-  return { score, level: scoreToLevel(score), causes: nearest.causes };
+  const level = scoreToLevel(score);
+  return { score, level, causes: level > 0 ? nearest.causes : [] };
 }
 
 // Presión ISA (hPa) de un nivel de vuelo: inversa de pressureToFL.

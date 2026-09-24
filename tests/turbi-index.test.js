@@ -125,6 +125,10 @@ describe('turbiIndex', () => {
     expect(r.score).toBe(75);
     expect(r.level).toBe(3);
   });
+  it('Richardson bajo por sí solo no llega a ligera (solo refuerza)', () => {
+    expect(turbiIndex({ ...none, ellrod: 0, shear: 0, ri: 75 }, { fl: 340 }).level).toBe(0);
+    expect(turbiIndex({ ...none, ri: 75 }, { fl: 340 }).level).toBeLessThan(2);
+  });
   it('CAT con diagnósticos ausentes: renormaliza los pesos', () => {
     expect(turbiIndex({ ...none, shear: 50, ri: 50 }, { fl: 340 }).mechanisms.cat).toBeCloseTo(50, 5);
   });
@@ -161,6 +165,10 @@ describe('pointForecast y altitudeForecast', () => {
     expect(pointForecast(layers, LAYERS[1].midFL, null).score).toBe(60);
     expect(pointForecast(layers, 220, null).score).toBe(10);
     expect(pointForecast(layers, 450, null).score).toBe(0);
+  });
+  it('nivel nulo → sin causas', () => {
+    const quiet = [10, 12, 30, 0].map((score, i) => ({ score, causes: ['instability'], layer: LAYERS[i] }));
+    expect(pointForecast(quiet, 320, null)).toMatchObject({ level: 0, causes: [] });
   });
   it('las causas son las de la capa más cercana', () => {
     expect(pointForecast(layers, 325, null).causes).toEqual(['vertical_shear']);

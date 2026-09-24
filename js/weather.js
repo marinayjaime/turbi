@@ -107,3 +107,37 @@ export async function fetchTimezone(point, fetchFn = fetch) {
   });
   return (await getJson(`${BASE}?${params}`, fetchFn)).timezone;
 }
+
+// --- v2: petición por modelo y variables a elección (ver js/models.js) ---
+
+export function modelForecastUrl(locs, vars, model, startMs, endMs) {
+  const params = new URLSearchParams({
+    latitude: locs.map(l => l.lat.toFixed(3)).join(','),
+    longitude: locs.map(l => l.lon.toFixed(3)).join(','),
+    hourly: vars.join(','),
+    models: model,
+    wind_speed_unit: 'ms',
+    timezone: 'GMT',
+    start_hour: hourKey(startMs - HOUR_MS),
+    end_hour: hourKey(endMs + HOUR_MS),
+  });
+  return `${BASE}?${params}`;
+}
+
+export async function fetchModelLocations(locs, vars, model, startMs, endMs, fetchFn = fetch) {
+  const results = [];
+  for (let i = 0; i < locs.length; i += CHUNK) {
+    const json = await getJson(modelForecastUrl(locs.slice(i, i + CHUNK), vars, model, startMs, endMs), fetchFn);
+    results.push(...(Array.isArray(json) ? json : [json]));
+  }
+  return results;
+}
+
+// Valores de una ubicación a la hora más cercana, con la coordenada real de la rejilla del modelo.
+export function sampleVars(loc, ms, vars) {
+  const i = loc?.hourly?.time?.indexOf(hourKey(ms)) ?? -1;
+  if (i < 0) return null;
+  const out = { lat: loc.latitude, lon: loc.longitude, elevation: loc.elevation ?? null };
+  for (const v of vars) out[v] = loc.hourly[v]?.[i] ?? null;
+  return out;
+}

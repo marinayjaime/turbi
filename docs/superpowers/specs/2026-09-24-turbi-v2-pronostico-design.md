@@ -102,9 +102,11 @@ Sigue la estructura de la *Graphical Turbulence Guidance* (GTG, Sharman et al.) 
 
 ### 3.3 Combinación por capa y punto
 ```
-CAT = max( 0,5·Ellrod + 0,3·Cizalladura + 0,2·Ri ,  máx(Ellrod, Cizalladura, Ri) − 15 )
-      (la media ponderada diluiría una señal muy fuerte de un solo diagnóstico:
-       con el segundo término, Ellrod = 90 deja CAT ≥ 75 aunque los otros valgan 0)
+base = media ponderada de Ellrod (0,5) y Cizalladura (0,3), renormalizada a los disponibles
+CAT  = max( 0,8·base + 0,2·Ri ,  máx(Ellrod, Cizalladura) − 15 )
+       (el segundo término evita diluir una señal muy fuerte: Ellrod = 90 deja CAT ≥ 75;
+        Ri solo refuerza: su peso es fijo y no entra en ese suelo, porque en capas casi neutras
+        sale bajo aunque apenas haya cizalladura. Comprobado con datos reales el 24/09/2026)
 CONV = CAPE_componente · alcance(FL) ; max con Tormenta · alcance(FL) ; max con |w| en la capa
        alcance = 1 por debajo de FL200; en crucero 1 si CAPE ≥ 2000, 0,6 si 1000–2000, 0,3 si < 1000
 MTW  = Onda · (1 por debajo de FL200; 0,6 en crucero)
