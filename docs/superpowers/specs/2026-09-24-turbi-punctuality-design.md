@@ -148,3 +148,12 @@ Cada ejecución genera `data/punctuality/<AL>/<N>.json`, **uno por número de vu
 - `js/punctuality.js`: funciones puras (retrasos, OTP15, percentiles, ventanas, franjas, tendencia, clasificación). Se usa en el navegador y en Actions.
 - `scripts/build-punctuality.mjs`: observaciones finales a partir de las filas de Aena, fusión con la rama `data`, poda y agregados por vuelo.
 - `.github/workflows/deploy.yml`: clona o crea la rama `data`, ejecuta y hace commit y push si hay cambios. Necesita `contents: write`.
+
+## 8. Estado en tiempo real (Render)
+- El cron de GitHub no es fiable (a veces pasa horas sin ejecutarse), así que el estado del vuelo de hoy lo da un servicio aparte: `server/live.mjs` en Render gratis (`render.yaml`).
+- **Cada 10 min** descarga Aena (hoy y mañana), audita cada hora publicada contra su fila de origen y sirve `/flights/AL/N.json`. **No guarda nada ni calcula el histórico.**
+- El histórico de puntualidad sigue en GitHub Actions y GitHub Pages: cambia poco de una hora a otra.
+- La app pide primero a Render (5 s como máximo) y, si no responde, usa GitHub Pages; en la ficha avisa si los datos tienen más de 40 min.
+- **Una cuenta de Render propia para Turbi:** las 750 h gratis al mes son por cuenta, y Métricas ya las gasta casi todas. Si se superan, Render suspende todos los servicios gratuitos de la cuenta.
+- Si el servicio se duerme, la primera petición lo despierta y lanza una descarga. Para que esté siempre despierto, UptimeRobot llama a `/health` cada 5 min.
+- Memoria: unos 280 MB con `--max-old-space-size=256` (límite del plan gratis: 512 MB).

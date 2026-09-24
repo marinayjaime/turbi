@@ -1,8 +1,0 @@
-{
-  "$schema": "https://railway.com/railway.schema.json",
-  "deploy": {
-    "startCommand": "node server/live.mjs",
-    "restartPolicyType": "ALWAYS",
-    "healthcheckPath": "/health"
-  }
-}

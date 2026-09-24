@@ -6,10 +6,8 @@ services:
     plan: free
     region: frankfurt
     buildCommand: npm ci --omit=dev --no-audit --no-fund
-    startCommand: node server/live.mjs
+    startCommand: node --max-old-space-size=256 --max-semi-space-size=8 server/live.mjs
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: GITHUB_TOKEN
-        sync: false # token de GitHub con permiso de escritura solo en marinayjaime/turbi

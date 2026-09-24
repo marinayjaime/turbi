@@ -99,13 +99,10 @@ describe('horas duplicadas en Aena', () => {
   });
 });
 
-describe('fetchPunctuality con Railway', () => {
-  it('primero Railway; si falla, GitHub Pages', async () => {
-    const LIVE = 'https://live.example';
-    const body = route => ({ routes: { 'PMI-BCN': { basis: route } } });
-    const f = vi.fn(async url => (url.startsWith(LIVE) ? { ok: true, json: async () => body('arr') } : { ok: true, json: async () => body('dep') }));
-    expect(await fetchPunctuality('VY', '3902', 'PMI-BCN', f, LIVE)).toEqual({ basis: 'arr' });
-    const down = vi.fn(async url => { if (url.startsWith(LIVE)) throw new TypeError('x'); return { ok: true, json: async () => body('dep') }; });
-    expect(await fetchPunctuality('VY', '3902', 'PMI-BCN', down, LIVE)).toEqual({ basis: 'dep' });
+describe('fetchPunctuality', () => {
+  it('el histórico se lee de GitHub Pages (el servicio en directo solo da el vuelo de hoy)', async () => {
+    const f = vi.fn(async () => ({ ok: true, json: async () => ({ routes: { 'PMI-BCN': { basis: 'arr' } } }) }));
+    expect(await fetchPunctuality('VY', '3902', 'PMI-BCN', f)).toEqual({ basis: 'arr' });
+    expect(f.mock.calls.map(c => c[0])).toEqual(['data/punctuality/VY/3902.json']);
   });
 });
