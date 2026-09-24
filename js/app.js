@@ -112,6 +112,7 @@ async function resolveFlight() {
 
   if (!time) throw new Error('Indica la hora de salida.');
 
+  if (!els.origin.value.trim() || !els.destination.value.trim()) throw new Error('Indica los aeropuertos de origen y destino.');
   const db = await airports();
   const origin = findAirport(db, els.origin.value);
   const destination = findAirport(db, els.destination.value);
