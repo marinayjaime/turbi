@@ -205,9 +205,11 @@ async function run(q) {
 
 async function submit() {
   els.error.hidden = true;
+  show('loading'); // buscar el vuelo también puede tardar unos segundos
   try {
     const q = await resolveFlight();
     if (q) run(q);
+    else show('query');
   } catch (err) {
     showError(err instanceof TypeError ? 'Sin conexión o el servicio no responde.' : err.message);
   }

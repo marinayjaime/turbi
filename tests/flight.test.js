@@ -32,6 +32,14 @@ describe('lookupFlight', () => {
   it('error de red → null', async () => {
     expect(await lookupFlight('VY3902', vi.fn(async () => { throw new TypeError('Failed to fetch'); }))).toBeNull();
   });
+  it('si adsbdb no responde, se rinde tras el tiempo límite → null', async () => {
+    const hang = vi.fn((url, opts) => new Promise((_, reject) => {
+      opts?.signal?.addEventListener('abort', () => reject(new DOMException('timeout', 'TimeoutError')));
+    }));
+    const t0 = Date.now();
+    expect(await lookupFlight('VY3902', hang, 50)).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1000);
+  }, 2000);
   it('formato inválido → null sin llamar a la API', async () => {
     const f = ok(ADSBDB_OK);
     expect(await lookupFlight('hola', f)).toBeNull();
