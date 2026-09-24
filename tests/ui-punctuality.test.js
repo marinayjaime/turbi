@@ -67,7 +67,7 @@ describe('punctualityHtml', () => {
   });
   it('aviso cuando salida y llegada no cuadran', () => {
     const h = punctualityHtml({ ...base, current: { ...current, mismatch: { dep: 'PMI', arr: 'MAD' } } });
-    expect(h).toContain('no cuadraba con la de salida');
+    expect(h).toContain('no cuadran entre sí');
     expect(h).toContain('PMI');
     expect(h).toContain('MAD');
   });

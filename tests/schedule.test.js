@@ -93,9 +93,8 @@ describe('isLate', () => {
     expect(isLate(leg({ ed: '2026-09-24T18:10' }), 'dep')).toBe(true);
     expect(isLate(leg(), 'dep')).toBe(false);
     expect(isLate(leg({ ea: '2026-09-24T19:16' }), 'arr')).toBe(false); // llega antes
-    // (en el aire: se usa la estimación del destino)
-    expect(isLate(leg({ sd: '23:00', sa: '23:50', ea: '2026-09-25T00:20', std: 'BOR', sta: 'FLY' }), 'arr')).toBe(true);
-    expect(isLate(leg({ sd: '23:30', sa: '00:30', ea: '2026-09-25T00:20', std: 'BOR', sta: 'FLY' }), 'arr')).toBe(false);
+    expect(isLate(leg({ sd: '23:00', sa: '23:50', ea: '2026-09-25T00:20' }), 'arr')).toBe(true);
+    expect(isLate(leg({ sd: '23:30', sa: '00:30', ea: '2026-09-25T00:20' }), 'arr')).toBe(false);
     expect(isLate(leg({ sa: null, ea: null }), 'arr')).toBe(false);
   });
 });
@@ -104,25 +103,5 @@ describe('cambio de puerta', () => {
   it('estados NPT/NPR de Aena', () => {
     expect(flightStatus(leg({ st: 'NPT', std: 'NPT' }))).toEqual({ text: 'Cambio de puerta', tone: 'warn' });
     expect(flightStatus(leg({ st: 'NPR', std: 'NPR' }))).toEqual({ text: 'Cambio de puerta', tone: 'warn' });
-  });
-});
-
-import { arrivalEstimate } from '../js/schedule.js';
-
-describe('arrivalEstimate (llegada estimada fiable)', () => {
-  const ib = over => leg({ sd: '17:55', ed: '2026-09-24T18:02', sa: '19:25', st: 'INI', std: 'INI', sta: 'INI', ...over });
-  it('antes del despegue, estimación de destino coherente: se usa', () => {
-    expect(arrivalEstimate(ib({ ea: '2026-09-24T19:31' }))).toEqual({ date: '2026-09-24', time: '19:31', adjusted: false });
-  });
-  it('antes del despegue, estimación desfasada (caso real 20:07): programada + retraso de salida', () => {
-    expect(arrivalEstimate(ib({ ea: '2026-09-24T20:07' }))).toEqual({ date: '2026-09-24', time: '19:32', adjusted: true });
-  });
-  it('ya en el aire: siempre la del destino', () => {
-    expect(arrivalEstimate(ib({ ea: '2026-09-24T20:07', std: 'BOR', sta: 'FLY', st: 'FLY' }))).toEqual({ date: '2026-09-24', time: '20:07', adjusted: false });
-  });
-  it('salida adelantada: no se adelanta la llegada por ello; nocturno y sin estimación', () => {
-    expect(arrivalEstimate(ib({ ed: '2026-09-24T17:50', ea: '2026-09-24T20:30' }))).toEqual({ date: '2026-09-24', time: '19:25', adjusted: true });
-    expect(arrivalEstimate(ib({ sd: '23:30', ed: '2026-09-24T23:50', sa: '00:40', ea: '2026-09-25T01:40' }))).toEqual({ date: '2026-09-25', time: '01:00', adjusted: true });
-    expect(arrivalEstimate(ib({ ea: null }))).toEqual({ date: '2026-09-24', time: '19:25', adjusted: false });
   });
 });

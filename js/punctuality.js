@@ -2,8 +2,6 @@
 // Funciones puras, usadas en el navegador y en GitHub Actions.
 // Diseño y definiciones: docs/superpowers/specs/2026-09-24-turbi-punctuality-design.md
 
-import { arrivalEstimate } from './schedule.js';
-
 export const ON_TIME_MIN = 15;
 const DAY_MS = 86400000;
 
@@ -41,15 +39,14 @@ export function currentPunctuality(leg) {
 
   const dep = leg.sd ? { sched: leg.sd, time: hhmm(leg.ed), delay: delayMinutes(leg.d, leg.sd, leg.ed), final: depFinal } : null;
   const arrDate = leg.sa ? (leg.sd && leg.sa < leg.sd ? nextDay(leg.d) : leg.d) : null;
-  const est = leg.sa && leg.ea ? arrivalEstimate(leg) : null;
-  const estIso = est ? `${est.date}T${est.time}` : null;
-  const arr = leg.sa ? { sched: leg.sa, time: hhmm(estIso), delay: delayMinutes(arrDate, leg.sa, estIso), final: arrFinal, adjusted: Boolean(est?.adjusted) } : null;
+  const arr = leg.sa ? { sched: leg.sa, time: hhmm(leg.ea), delay: delayMinutes(arrDate, leg.sa, leg.ea), final: arrFinal } : null;
 
   const basis = arr ? 'arr' : dep ? 'dep' : null;
   const side = basis === 'arr' ? arr : dep;
   // Salida y llegada las publican aeropuertos distintos. Si sus retrasos difieren mucho antes de aterrizar,
   // una de las dos horas probablemente no está actualizada: se avisa en vez de darla por buena.
-  const mismatch = arr?.adjusted ? { dep: leg.o, arr: leg.a } : null;
+  const mismatch = dep && arr && typeof dep.delay === 'number' && typeof arr.delay === 'number'
+    && !arr.final && Math.abs(arr.delay - dep.delay) > 20 ? { dep: leg.o, arr: leg.a } : null;
   if (!side) return { state: 'sin-datos', text: 'Sin datos de horario', band: null, dep, arr, basis, mismatch };
 
   const unchanged = side.delay === null || (side.delay === 0 && !side.final);
