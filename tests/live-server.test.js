@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createState, runCycle, handle } from '../server/live.mjs';
+import { createState, runCycle, handle, needsRefresh } from '../server/live.mjs';
 
 const row = over => ({
   iataCompania: 'IB', oaciCompania: 'IBE', nombreCompania: 'Iberia', numVuelo: '1668',
@@ -28,7 +28,7 @@ describe('runCycle', () => {
     expect(state.flights.get('IB/1668.json').updated).toBe('2026-09-24T18:45:00.000Z');
     expect(state.audit).toEqual({ checked: 2, mismatches: 0, duplicates: 0 });
     expect(state.punctuality.get('IB/1668.json').routes['PMI-MAD'].last7.flights).toEqual([['2026-09-24', 45, 0]]);
-    expect(await readdir(join(d.storeDir, 'days'))).toEqual(['2026-09-24.json']);
+    expect(await readdir(join(d.storeDir, 'punctuality/days'))).toEqual(['2026-09-24.json']);
   });
   it('si Aena falla, conserva lo anterior y anota el error', async () => {
     const state = createState();
@@ -60,5 +60,22 @@ describe('handle (servidor)', () => {
     expect(handle(state, '/../../etc/passwd').status).toBe(404);
     const h = JSON.parse(handle(state, '/health').body);
     expect(h).toMatchObject({ updated: '2026-09-24T18:45:00.000Z', audit: { mismatches: 0 } });
+  });
+});
+
+describe('servicio que se duerme (Render gratis)', () => {
+  it('al recibir una petición, refresca si los datos tienen más de 10 min o no hay datos', () => {
+    const now = Date.parse('2026-09-24T19:00:00Z');
+    expect(needsRefresh({ updated: null, running: false }, now)).toBe(true);
+    expect(needsRefresh({ updated: '2026-09-24T18:55:00Z', running: false }, now)).toBe(false);
+    expect(needsRefresh({ updated: '2026-09-24T18:49:00Z', running: false }, now)).toBe(true);
+    expect(needsRefresh({ updated: '2026-09-24T18:49:00Z', running: true }, now)).toBe(false);
+  });
+  it('sin el historial de GitHub no sirve puntualidad (la app usa la de GitHub Pages en vez de una incompleta)', async () => {
+    const state = createState();
+    await runCycle(state, await deps());
+    state.historyReady = false;
+    expect(handle(state, '/punctuality/IB/1668.json').status).toBe(404);
+    expect(handle(state, '/flights/IB/1668.json').status).toBe(200);
   });
 });
