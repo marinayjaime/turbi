@@ -47,7 +47,11 @@ export function flightCardHtml(c) {
       </div>
       ${c.tabs.length > 1 ? `<nav class="tabs">${c.tabs.map(t =>
         `<button type="button" data-date="${esc(t.date)}"${t.active ? ' class="active"' : ''}>${esc(dateLabel(t.date))}</button>`).join('')}</nav>` : ''}
-      <span class="status tone-${esc(c.status.tone)}">${esc(c.status.text)}</span>
+      ${c.stale
+        // Un estado viejo («Embarcando» de hace 2 h) no se presenta como actual: se dice de cuándo es.
+        ? `<span class="status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>
+      <p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>`
+        : `<span class="status tone-${esc(c.status.tone)}">${esc(c.status.text)}</span>`}
       <div class="route-line">
         <strong>${esc(c.o)}</strong>
         <span class="line"><em>${esc(formatDuration(c.duration))}</em><span class="plane">✈</span></span>
@@ -62,7 +66,6 @@ export function flightCardHtml(c) {
         ${!c.dep.gate ? '<small>Aena suele publicarla 1–2 h antes de la salida.</small>'
           : /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
       </div>` : ''}
-      ${c.stale ? `<p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>` : ''}
       <p class="foot">${c.aircraft ? `Avión ${esc(c.aircraft)} · ` : ''}${c.updatedAgo ? `Datos de Aena actualizados ${esc(c.updatedAgo)} · ` : 'Fuente: Aena · '}hora local de cada aeropuerto</p>
     </section>`;
 }

@@ -121,4 +121,12 @@ describe('datos de Aena antiguos', () => {
     expect(flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true })).toContain('Los datos de Aena son de hace 2 h: pueden haber cambiado desde entonces.');
     expect(flightCardHtml({ ...c, updatedAgo: 'hace 10 min', stale: false })).not.toContain('pueden haber cambiado');
   });
+  it('el estado viejo no se presenta como actual (IB1668: «Embarcando» ya aterrizado)', () => {
+    const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Embarcando', tone: 'info' }, o: 'PMI', a: 'MAD', duration: 90,
+      dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D86' }, arr: null, aircraft: null };
+    const old = flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true });
+    expect(old).toContain('<span class="status tone-stale">Embarcando hace 2 h</span>');
+    expect(old.indexOf('class="stale"')).toBeLessThan(old.indexOf('class="route-line"'));
+    expect(flightCardHtml({ ...c, updatedAgo: 'hace 5 min', stale: false })).toContain('<span class="status tone-info">Embarcando</span>');
+  });
 });

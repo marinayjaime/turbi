@@ -145,6 +145,7 @@ button { font: inherit; cursor: pointer; }
 .tone-info { background: #e8f1ff; color: var(--accent); }
 .tone-warn { background: #fff4e5; color: #b25e00; }
 .tone-bad { background: #fff2f1; color: #c4271c; }
+.tone-stale { background: #f2f2f7; color: #6e6e73; }
 .route-line { display: flex; align-items: center; gap: 12px; margin: 18px 0 6px; }
 .route-line strong { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
 .route-line .line { flex: 1; position: relative; height: 1px; background: var(--line); }
