@@ -25,7 +25,10 @@ function pickMode() {
   const m = process.env.MODE ?? 'auto';
   if (m !== 'auto') return m;
   const scheduled = process.env.GITHUB_EVENT_NAME === 'schedule';
-  return scheduled && new Date().getUTCHours() % 6 !== 0 ? 'live' : 'full';
+  const now = new Date();
+  // Los 14 días completos solo en la primera ejecución de las horas múltiplo de 6; el resto, hoy y mañana.
+  const fullSlot = now.getUTCHours() % 6 === 0 && now.getUTCMinutes() < 15;
+  return scheduled && !fullSlot ? 'live' : 'full';
 }
 
 // Aena a veces responde con un cuerpo roto; se reintenta con esperas crecientes.

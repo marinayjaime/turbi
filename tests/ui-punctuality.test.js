@@ -65,6 +65,12 @@ describe('punctualityHtml', () => {
     expect(h).toContain('salieron con 15 min de retraso o menos');
     expect(h).toContain('solo hay datos de salida');
   });
+  it('aviso cuando salida y llegada no cuadran', () => {
+    const h = punctualityHtml({ ...base, current: { ...current, mismatch: { dep: 'PMI', arr: 'MAD' } } });
+    expect(h).toContain('no cuadran entre sí');
+    expect(h).toContain('PMI');
+    expect(h).toContain('MAD');
+  });
   it('cargando', () => {
     expect(punctualityHtml({ ...base, history: undefined })).toContain('Buscando el historial');
   });

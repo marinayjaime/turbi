@@ -28,6 +28,8 @@ function todayHtml(c, dayLabel = 'Hoy') {
     <p class="apt-sub">${esc(dayLabel)}</p>
     ${nowRow('Salida', c.dep, 'salió')}${nowRow('Llegada', c.arr, 'llegó')}
     <p class="pbadge pband-${c.band ?? 'ok'}">${esc(c.text)}</p>
+    ${c.mismatch ? `<p class="mismatch">Ojo: la hora de salida (la publica Aena en ${esc(c.mismatch.dep)}) y la de llegada (la publica Aena en ${esc(c.mismatch.arr)})
+      no cuadran entre sí. Una de las dos probablemente no está actualizada todavía.</p>` : ''}
     <p class="note-small">Horas publicadas por Aena. «Prevista» es una estimación y puede cambiar.</p>`;
 }
 

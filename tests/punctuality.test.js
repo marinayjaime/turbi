@@ -47,6 +47,16 @@ describe('currentPunctuality (vuelo de hoy)', () => {
   it('llegada adelantada: puntual', () => {
     expect(currentPunctuality(leg({ ea: '2026-09-24T19:40' }), NOW)).toMatchObject({ state: 'puntual' });
   });
+  it('salida y llegada que no cuadran entre sí (caso real IB1668): aviso', () => {
+    const c = currentPunctuality(leg({ o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T18:02', sa: '19:25', ea: '2026-09-24T20:07', st: 'INI', std: 'INI', sta: 'INI' }));
+    expect(c.arr.delay).toBe(42);
+    expect(c.dep.delay).toBe(7);
+    expect(c.mismatch).toEqual({ dep: 'PMI', arr: 'MAD' });
+  });
+  it('diferencias normales o vuelo ya aterrizado: sin aviso', () => {
+    expect(currentPunctuality(leg()).mismatch).toBeNull();
+    expect(currentPunctuality(leg({ st: 'IBK', sta: 'IBK', std: 'BOR', ea: '2026-09-24T20:31' })).mismatch).toBeNull();
+  });
   it('cancelado y desviado', () => {
     expect(currentPunctuality(leg({ st: 'CAN' }), NOW)).toMatchObject({ state: 'cancelado', text: 'Vuelo cancelado' });
     expect(currentPunctuality(leg({ st: 'DES' }), NOW)).toMatchObject({ state: 'desviado', text: 'Vuelo desviado' });

@@ -19,7 +19,7 @@ Fecha: 2026-09-24 · Amplía `2026-09-24-turbi-design.md` · Decisiones tomadas 
 ## 3. Pipeline (`.github/workflows/deploy.yml` + `scripts/build-flights.mjs`)
 
 - GitHub Pages pasa a desplegarse **desde Actions** (no desde la rama), para que los datos no generen commits.
-- Disparadores: push a `main`, cron cada hora (`minuto 7`), manual.
+- Disparadores: push a `main`, cron cada 15 min (`7,22,37,52`), manual. GitHub puede retrasar u omitir ejecuciones programadas (el 24/09/2026 solo hubo una en 5 h): la ficha muestra la hora real de los datos.
 - Modo `full` (push, manual, o hora UTC múltiplo de 6): 14 días de salidas y llegadas de todos los aeropuertos.
 - Modo `live` (resto de horas): solo `dosDias=si`; se fusiona con los tramos publicados anteriormente (`data/flights/_legs.json`), sustituyendo las fechas refrescadas.
 - Si Aena falla, se conservan los datos anteriores; si no los hay, se publica la app sin horarios (nunca se rompe el despliegue).
