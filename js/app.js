@@ -17,7 +17,7 @@ import { renderMap } from './map.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
-import { aircraftName } from './plain.js';
+import { aircraftName, aircraftPhoto } from './plain.js';
 import { wantsRadar, fetchRadar, withRadar, departedText, endedNote } from './radar.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
@@ -148,6 +148,7 @@ function flightCard(q, durationMin) {
   return {
     al: schedule.al,
     title: `${schedule.name ?? schedule.al} ${schedule.al} ${schedule.n}`,
+    number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: aircraftPhoto(leg.ac),
     route: `${origin.city} a ${destination.city}`,
     tabs: tabDates(schedule.legs, leg.d).map(date => ({ date, active: date === leg.d })),
     status: departedText(leg, destination.city) ? { text: departedText(leg, destination.city), tone: 'info' } : flightStatus(leg),

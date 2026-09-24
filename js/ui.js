@@ -1,4 +1,5 @@
 import { LEVELS, CAUSES } from './turbulence.js';
+import { PHOTO_CREDITS } from './aircraft-photos.js';
 
 const VERDICTS = {
   tranquilo: { emoji: '🟢', title: 'Tranquilo', text: 'No se espera turbulencia relevante.' },
@@ -55,8 +56,19 @@ function radarHtml(r) {
   return '<p class="radar muted">El radar no responde ahora mismo.</p>';
 }
 
-// card = { al, title, route, tabs: [{ date, active }], status: { text, tone }, o, a, duration,
-//          dep: { date, time, est, late, terminal, gate }, arr: { date, time, est, late, terminal } | null, aircraft }
+// Foto de ejemplo del modelo (img/aircraft), con autor y licencia como pide Wikimedia.
+function photoHtml(c) {
+  if (!c.photo) return '';
+  const credit = PHOTO_CREDITS[c.photo];
+  return `
+      <figure class="plane-photo">
+        <img src="img/aircraft/${esc(c.photo)}.jpg" alt="${esc(c.aircraft ?? '')}" onerror="this.closest('figure').remove()">
+        <figcaption>${esc(c.aircraft)} · foto de ejemplo del modelo, no del avión de tu vuelo${credit ? ` · ${esc(credit.artist)}, ${esc(credit.license)}` : ''}</figcaption>
+      </figure>`;
+}
+
+// card = { al, number, airline, title, route, tabs: [{ date, active }], status: { text, tone }, o, a, duration,
+//          dep: { date, time, est, late, terminal, gate }, arr: { date, time, est, late, terminal } | null, aircraft, photo }
 export function flightCardHtml(c) {
   const meta = (t, g) => [t && `Terminal ${esc(t)}`, g && `Puerta ${esc(g)}`].filter(Boolean).join(' · ') || '&nbsp;';
   const nextDay = x => (c.dep && x.date > c.dep.date ? ' · +1 día' : '');
@@ -70,10 +82,14 @@ export function flightCardHtml(c) {
       <div class="side"><p class="lbl">${label}</p><p class="big">—</p></div>`;
   return `
     <section class="flight">
+${photoHtml(c)}
       <div class="flight-head">
-        <img class="logo" src="img/logos/${esc(c.al)}.png" alt=""
-          onerror="if (!this.dataset.retry) { this.dataset.retry = 1; this.src = 'https://pics.avs.io/200/80/${esc(c.al)}.png'; } else this.remove();">
-        <div><h2>${esc(c.title)}</h2><p>${esc(c.route)}</p></div>
+        <div class="flight-id">
+          <img class="logo" src="img/logos/${esc(c.al)}.png" alt="${esc(c.airline ?? '')}"
+            onerror="if (!this.dataset.retry) { this.dataset.retry = 1; this.src = 'https://pics.avs.io/200/80/${esc(c.al)}.png'; } else this.remove();">
+          <h2>${esc(c.number ?? c.title)}</h2>
+        </div>
+        <p>${c.number && c.airline ? `${esc(c.airline)} · ` : ''}${esc(c.route)}</p>
       </div>
       ${c.tabs.length > 1 ? `<nav class="tabs">${c.tabs.map(t =>
         `<button type="button" data-date="${esc(t.date)}"${t.active ? ' class="active"' : ''}>${esc(dateLabel(t.date))}</button>`).join('')}</nav>` : ''}

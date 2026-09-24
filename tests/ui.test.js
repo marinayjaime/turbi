@@ -173,6 +173,26 @@ describe('fecha pedida sin vuelo (EI737: Aena ya lo retiró y la app enseñaba e
   });
 });
 
+describe('cabecera: foto del modelo y logo junto al número', () => {
+  const c = { al: 'EI', number: 'EI 737', airline: 'Aer Lingus', title: 'Aer Lingus EI 737', route: 'Palma a Dublín', tabs: [], status: { text: 'Programado', tone: 'ok' },
+    o: 'PMI', a: 'DUB', duration: 160, dep: { date: '2026-09-27', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null,
+    aircraft: 'Airbus A320', photo: 'airbus-a320' };
+  it('foto del modelo arriba del todo, a todo el ancho, con aviso de que es de ejemplo y su autor y licencia', () => {
+    const html = flightCardHtml(c);
+    expect(html.indexOf('class="plane-photo"')).toBeLessThan(html.indexOf('class="flight-head"'));
+    expect(html).toContain('src="img/aircraft/airbus-a320.jpg"');
+    expect(html).toContain('Airbus A320 · foto de ejemplo del modelo, no del avión de tu vuelo · Pedro Aragão, CC BY-SA 3.0');
+  });
+  it('logo en la misma línea que el número de vuelo; aerolínea y ruta debajo', () => {
+    const html = flightCardHtml(c);
+    expect(html).toMatch(/<div class="flight-id">\s*<img class="logo"[^>]*>\s*<h2>EI 737<\/h2>\s*<\/div>/);
+    expect(html).toContain('<p>Aer Lingus · Palma a Dublín</p>');
+  });
+  it('modelo desconocido: sin foto', () => {
+    expect(flightCardHtml({ ...c, photo: null })).not.toContain('plane-photo');
+  });
+});
+
 describe('datos de Aena antiguos', () => {
   it('aviso visible si tienen más de 40 min', () => {
     const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90,

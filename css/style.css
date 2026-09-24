@@ -132,8 +132,15 @@ button { font: inherit; cursor: pointer; }
 
 /* Ficha del vuelo */
 .flight { margin-bottom: 8px; }
-.flight-head { display: flex; flex-direction: column; gap: 10px; }
-.flight-head .logo { height: 32px; width: auto; align-self: flex-start; }
+.flight-head { display: flex; flex-direction: column; gap: 4px; }
+.flight-id { display: flex; align-items: center; gap: 12px; }
+.flight-head .logo { height: 30px; width: auto; max-width: 45%; object-fit: contain; }
+/* Foto del modelo: ocupa toda la parte de arriba del panel (anula su margen de 20 px). */
+.plane-photo { margin: -20px -20px 16px; }
+.plane-photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 22px 22px 0 0; background: #dfe7ef; }
+.plane-photo figcaption { padding: 6px 20px 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
+.summary > * + .flight .plane-photo { margin-top: 0; }
+.summary > * + .flight .plane-photo img { border-radius: 14px; }
 .flight-head h2 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
 .flight-head p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
 .tabs { display: flex; gap: 4px; overflow-x: auto; margin: 16px -20px 0; padding: 0 20px; border-bottom: 1px solid var(--line); scrollbar-width: none; }

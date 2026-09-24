@@ -43,3 +43,26 @@ describe('aircraftName', () => {
     expect(aircraftName(null)).toBeNull();
   });
 });
+
+import { aircraftPhoto } from '../js/plain.js';
+describe('modelos que publica Aena (todos los códigos vistos el 24/09/2026)', () => {
+  const seen = ['320', '73H', '321', '32N', '7M8', '32Q', 'AT7', 'CRK', '32A', '319', '738W', 'A320', 'A20N', 'A21N', 'A321', 'CRJX', '788', 'B38M',
+    'A32A', '789', '359', 'E90', '295', '332', 'AT75', '333', 'A319', '772', '7S8', '764', 'AT76', '32B', '223', 'B789', 'E95', 'B788', 'A32B', '339',
+    'A359', '73J', 'E190', 'E295', 'A333', 'A332', 'B772', 'AWH', '388', '781', '73C', 'BCS3', '738', '77L', '77W', 'B764', 'E195', '73W', 'A339', '773',
+    'B77W', '739W', '733W', '290', 'A139', '318', 'B738', 'B77L', 'A388', '763', 'A318', 'DH4', '736', '737W', '343', 'E70', '221', '76W', '73G', 'E7W', 'B78X', 'E290'];
+  it('todos tienen nombre llano y foto de su modelo', () => {
+    for (const c of seen) {
+      expect(aircraftName(c), c).not.toMatch(/^modelo /);
+      expect(aircraftPhoto(c), c).toMatch(/^[a-z0-9-]+$/);
+    }
+  });
+  it('ejemplos', () => {
+    expect(aircraftName('AT7')).toBe('ATR 72');
+    expect(aircraftName('CRK')).toBe('Bombardier CRJ1000');
+    expect(aircraftName('738W')).toBe('Boeing 737-800');
+    expect(aircraftName('A139')).toBe('Helicóptero AW139');
+    expect(aircraftPhoto('A21N')).toBe('airbus-a321neo');
+    expect(aircraftPhoto('73H')).toBe('boeing-737-next-generation');
+    expect(aircraftPhoto('XYZ')).toBeNull();
+  });
+});
