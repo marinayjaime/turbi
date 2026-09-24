@@ -3,15 +3,18 @@
 // 2. node scripts/fetch-airline-photos.mjs      → data/airline-photos-candidates.json (hasta 4 candidatas por combinación)
 // 3. Revisión a mano: en cada combinación, «pick» = índice de la candidata que muestra claramente un avión de esa
 //    aerolínea y ese modelo, o null si ninguna vale. Solo se publican las revisadas («reviewed»: true).
-// 4. node scripts/fetch-airline-photos.mjs --publish → data/airline-photos.json (lo que carga la app)
+// 4. Fotos propias: img/fotos/«CÓDIGO Modelo.jpg» (p. ej. «FR Boeing 737-800.jpg»); tienen prioridad.
+// 5. node scripts/fetch-airline-photos.mjs --publish → data/airline-photos.json (lo que carga la app)
 // Sin foto de esa aerolínea con ese modelo, la app no muestra ninguna: nunca una de otra aerolínea ni «de ejemplo».
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const UA = 'Turbi/1.0 (+https://github.com/marinayjaime/turbi)';
 const API = 'https://commons.wikimedia.org/w/api.php';
 const OUT = 'data/airline-photos-candidates.json';
 const PUBLISHED = 'data/airline-photos.json';
 const COMBOS = 'data/airline-combos.json';
+const OWN = 'img/fotos';
 
 // Cómo llama Commons a cada modelo (varias formas posibles).
 const MODEL_NAMES = {
@@ -137,6 +140,15 @@ function publish() {
     if (!v?.reviewed || v.pick === null || v.pick === undefined) continue;
     const { thumb, artist, license, page } = v.candidates[v.pick];
     photos[key] = { thumb, artist, license, page };
+  }
+  // Fotos propias (img/fotos/«FR Boeing 737-800.jpg»): tienen prioridad; se reducen a 1200 px de ancho.
+  if (existsSync(OWN)) {
+    for (const file of readdirSync(OWN).filter(f => /\.jpe?g$/i.test(f))) {
+      const m = file.match(/^([A-Z0-9]{2,3}) (.+)\.jpe?g$/i);
+      if (!m || !MODEL_NAMES[m[2]]) { console.warn(`img/fotos/${file}: el nombre debe ser «CÓDIGO Modelo.jpg» (p. ej. «FR Boeing 737-800.jpg»)`); continue; }
+      execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '75', '--resampleWidth', '1200', `${OWN}/${file}`, '--out', `${OWN}/${file}`], { stdio: 'ignore' });
+      photos[`${m[1].toUpperCase()}|${m[2]}`] = { thumb: `${OWN}/${encodeURIComponent(file)}` };
+    }
   }
   const airlines = Object.fromEntries(combos.filter(c => c.name).map(c => [c.op, c.name]));
   writeFileSync(PUBLISHED, `${JSON.stringify({ airlines, photos })}\n`);

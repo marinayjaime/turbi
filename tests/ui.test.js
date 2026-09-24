@@ -191,6 +191,11 @@ describe('cabecera: foto del modelo y logo junto al número', () => {
     expect(html).toContain('Airbus A320 · Foto: <a href="https://commons.wikimedia.org/wiki/File:EI.jpg" target="_blank" rel="noopener">Pedro Aragão</a>, CC BY-SA 3.0');
     expect(html).not.toContain('foto de ejemplo');
   });
+  it('foto propia (subida a img/fotos): sin autor ni licencia, solo el modelo', () => {
+    const html = flightCardHtml({ ...c, photo: { thumb: 'img/fotos/FR%20Boeing%20737-800.jpg' } });
+    expect(html).toContain('src="img/fotos/FR%20Boeing%20737-800.jpg"');
+    expect(html).toContain('<figcaption>Airbus A320</figcaption>');
+  });
   it('número de vuelo a la izquierda y logo a la derecha; aerolínea y ruta debajo', () => {
     const html = flightCardHtml(c);
     expect(html).toMatch(/<div class="flight-id">\s*<h2>EI 737<\/h2>\s*<img class="logo"[^>]*>\s*<\/div>/);

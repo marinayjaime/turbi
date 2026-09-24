@@ -63,7 +63,7 @@ function photoHtml(c) {
   return `
       <figure class="plane-photo">
         <img src="${esc(p.thumb)}" alt="${esc(c.aircraft ?? '')}" onerror="this.closest('figure').remove()">
-        <figcaption>${c.aircraft ? `${esc(c.aircraft)} · ` : ''}Foto: <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.artist)}</a>, ${esc(p.license)}</figcaption>
+        <figcaption>${[c.aircraft && esc(c.aircraft), p.artist && `Foto: <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.artist)}</a>, ${esc(p.license)}`].filter(Boolean).join(' · ')}</figcaption>
       </figure>`;
 }
 
