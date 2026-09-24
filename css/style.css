@@ -13,13 +13,17 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--bg); }
+/* Color de la parte baja de la foto (nubes): si alguna vez asoma por debajo, no se nota. */
+html { background: #90989c; }
 body { margin: 0; background: transparent; color: var(--text); }
 /* Foto fija de fondo (iOS no admite background-attachment: fixed) */
-/* Alto de la pantalla completa (lvh: con las barras de Safari ocultas), para que la foto no se corte por abajo. */
+/* Más grande que cualquier pantalla: iOS (app instalada con barra de estado translúcida) calcula 100vh más corto
+   que la pantalla real y dejaba una franja sin foto abajo. Empieza sobre la barra de estado y sigue 200 px por debajo. */
 body::before {
-  content: ''; position: fixed; top: 0; left: 0; right: 0; z-index: -1;
-  height: 100vh; height: calc(100lvh + env(safe-area-inset-bottom));
+  content: ''; position: fixed; left: 0; right: 0; z-index: -1;
+  top: calc(-1 * env(safe-area-inset-top));
+  height: calc(100vh + env(safe-area-inset-top) + env(safe-area-inset-bottom) + 200px);
+  height: calc(100lvh + env(safe-area-inset-top) + env(safe-area-inset-bottom) + 200px);
   background: var(--bg) url('../img/sky.jpg') center top / cover no-repeat;
 }
 .panel {
