@@ -105,3 +105,31 @@ describe('cambio de puerta', () => {
     expect(flightStatus(leg({ st: 'NPR', std: 'NPR' }))).toEqual({ text: 'Cambio de puerta', tone: 'warn' });
   });
 });
+
+describe('fetchSchedule con datos en directo (Railway)', () => {
+  const LIVE = 'https://live.example';
+  const pagesBody = { name: 'Iberia', updated: '2026-09-24T12:00:00Z', legs: [leg({ d: '2026-09-24', ed: '2026-09-24T17:55' }), leg({ d: '2026-09-25' }), leg({ d: '2026-09-26' })] };
+  const liveBody = { name: 'Iberia', updated: '2026-09-24T18:45:00Z', legs: [leg({ d: '2026-09-24', ed: '2026-09-24T18:44', g: 'D86' }), leg({ d: '2026-09-25', ed: '2026-09-25T18:00' })] };
+  const fetchFrom = map => vi.fn(async url => {
+    const hit = Object.entries(map).find(([k]) => url.startsWith(k));
+    if (!hit || hit[1] === 404) return { ok: false, status: 404 };
+    if (hit[1] === 'down') throw new TypeError('Load failed');
+    return { ok: true, json: async () => hit[1] };
+  });
+  it('hoy y mañana de Railway; el resto de GitHub Pages; hora de actualización de Railway', async () => {
+    const r = await fetchSchedule('IB1668', fetchFrom({ [LIVE]: liveBody, 'data/flights/IB/1668.json': pagesBody }), LIVE);
+    expect(r.legs.map(l => [l.d, l.ed])).toEqual([['2026-09-24', '2026-09-24T18:44'], ['2026-09-25', '2026-09-25T18:00'], ['2026-09-26', '2026-09-24T17:55']]);
+    expect(r.updated).toBe('2026-09-24T18:45:00Z');
+    expect(r.source).toBe('live');
+  });
+  it('Railway caído: solo GitHub Pages, con su hora', async () => {
+    const r = await fetchSchedule('IB1668', fetchFrom({ [LIVE]: 'down', 'data/flights/IB/1668.json': pagesBody }), LIVE);
+    expect(r.legs).toHaveLength(3);
+    expect(r.updated).toBe('2026-09-24T12:00:00Z');
+    expect(r.source).toBe('pages');
+  });
+  it('solo en Railway (vuelo nuevo): también sirve', async () => {
+    const r = await fetchSchedule('IB1668', fetchFrom({ [LIVE]: liveBody, 'data/flights/IB/1668.json': 404 }), LIVE);
+    expect(r.legs).toHaveLength(2);
+  });
+});

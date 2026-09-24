@@ -135,3 +135,13 @@ describe('dos ejecuciones: Aena retira antes la fila de salida que la de llegada
     expect([...store.values()].map(r => r.f[0]).sort()).toEqual(['IB1668', 'UX6000']);
   });
 });
+
+describe('salida sin llegada (falló la descarga de llegadas)', () => {
+  it('se une al vuelo ya guardado, sin duplicarlo', () => {
+    const store = new Map();
+    mergeRecords(store, obsOf([S(), L()]));
+    mergeRecords(store, obsOf([S({ horaEstimada: '18:40:00' })]));
+    expect([...store.values()]).toHaveLength(1);
+    expect([...store.values()][0]).toMatchObject({ dd: 15, ad: 6 });
+  });
+});

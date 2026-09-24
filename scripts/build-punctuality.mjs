@@ -68,17 +68,23 @@ const shares = (a, b) => a.f.some(x => b.f.includes(x));
 // Un vuelo es el mismo si coincide su clave física Y comparte algún número de vuelo.
 // Una llegada sin salida (Aena ya retiró la fila de salida) se une al vuelo ya guardado con esa llegada.
 export function mergeRecords(store, observations) {
-  const byPhys = new Map(), byArr = new Map();
+  const byPhys = new Map(), byArr = new Map(), byDep = new Map();
+  const depKey = r => `${r.o}|${r.a}|${r.d}|${r.sd}`;
+  const push = (m, k, v) => (m.get(k) ?? m.set(k, []).get(k)).push(v);
   const index = (key, r) => {
-    (byPhys.get(physKey(r)) ?? byPhys.set(physKey(r), []).get(physKey(r))).push(key);
-    if (r.sd && r.sa) (byArr.get(arrKey(r)) ?? byArr.set(arrKey(r), []).get(arrKey(r))).push(key);
+    push(byPhys, physKey(r), key);
+    if (r.sd && r.sa) { push(byArr, arrKey(r), key); push(byDep, depKey(r), key); }
   };
   for (const [key, r] of store) index(key, r);
   const find = (keys, o) => keys?.find(k => store.has(k) && shares(store.get(k), o));
 
   const changed = new Set();
   for (const o of observations.values()) {
-    let k = (!o.sd && o.sa ? find(byArr.get(arrKey(o)), o) : null) ?? find(byPhys.get(physKey(o)), o);
+    // Llegada sin salida (Aena ya retiró la fila de salida) o salida sin llegada (falló la descarga de llegadas):
+    // se unen al vuelo ya guardado.
+    let k = (!o.sd && o.sa ? find(byArr.get(arrKey(o)), o) : null)
+      ?? (o.sd && !o.sa ? find(byDep.get(depKey(o)), o) : null)
+      ?? find(byPhys.get(physKey(o)), o);
     const isNew = !k;
     if (isNew) k = storeKey(o);
     const before = store.has(k) ? JSON.stringify(store.get(k)) : null;
@@ -152,7 +158,7 @@ export function aggregateFlights(records, today) {
 
 // --- Entrada/salida (GitHub Actions) ---
 
-async function loadStore(daysDir) {
+export async function loadStore(daysDir) {
   const store = new Map();
   let names = [];
   try { names = await readdir(daysDir); } catch { return store; }
@@ -169,7 +175,7 @@ async function loadStore(daysDir) {
   return store;
 }
 
-async function saveDays(daysDir, store, days, today) {
+export async function saveDays(daysDir, store, days, today) {
   await mkdir(daysDir, { recursive: true });
   const byDay = new Map();
   for (const r of store.values()) if (days.has(r.d)) (byDay.get(r.d) ?? byDay.set(r.d, []).get(r.d)).push(r);

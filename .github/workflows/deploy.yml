@@ -34,6 +34,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Si algún test falla, no se publica nada.
+      - name: Tests
+        run: npm ci --no-audit --no-fund && npm test
       # Los pasos del histórico nunca bloquean la publicación (continue-on-error).
       - name: Traer el histórico de puntualidad (rama «data»)
         continue-on-error: true

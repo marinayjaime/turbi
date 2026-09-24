@@ -98,3 +98,14 @@ describe('horas duplicadas en Aena', () => {
     expect(punctualityHtml({ ...base, current: c })).toContain('Aena publica también otra hora de salida para este vuelo: 18:02');
   });
 });
+
+describe('fetchPunctuality con Railway', () => {
+  it('primero Railway; si falla, GitHub Pages', async () => {
+    const LIVE = 'https://live.example';
+    const body = route => ({ routes: { 'PMI-BCN': { basis: route } } });
+    const f = vi.fn(async url => (url.startsWith(LIVE) ? { ok: true, json: async () => body('arr') } : { ok: true, json: async () => body('dep') }));
+    expect(await fetchPunctuality('VY', '3902', 'PMI-BCN', f, LIVE)).toEqual({ basis: 'arr' });
+    const down = vi.fn(async url => { if (url.startsWith(LIVE)) throw new TypeError('x'); return { ok: true, json: async () => body('dep') }; });
+    expect(await fetchPunctuality('VY', '3902', 'PMI-BCN', down, LIVE)).toEqual({ basis: 'dep' });
+  });
+});

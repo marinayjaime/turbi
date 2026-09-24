@@ -5,9 +5,13 @@
   "scripts": {
     "test": "vitest run",
     "airports": "node scripts/build-airports.mjs",
-    "serve": "python3 -m http.server 8000"
+    "serve": "python3 -m http.server 8000",
+    "start": "node server/live.mjs"
   },
   "devDependencies": {
     "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

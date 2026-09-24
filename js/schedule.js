@@ -1,6 +1,8 @@
 // Horarios de Aena publicados por el pipeline en data/flights/.
 // Leg = { d, o, a, sd, ed, sa, ea, td, ta, g, st, ac } (ver scripts/aena.mjs)
 
+import { LIVE_BASE } from './config.js';
+
 const BASE = 'data/flights/';
 const DELAY_MIN = 15;
 
@@ -16,7 +18,11 @@ async function getJson(url, fetchFn) {
   return res.json();
 }
 
-export async function fetchSchedule(number, fetchFn = fetch) {
+const quiet = p => p.catch(() => null);
+
+// Hoy y mañana llegan de Railway (cada 10 min); el resto de los 14 días, de GitHub Pages.
+// Si Railway no responde, se usa solo GitHub Pages (con su hora de actualización, que la ficha muestra).
+export async function fetchSchedule(number, fetchFn = fetch, liveBase = LIVE_BASE) {
   const parsed = parseFlightNumber(number);
   if (!parsed) return null;
   try {
@@ -25,9 +31,20 @@ export async function fetchSchedule(number, fetchFn = fetch) {
       al = (await getJson(`${BASE}airlines.json`, fetchFn))?.[al];
       if (!al) return null;
     }
-    const data = await getJson(`${BASE}${al}/${parsed.n}.json`, fetchFn);
-    if (!data?.legs?.length) return null;
-    return { al, n: parsed.n, name: data.name, legs: data.legs, updated: data.updated };
+    const path = `${al}/${parsed.n}.json`;
+    const [pages, live] = await Promise.all([
+      quiet(getJson(`${BASE}${path}`, fetchFn)),
+      liveBase ? quiet(getJson(`${liveBase}/flights/${path}`, (u, o) => fetchFn(u, { ...o, signal: AbortSignal.timeout(5000) }))) : null,
+    ]);
+    const liveDates = new Set((live?.legs ?? []).map(l => l.d));
+    const legs = [...(pages?.legs ?? []).filter(l => !liveDates.has(l.d)), ...(live?.legs ?? [])]
+      .sort((x, y) => (x.d + (x.sd ?? x.sa)).localeCompare(y.d + (y.sd ?? y.sa)));
+    if (!legs.length) return null;
+    const src = live?.legs?.length ? live : pages;
+    return {
+      al, n: parsed.n, name: src.name ?? pages?.name, legs, updated: src.updated,
+      ...(liveBase ? { source: live?.legs?.length ? 'live' : 'pages' } : {}),
+    };
   } catch {
     return null;
   }

@@ -2,6 +2,8 @@
 // Funciones puras, usadas en el navegador y en GitHub Actions.
 // Diseño y definiciones: docs/superpowers/specs/2026-09-24-turbi-punctuality-design.md
 
+import { LIVE_BASE } from './config.js';
+
 export const ON_TIME_MIN = 15;
 const DAY_MS = 86400000;
 
@@ -136,13 +138,16 @@ export function trend(recent, base) {
   return 'Sin cambios relevantes.';
 }
 
-// Histórico agregado de un vuelo y ruta (data/punctuality/<AL>/<N>.json). Sin archivo o sin red → null.
-export async function fetchPunctuality(al, n, route, fetchFn = fetch) {
-  try {
-    const res = await fetchFn(`data/punctuality/${al}/${n}.json`, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    return (await res.json()).routes?.[route] ?? null;
-  } catch {
-    return null;
+// Histórico agregado de un vuelo y ruta: primero Railway (al día), si no GitHub Pages. Sin datos o sin red → null.
+export async function fetchPunctuality(al, n, route, fetchFn = fetch, liveBase = LIVE_BASE) {
+  const urls = [...(liveBase ? [`${liveBase}/punctuality/${al}/${n}.json`] : []), `data/punctuality/${al}/${n}.json`];
+  for (const url of urls) {
+    try {
+      const res = await fetchFn(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const r = (await res.json()).routes?.[route];
+      if (r) return r;
+    } catch { /* se prueba la siguiente fuente */ }
   }
+  return null;
 }
