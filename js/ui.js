@@ -62,6 +62,7 @@ export function flightCardHtml(c) {
         ${!c.dep.gate ? '<small>Aena suele publicarla 1–2 h antes de la salida.</small>'
           : /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
       </div>` : ''}
+      ${c.stale ? `<p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>` : ''}
       <p class="foot">${c.aircraft ? `Avión ${esc(c.aircraft)} · ` : ''}${c.updatedAgo ? `Datos de Aena actualizados ${esc(c.updatedAgo)} · ` : 'Fuente: Aena · '}hora local de cada aeropuerto</p>
     </section>`;
 }

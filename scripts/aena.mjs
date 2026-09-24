@@ -132,3 +132,29 @@ export function patchFailed(fresh, old, failed, aenaAirports = []) {
   }
   return out;
 }
+
+// Auditoría: cada hora publicada por Turbi debe coincidir exactamente con la fila de Aena de la que sale.
+export function auditLegs(entries, legs) {
+  const nextDay = d => new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+  const byDep = new Map(), byArr = new Map();
+  for (const l of legs) {
+    byDep.set(`${l.al}|${l.n}|${l.o}|${l.a}|${l.d}|${l.sd}`, l);
+    if (l.sa) byArr.set(`${l.al}|${l.n}|${l.o}|${l.a}|${l.sd && l.sa < l.sd ? nextDay(l.d) : l.d}|${l.sa}`, l);
+  }
+  let checked = 0;
+  const mismatches = [];
+  for (const e of entries) {
+    const r = normalize(e);
+    if (!r || !r.est) continue;
+    const leg = r.type === 'S'
+      ? byDep.get(`${r.al}|${r.n}|${r.here}|${r.other}|${r.date}|${r.sched}`)
+      : byArr.get(`${r.al}|${r.n}|${r.other}|${r.here}|${r.date}|${r.sched}`);
+    if (!leg) continue;
+    checked++;
+    const turbi = r.type === 'S' ? leg.ed : leg.ea;
+    if (turbi !== r.est) {
+      mismatches.push({ flight: `${r.al}${r.n}`, side: r.type === 'S' ? 'salida' : 'llegada', airport: r.here, aena: r.est, turbi });
+    }
+  }
+  return { checked, mismatches };
+}

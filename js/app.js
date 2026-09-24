@@ -156,6 +156,7 @@ function flightCard(q, durationMin) {
     aircraft: aircraftName(leg.ac),
     gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
     updatedAgo: schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
+    stale: schedule.updated ? Date.now() - Date.parse(schedule.updated) > 40 * 60000 : false,
   };
 }
 

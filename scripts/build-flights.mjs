@@ -1,7 +1,7 @@
 // Construye _site/ (la app + horarios de Aena) para desplegar en GitHub Pages.
 // Uso: MODE=full|live|auto node scripts/build-flights.mjs
 import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
-import { buildLegs, mergeLegs, shardLegs, patchFailed } from './aena.mjs';
+import { buildLegs, mergeLegs, shardLegs, patchFailed, auditLegs } from './aena.mjs';
 import { fetchMissingLogos } from './fetch-logos.mjs';
 import { buildAviation } from './build-aviation.mjs';
 import { buildPunctuality } from './build-punctuality.mjs';
@@ -86,6 +86,10 @@ async function main() {
   const freshDates = [madridDate(0), madridDate(1)];
   const old = mode === 'live' || failed.length || !aenaOk ? await previousLegs() : null;
   let fresh = aenaOk ? buildLegs(entries) : [];
+  // Auditoría de fidelidad: lo que se publica debe ser idéntico a lo que dice Aena en esta descarga.
+  const audit = aenaOk ? auditLegs(entries, fresh) : { checked: 0, mismatches: [] };
+  console.log(`Auditoría: ${audit.checked} horas comprobadas contra Aena, ${audit.mismatches.length} discrepancias`);
+  for (const m of audit.mismatches.slice(0, 10)) console.warn(`  DISCREPANCIA ${m.flight} ${m.side} ${m.airport}: Aena ${m.aena} · Turbi ${m.turbi}`);
   if (aenaOk && failed.length && old) {
     // En modo live solo se recuperan las fechas que se están refrescando.
     const oldScope = mode === 'live' ? old.filter(l => freshDates.includes(l.d)) : old;
@@ -105,7 +109,7 @@ async function main() {
   await mkdir(out, { recursive: true });
   await writeFile(`${out}/_legs.json`, JSON.stringify(legs));
   await writeFile(`${out}/airlines.json`, JSON.stringify(airlines));
-  await writeFile(`${out}/_meta.json`, JSON.stringify({ updated: new Date().toISOString(), mode, legs: legs.length }));
+  await writeFile(`${out}/_meta.json`, JSON.stringify({ updated: new Date().toISOString(), mode, legs: legs.length, audit: { checked: audit.checked, mismatches: audit.mismatches.length } }));
   for (const [path, body] of Object.entries(files)) {
     const dir = `${out}/${path.split('/')[0]}`;
     await mkdir(dir, { recursive: true });

@@ -65,11 +65,13 @@ describe('punctualityHtml', () => {
     expect(h).toContain('salieron con 15 min de retraso o menos');
     expect(h).toContain('solo hay datos de salida');
   });
-  it('aviso cuando salida y llegada no cuadran', () => {
-    const h = punctualityHtml({ ...base, current: { ...current, mismatch: { dep: 'PMI', arr: 'MAD' } } });
-    expect(h).toContain('no cuadran entre sí');
-    expect(h).toContain('PMI');
-    expect(h).toContain('MAD');
+  it('cada hora con su fuente; llegada antes del despegue marcada como estimación, sin opinar', () => {
+    const c = { ...current, dep: { ...current.dep, source: 'PMI' }, arr: { ...current.arr, source: 'MAD', beforeTakeoff: true } };
+    const h = punctualityHtml({ ...base, current: c });
+    expect(h).toContain('según Aena en PMI');
+    expect(h).toContain('según Aena en MAD');
+    expect(h).toContain('El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.');
+    expect(h).not.toMatch(/probablemente|no cuadra|no está actualizada/);
   });
   it('cargando', () => {
     expect(punctualityHtml({ ...base, history: undefined })).toContain('Buscando el historial');

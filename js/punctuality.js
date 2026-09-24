@@ -31,36 +31,35 @@ export function currentPunctuality(leg) {
   const sta = leg.sta ?? (ARR_FINAL.has(leg.st) || ARR_PROGRESS.has(leg.st) ? leg.st : null);
   const std = leg.std ?? (!sta ? leg.st : null);
   const status = [std, sta, leg.st];
-  if (status.includes('CAN')) return { state: 'cancelado', text: 'Vuelo cancelado', band: 'bad', dep: null, arr: null, basis: null, mismatch: null };
-  if (status.includes('DES')) return { state: 'desviado', text: 'Vuelo desviado', band: 'bad', dep: null, arr: null, basis: null, mismatch: null };
+  if (status.includes('CAN')) return { state: 'cancelado', text: 'Vuelo cancelado', band: 'bad', dep: null, arr: null, basis: null };
+  if (status.includes('DES')) return { state: 'desviado', text: 'Vuelo desviado', band: 'bad', dep: null, arr: null, basis: null };
 
   const arrFinal = ARR_FINAL.has(sta) || (sta === 'BOR' && Boolean(leg.ea));
   const depFinal = std === 'BOR' || ARR_FINAL.has(sta) || ARR_PROGRESS.has(sta) || sta === 'BOR';
 
-  const dep = leg.sd ? { sched: leg.sd, time: hhmm(leg.ed), delay: delayMinutes(leg.d, leg.sd, leg.ed), final: depFinal } : null;
+  // Cada hora es la que publica Aena en ese aeropuerto (source); no se recalcula ni se corrige.
+  const dep = leg.sd ? { sched: leg.sd, time: hhmm(leg.ed), delay: delayMinutes(leg.d, leg.sd, leg.ed), final: depFinal, source: leg.o } : null;
   const arrDate = leg.sa ? (leg.sd && leg.sa < leg.sd ? nextDay(leg.d) : leg.d) : null;
-  const arr = leg.sa ? { sched: leg.sa, time: hhmm(leg.ea), delay: delayMinutes(arrDate, leg.sa, leg.ea), final: arrFinal } : null;
+  const arr = leg.sa ? {
+    sched: leg.sa, time: hhmm(leg.ea), delay: delayMinutes(arrDate, leg.sa, leg.ea), final: arrFinal, source: leg.a, beforeTakeoff: !depFinal,
+  } : null;
 
   const basis = arr ? 'arr' : dep ? 'dep' : null;
   const side = basis === 'arr' ? arr : dep;
-  // Salida y llegada las publican aeropuertos distintos. Si sus retrasos difieren mucho antes de aterrizar,
-  // una de las dos horas probablemente no está actualizada: se avisa en vez de darla por buena.
-  const mismatch = dep && arr && typeof dep.delay === 'number' && typeof arr.delay === 'number'
-    && !arr.final && Math.abs(arr.delay - dep.delay) > 20 ? { dep: leg.o, arr: leg.a } : null;
-  if (!side) return { state: 'sin-datos', text: 'Sin datos de horario', band: null, dep, arr, basis, mismatch };
+  if (!side) return { state: 'sin-datos', text: 'Sin datos de horario', band: null, dep, arr, basis };
 
   const unchanged = side.delay === null || (side.delay === 0 && !side.final);
   if (unchanged && basis === 'arr' && dep?.delay > ON_TIME_MIN) {
-    return { state: 'retrasado', text: `Salida con ${dep.delay} min de retraso; llegada aún sin actualizar`, band: delayBand(dep.delay), dep, arr, basis, mismatch };
+    return { state: 'retrasado', text: `Salida con ${dep.delay} min de retraso; llegada aún sin actualizar`, band: delayBand(dep.delay), dep, arr, basis };
   }
-  if (unchanged) return { state: 'sin-cambios', text: 'Sin cambios sobre el horario programado', band: 'ok', dep, arr, basis, mismatch };
+  if (unchanged) return { state: 'sin-cambios', text: 'Sin cambios sobre el horario programado', band: 'ok', dep, arr, basis };
 
   const late = side.delay > ON_TIME_MIN;
   const verb = basis === 'arr' ? (side.final ? 'Llegó' : 'Llegada prevista') : (side.final ? 'Salió' : 'Salida prevista');
   return {
     state: late ? 'retrasado' : 'puntual',
     text: late ? `${verb} con ${side.delay} min de retraso` : `${verb} puntual`,
-    band: delayBand(side.delay), dep, arr, basis, mismatch,
+    band: delayBand(side.delay), dep, arr, basis,
   };
 }
 

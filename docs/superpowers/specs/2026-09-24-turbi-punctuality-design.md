@@ -128,6 +128,14 @@ Cada ejecución genera `data/punctuality/<AL>/<N>.json`, **uno por número de vu
 - Si el estado es final: "Llegó…" / "Salió…". Si no: "prevista".
 - **Colores:** verde ≤ 15 · amarillo 16–30 · naranja 31–60 · rojo > 60 o cancelado. La métrica oficial sigue siendo ≤ 15.
 
+## 5.1 Fidelidad a la fuente (norma del proyecto)
+- Turbi muestra **exactamente** las horas que publica Aena. Nunca las recalcula, corrige ni sustituye por estimaciones propias.
+  - Se probó una corrección "programada + retraso de salida" el 24/09/2026 y se retiró: inventaba una hora.
+- Cada hora indica su fuente ("según Aena en PMI" / "según Aena en MAD"). Salida y llegada las publican aeropuertos distintos, que actualizan por separado.
+- Antes del despegue, la llegada se marca como estimación de Aena que puede cambiar. No se opina sobre si es correcta.
+- Si los datos de Aena tienen más de 40 min, la ficha lo avisa de forma visible.
+- **Auditoría en cada descarga:** cada hora que se publica se compara con la fila de Aena de la que procede. Las discrepancias se registran en el log del workflow y en `data/flights/_meta.json`. Primera ejecución real: 27.597 horas, 0 discrepancias.
+
 ## 6. Límites y cosas que no se hacen
 - **Efecto en cadena del avión:** Aena da el **tipo** de avión (`A21N`), no la matrícula, así que no se pueden seguir sus rotaciones. Queda como mejora futura si aparece una fuente gratuita con matrícula.
 - **Meteorología:** no se traduce a minutos de retraso. Como mucho se muestra contexto del METAR/TAF ya existente.

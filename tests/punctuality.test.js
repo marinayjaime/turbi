@@ -29,8 +29,8 @@ const leg = over => ({ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '18:25', ed: '20
 describe('currentPunctuality (vuelo de hoy)', () => {
   it('vuelo en el aire: llegada prevista puntual (+6), salida final (+12)', () => {
     const c = currentPunctuality(leg(), NOW);
-    expect(c.dep).toEqual({ sched: '18:25', time: '18:37', delay: 12, final: true });
-    expect(c.arr).toEqual({ sched: '19:50', time: '19:56', delay: 6, final: false });
+    expect(c.dep).toMatchObject({ sched: '18:25', time: '18:37', delay: 12, final: true });
+    expect(c.arr).toMatchObject({ sched: '19:50', time: '19:56', delay: 6, final: false });
     expect(c.state).toBe('puntual');
     expect(c.text).toBe('Llegada prevista puntual');
   });
@@ -47,15 +47,14 @@ describe('currentPunctuality (vuelo de hoy)', () => {
   it('llegada adelantada: puntual', () => {
     expect(currentPunctuality(leg({ ea: '2026-09-24T19:40' }), NOW)).toMatchObject({ state: 'puntual' });
   });
-  it('salida y llegada que no cuadran entre sí (caso real IB1668): aviso', () => {
+  it('muestra exactamente lo publicado por Aena (caso real IB1668) y de qué aeropuerto viene cada hora', () => {
     const c = currentPunctuality(leg({ o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T18:02', sa: '19:25', ea: '2026-09-24T20:07', st: 'INI', std: 'INI', sta: 'INI' }));
-    expect(c.arr.delay).toBe(42);
-    expect(c.dep.delay).toBe(7);
-    expect(c.mismatch).toEqual({ dep: 'PMI', arr: 'MAD' });
+    expect(c.dep).toMatchObject({ time: '18:02', delay: 7, source: 'PMI' });
+    expect(c.arr).toMatchObject({ time: '20:07', delay: 42, source: 'MAD', beforeTakeoff: true });
   });
-  it('diferencias normales o vuelo ya aterrizado: sin aviso', () => {
-    expect(currentPunctuality(leg()).mismatch).toBeNull();
-    expect(currentPunctuality(leg({ st: 'IBK', sta: 'IBK', std: 'BOR', ea: '2026-09-24T20:31' })).mismatch).toBeNull();
+  it('en el aire o aterrizado: la llegada ya no es «antes del despegue»', () => {
+    expect(currentPunctuality(leg()).arr.beforeTakeoff).toBe(false);
+    expect(currentPunctuality(leg({ st: 'IBK', sta: 'IBK', std: 'BOR', ea: '2026-09-24T20:31' })).arr.beforeTakeoff).toBe(false);
   });
   it('cancelado y desviado', () => {
     expect(currentPunctuality(leg({ st: 'CAN' }), NOW)).toMatchObject({ state: 'cancelado', text: 'Vuelo cancelado' });

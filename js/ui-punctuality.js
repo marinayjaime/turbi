@@ -20,7 +20,8 @@ function nowRow(label, side, doneWord) {
   const changed = side.time && side.time !== side.sched;
   const times = changed ? `${esc(side.sched)} → ${esc(side.time)}` : `${esc(side.sched)} <small>(sin cambios)</small>`;
   const delay = typeof side.delay === 'number' && changed ? `<span class="pdelay pband-${bandOf(side.delay)}">${signedDelay(side.delay)}</span>` : '';
-  return `<div class="prow"><span class="pk">${label}</span><span>${times}</span>${delay}<small>${side.final ? doneWord : 'prevista'}</small></div>`;
+  const source = side.source ? ` · según Aena en ${esc(side.source)}` : '';
+  return `<div class="prow"><span class="pk">${label}</span><span>${times}</span>${delay}<small>${side.final ? doneWord : 'prevista'}${source}</small></div>`;
 }
 
 function todayHtml(c, dayLabel = 'Hoy') {
@@ -28,8 +29,7 @@ function todayHtml(c, dayLabel = 'Hoy') {
     <p class="apt-sub">${esc(dayLabel)}</p>
     ${nowRow('Salida', c.dep, 'salió')}${nowRow('Llegada', c.arr, 'llegó')}
     <p class="pbadge pband-${c.band ?? 'ok'}">${esc(c.text)}</p>
-    ${c.mismatch ? `<p class="mismatch">Ojo: la hora de salida (la publica Aena en ${esc(c.mismatch.dep)}) y la de llegada (la publica Aena en ${esc(c.mismatch.arr)})
-      no cuadran entre sí. Una de las dos probablemente no está actualizada todavía.</p>` : ''}
+    ${c.arr?.beforeTakeoff && c.arr.time ? '<p class="mismatch">El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.</p>' : ''}
     <p class="note-small">Horas publicadas por Aena. «Prevista» es una estimación y puede cambiar.</p>`;
 }
 

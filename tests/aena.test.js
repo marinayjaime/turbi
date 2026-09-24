@@ -121,3 +121,18 @@ describe('fecha de actualización en cada vuelo', () => {
     expect(files['IB/1668.json'].updated).toBe('2026-09-24T10:00:00.000Z');
   });
 });
+
+import { auditLegs } from '../scripts/aena.mjs';
+
+describe('auditoría: lo publicado coincide con Aena', () => {
+  it('sin discrepancias cuando las horas salen de las filas correctas', () => {
+    const entries = [dep({ horaEstimada: '18:02:00' }), arr({ horaEstimada: '19:50:00' })];
+    expect(auditLegs(entries, buildLegs(entries))).toEqual({ checked: 2, mismatches: [] });
+  });
+  it('detecta una hora que no coincide con su fila de Aena', () => {
+    const entries = [dep(), arr({ horaEstimada: '19:50:00' })];
+    const legs = buildLegs(entries); legs[0].ea = '2026-09-24T20:07';
+    const r = auditLegs(entries, legs);
+    expect(r.mismatches).toEqual([{ flight: 'IB1668', side: 'llegada', airport: 'MAD', aena: '2026-09-24T19:50', turbi: '2026-09-24T20:07' }]);
+  });
+});

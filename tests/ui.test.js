@@ -113,3 +113,12 @@ describe('puerta de embarque en la ficha', () => {
     expect(flightCardHtml(card(dep({ gate: '<b>' })))).not.toContain('<b>');
   });
 });
+
+describe('datos de Aena antiguos', () => {
+  it('aviso visible si tienen más de 40 min', () => {
+    const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90,
+      dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D86' }, arr: null, aircraft: null };
+    expect(flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true })).toContain('Los datos de Aena son de hace 2 h: pueden haber cambiado desde entonces.');
+    expect(flightCardHtml({ ...c, updatedAgo: 'hace 10 min', stale: false })).not.toContain('pueden haber cambiado');
+  });
+});
