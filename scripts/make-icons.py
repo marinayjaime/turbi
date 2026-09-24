@@ -1,29 +1,22 @@
-# Genera los iconos de Turbi: fondo blanco y tres ondas azules.
+# Genera los iconos de Turbi a partir de img/plane.png (avión sobre fondo blanco).
 # Uso: python3 scripts/make-icons.py
-import math
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image
 
-BLUE = (0, 122, 255)
-OUT = Path(__file__).resolve().parent.parent / "icons"
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "icons"
 OUT.mkdir(exist_ok=True)
+SRC = Image.open(ROOT / "img" / "plane.png").convert("RGBA")
+MARGIN = 0.14  # iOS recorta las esquinas: el avión no debe tocarlas
 
 def icon(size):
-    scale = 4  # supermuestreo para bordes suaves
-    s = size * scale
-    img = Image.new("RGB", (s, s), "white")
-    d = ImageDraw.Draw(img)
-    width = int(s * 0.055)
-    for row, amp in zip((0.36, 0.5, 0.64), (0.035, 0.06, 0.035)):
-        # Trazo como círculos solapados: evita los dientes de d.line con segmentos cortos.
-        r = width / 2
-        steps = 1200
-        for i in range(steps + 1):
-            x = s * (0.2 + 0.6 * i / steps)
-            y = s * row + s * amp * math.sin(i / steps * 4 * math.pi)
-            d.ellipse((x - r, y - r, x + r, y + r), fill=BLUE)
-    return img.resize((size, size), Image.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+    inner = round(size * (1 - 2 * MARGIN))
+    plane = SRC.resize((inner, inner), Image.LANCZOS)
+    off = (size - inner) // 2
+    canvas.alpha_composite(plane, (off, off))
+    return canvas.convert("RGB")
 
-for size in (180, 192, 512):
+for size in (32, 180, 192, 512):
     icon(size).save(OUT / f"icon-{size}.png")
     print(f"icons/icon-{size}.png")

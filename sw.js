@@ -1,11 +1,11 @@
 // Network-first para los archivos propios (así las actualizaciones llegan al momento),
 // con la caché como respaldo sin conexión. Las APIs externas no pasan por aquí.
-const CACHE = 'turbi-v3';
+const CACHE = 'turbi-v4';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.json',
   'js/app.js', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
   'js/flight.js', 'js/airports.js', 'js/places.js', 'js/history.js', 'js/schedule.js',
-  'data/airports.json', 'img/sky.jpg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
+  'data/airports.json', 'img/sky.jpg', 'icons/icon-32.png', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
 self.addEventListener('install', e => {
