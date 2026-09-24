@@ -16,8 +16,9 @@ function byThreshold(x, thresholds) {
   return thresholds.reduce((lvl, th, i) => (x >= th ? i + 1 : lvl), 0);
 }
 
-// Dirección meteorológica: de dónde viene el viento.
+// Dirección meteorológica: de dónde viene el viento. Dato ausente → NaN.
 function windUV(speed, dirDeg) {
+  if (speed === null || dirDeg === null) return { u: NaN, v: NaN };
   const r = dirDeg * Math.PI / 180;
   return { u: -speed * Math.sin(r), v: -speed * Math.cos(r) };
 }
@@ -26,6 +27,7 @@ function windUV(speed, dirDeg) {
 function verticalShear(c) {
   const a = windUV(c.wind_speed_300hPa, c.wind_direction_300hPa);
   const b = windUV(c.wind_speed_250hPa, c.wind_direction_250hPa);
+  if (c.geopotential_height_250hPa === null || c.geopotential_height_300hPa === null) return NaN;
   const dz = c.geopotential_height_250hPa - c.geopotential_height_300hPa;
   if (!(dz > 0)) return NaN;
   return Math.hypot(b.u - a.u, b.v - a.v) / dz;

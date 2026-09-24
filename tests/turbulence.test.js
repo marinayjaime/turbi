@@ -66,6 +66,21 @@ describe('scorePoint', () => {
     expect(scorePoint('climb', { center: sample({ elevation: 2000, wind_speed_700hPa: 25 }) })).toEqual({ level: 2, cause: 'mountain' });
     expect(scorePoint('climb', { center: sample({ elevation: 800, wind_speed_700hPa: 30 }) }).level).toBe(0);
   });
+  it('un solo dato null en el centro no inventa cizalladura', () => {
+    const w = calm(); w.center.wind_speed_250hPa = 40; w.center.wind_speed_300hPa = null;
+    expect(scorePoint('cruise', w)).toEqual({ level: 0, cause: null });
+    const h = calm(); h.center.wind_speed_250hPa = 40; h.center.geopotential_height_300hPa = null;
+    expect(scorePoint('cruise', h)).toEqual({ level: 0, cause: null });
+    const d = calm(); d.center.wind_speed_250hPa = 40; d.center.wind_direction_300hPa = null;
+    expect(scorePoint('cruise', d)).toEqual({ level: 0, cause: null });
+  });
+  it('un solo vecino null no inventa aire claro', () => {
+    const w = jetField();
+    for (const k of ['n', 's', 'e', 'w']) w[k].wind_speed_250hPa = 40;
+    w.e.wind_speed_250hPa = null;
+    expect(ellrodTI1(w)).toBeNaN();
+    expect(scorePoint('cruise', w).cause).not.toBe('ellrod');
+  });
   it('datos null no rompen: el indicador vale 0', () => {
     const w = calm();
     for (const k of Object.keys(w.center)) w.center[k] = null;
