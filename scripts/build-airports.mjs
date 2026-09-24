@@ -33,18 +33,31 @@ export function toEntry(row, header) {
   return [iata, [get('name'), get('municipality'), round4(get('latitude_deg')), round4(get('longitude_deg'))]];
 }
 
+// IATA → OACI (para METAR/TAF). Mismo filtro que toEntry.
+export function toIcao(row, header) {
+  const entry = toEntry(row, header);
+  if (!entry) return null;
+  const get = k => row[header.indexOf(k)];
+  const icao = [get('icao_code'), get('gps_code')].find(c => /^[A-Z]{4}$/.test(c ?? ''));
+  return icao ? [entry[0], icao] : null;
+}
+
 async function main() {
   const csv = await (await fetch(SRC)).text();
   const [headLine, ...lines] = csv.split('\n').filter(Boolean);
   const header = parseCSVLine(headLine);
   const db = {};
+  const icao = {};
   for (const line of lines) {
-    const entry = toEntry(parseCSVLine(line), header);
+    const row = parseCSVLine(line);
+    const entry = toEntry(row, header);
     if (entry) db[entry[0]] = entry[1];
+    const code = toIcao(row, header);
+    if (code) icao[code[0]] = code[1];
   }
-  const out = new URL('../data/airports.json', import.meta.url);
-  await writeFile(out, JSON.stringify(db));
-  console.log(`${Object.keys(db).length} aeropuertos → data/airports.json`);
+  await writeFile(new URL('../data/airports.json', import.meta.url), JSON.stringify(db));
+  await writeFile(new URL('../data/icao.json', import.meta.url), JSON.stringify(icao));
+  console.log(`${Object.keys(db).length} aeropuertos → data/airports.json, ${Object.keys(icao).length} códigos OACI → data/icao.json`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

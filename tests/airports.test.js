@@ -53,3 +53,15 @@ describe('loadAirports', () => {
     expect(await loadAirports(vi.fn(async () => ({ ok: true, json: async () => ({ PMI: ['P', 'Palma', 1, 2] }) })))).toHaveProperty('PMI');
   });
 });
+
+import { toIcao } from '../scripts/build-airports.mjs';
+
+describe('toIcao', () => {
+  const header = ['id', 'ident', 'type', 'name', 'latitude_deg', 'longitude_deg', 'elevation_ft', 'continent', 'iso_country', 'iso_region', 'municipality', 'scheduled_service', 'icao_code', 'iata_code', 'gps_code'];
+  it('IATA → OACI (icao_code, o gps_code si falta)', () => {
+    expect(toIcao(['3', 'LEPA', 'large_airport', 'P', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', 'LEPA', 'PMI', 'LEPA'], header)).toEqual(['PMI', 'LEPA']);
+    expect(toIcao(['4', 'X', 'medium_airport', 'M', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', '', 'ABC', 'LEXX'], header)).toEqual(['ABC', 'LEXX']);
+    expect(toIcao(['5', 'X', 'medium_airport', 'M', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', '', 'ABD', ''], header)).toBeNull();
+    expect(toIcao(['6', 'X', 'heliport', 'H', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', 'LEZZ', 'ABE', ''], header)).toBeNull();
+  });
+});
