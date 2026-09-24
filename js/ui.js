@@ -63,7 +63,7 @@ function photoHtml(c) {
   return `
       <figure class="plane-photo">
         <img src="${esc(p.thumb)}" alt="${esc(c.aircraft ?? '')}" onerror="this.closest('figure').remove()">
-        <figcaption>${[c.aircraft && esc(c.aircraft), p.artist && `Foto: <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.artist)}</a>, ${esc(p.license)}`].filter(Boolean).join(' · ')}</figcaption>
+        ${p.artist ? `<figcaption>Foto: <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.artist)}</a>, ${esc(p.license)}</figcaption>` : ''}
       </figure>`;
 }
 
@@ -89,6 +89,7 @@ ${photoHtml(c)}
           <img class="logo" src="img/logos/${esc(c.al)}.png" alt="${esc(c.airline ?? '')}"
             onerror="if (!this.dataset.retry) { this.dataset.retry = 1; this.src = 'https://pics.avs.io/200/80/${esc(c.al)}.png'; } else this.remove();">
         </div>
+        ${c.aircraft ? `<p class="aircraft">${esc(c.aircraft)}</p>` : ''}
         <p>${c.number && c.airline ? `${esc(c.airline)} · ` : ''}${esc(c.route)}${c.operator ? ` · Operado por ${esc(c.operator)}` : ''}</p>
       </div>
       ${c.stale

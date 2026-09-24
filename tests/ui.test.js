@@ -188,18 +188,23 @@ describe('cabecera: foto del modelo y logo junto al número', () => {
     const html = flightCardHtml({ ...c, photo });
     expect(html.indexOf('class="plane-photo"')).toBeLessThan(html.indexOf('class="flight-head"'));
     expect(html).toContain('src="https://upload.wikimedia.org/x/1000px-EI.jpg"');
-    expect(html).toContain('Airbus A320 · Foto: <a href="https://commons.wikimedia.org/wiki/File:EI.jpg" target="_blank" rel="noopener">Pedro Aragão</a>, CC BY-SA 3.0');
+    expect(html).toContain('<figcaption>Foto: <a href="https://commons.wikimedia.org/wiki/File:EI.jpg" target="_blank" rel="noopener">Pedro Aragão</a>, CC BY-SA 3.0</figcaption>');
     expect(html).not.toContain('foto de ejemplo');
   });
   it('foto propia (subida a img/fotos): sin autor ni licencia, solo el modelo', () => {
     const html = flightCardHtml({ ...c, photo: { thumb: 'img/fotos/FR%20Boeing%20737-800.jpg' } });
     expect(html).toContain('src="img/fotos/FR%20Boeing%20737-800.jpg"');
-    expect(html).toContain('<figcaption>Airbus A320</figcaption>');
+    expect(html).not.toContain('<figcaption>');
   });
   it('número de vuelo a la izquierda y logo a la derecha; aerolínea y ruta debajo', () => {
     const html = flightCardHtml(c);
     expect(html).toMatch(/<div class="flight-id">\s*<h2>EI 737<\/h2>\s*<img class="logo"[^>]*>\s*<\/div>/);
     expect(html).toContain('<p>Aer Lingus · Palma a Dublín</p>');
+  });
+  it('tipo de avión justo debajo del número de vuelo', () => {
+    const html = flightCardHtml(c);
+    expect(html).toMatch(/<\/div>\s*<p class="aircraft">Airbus A320<\/p>\s*<p>Aer Lingus/);
+    expect(flightCardHtml({ ...c, aircraft: null })).not.toContain('class="aircraft"');
   });
   it('operada por otra aerolínea: se dice', () => {
     expect(flightCardHtml({ ...c, operator: 'Air Nostrum' })).toContain('<p>Aer Lingus · Palma a Dublín · Operado por Air Nostrum</p>');
