@@ -3,10 +3,10 @@ import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, fetchTimezone } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
-import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
+import { fetchSchedule, pickLeg, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc, dateLabel, flightCardHtml, skippedText } from './ui.js';
+import { renderResult, esc, flightCardHtml, missingDateText } from './ui.js';
 import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
@@ -17,7 +17,8 @@ import { renderMap } from './map.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
-import { aircraftName, aircraftPhoto } from './plain.js';
+import { aircraftName } from './plain.js';
+import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, withRadar, departedText, endedNote } from './radar.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
@@ -84,13 +85,17 @@ async function airports() {
 }
 
 async function scheduleQuery(schedule, date) {
-  const leg = pickLeg(schedule.legs, date) ?? schedule.legs.find(l => l.d >= date);
-  if (!leg) throw new Error('No tengo horarios de ese vuelo a partir de esa fecha.');
+  // Solo el vuelo de la fecha pedida: si ese día no está, se dice (nunca se enseña otro día).
+  const leg = pickLeg(schedule.legs, date);
+  if (!leg) {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date());
+    throw new Error(missingDateText(`${schedule.al}${schedule.n}`, date, [...new Set(schedule.legs.map(l => l.d))].sort(), today));
+  }
   const db = await airports();
   const origin = findAirport(db, leg.o);
   const destination = findAirport(db, leg.a);
   if (!origin || !destination) throw new Error(`No conozco el aeropuerto «${!origin ? leg.o : leg.a}».`);
-  return { kind: 'schedule', number: `${schedule.al}${schedule.n}`, schedule, leg, origin, destination, date: leg.d, requestedDate: date };
+  return { kind: 'schedule', number: `${schedule.al}${schedule.n}`, schedule, leg, origin, destination, date: leg.d };
 }
 
 async function resolveFlight() {
@@ -142,15 +147,14 @@ function flightTimes(q, oTz, dTz) {
   return { departureMs, durationMin: dur > 0 && dur < 20 * 60 ? dur : null };
 }
 
-function flightCard(q, durationMin) {
+function flightCard(q, durationMin, photos = null) {
   const { leg, schedule, origin, destination } = q;
   const dep = legDeparture(leg), arr = legArrival(leg);
   return {
     al: schedule.al,
     title: `${schedule.name ?? schedule.al} ${schedule.al} ${schedule.n}`,
-    number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: aircraftPhoto(leg.ac),
+    number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg), operator: operatorName(photos, leg),
     route: `${origin.city} a ${destination.city}`,
-    tabs: tabDates(schedule.legs, leg.d).map(date => ({ date, active: date === leg.d })),
     status: departedText(leg, destination.city) ? { text: departedText(leg, destination.city), tone: 'info' } : flightStatus(leg),
     o: leg.o, a: leg.a, duration: durationMin,
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
@@ -159,7 +163,6 @@ function flightCard(q, durationMin) {
     gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
     updatedAgo: schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
     stale: schedule.updated ? Date.now() - Date.parse(schedule.updated) > 40 * 60000 : false,
-    skipped: skippedText(q.requestedDate, leg.d, new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date())),
   };
 }
 
@@ -169,7 +172,6 @@ function punctualityState(q) {
   return {
     current: currentPunctuality(leg), history: undefined, flight: q.number, airline: schedule.name ?? schedule.al,
     route: [leg.o, leg.a], dow: dowOf(leg.d), slot: leg.sd ? slotOf(leg.sd) : null, since: PUNCTUALITY_SINCE,
-    dayLabel: leg.d === new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date()) ? 'Hoy' : dateLabel(leg.d),
   };
 }
 
@@ -198,7 +200,7 @@ async function run(q) {
     if (stale()) return;
     const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
     const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
-    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin) : null;
+    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos()) : null;
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
@@ -338,18 +340,6 @@ els.result.addEventListener('click', e => {
   btn.classList.add('selected');
   detail.innerHTML = segmentDetailHtml(currentView.segments[Number(btn.dataset.seg)], currentView.originIata);
   detail.hidden = false;
-});
-
-// Pestañas de fechas de la ficha del vuelo.
-els.result.addEventListener('click', async e => {
-  const tab = e.target.closest('button[data-date]');
-  if (!tab || lastQuery?.kind !== 'schedule') return;
-  els.date.value = tab.dataset.date;
-  try {
-    run(await scheduleQuery(lastQuery.schedule, tab.dataset.date));
-  } catch (err) {
-    showError(err.message);
-  }
 });
 
 els.toggleManual.addEventListener('click', () => setManual(els.manual.hidden));

@@ -98,21 +98,20 @@ export function segmentDetailHtml(seg, originIata) {
 
 export function altitudeHtml(rows) {
   if (!rows?.length) return '';
-  const share = r => (r.worst === null ? 'sin datos' : r.worst === 0 ? 'sin turbulencia prevista'
-    : `en el ${Math.max(10, Math.round((r.share * 100) / 10) * 10)} % del trayecto`);
+  const share = r => (r.worst === null ? '—' : r.worst === 0 ? '0 %' : `${Math.max(10, Math.round((r.share * 100) / 10) * 10)} %`);
   return `
     <h3 class="section">Condiciones por altitud</h3>
-    <ul class="alt-table">${rows.map(r => `
+    <ul class="alt-table">
+      <li class="head"><span>Altura</span><span></span><span>Turbulencia</span><span class="share">% del trayecto</span></li>${rows.map(r => `
       <li${r.calmest ? ' class="calm"' : ''}>
-        <span class="fl">${esc(altitudeText(r.flightLevel).split(' (')[0])}<small>${esc(altitudeText(r.flightLevel).slice(altitudeText(r.flightLevel).indexOf(' (')))}</small></span>
+        <span class="fl">${esc(altitudeText(r.flightLevel).split(' (')[0])}</span>
         <span class="dot lvl${r.worst ?? 0}"></span>
         <span class="lvl">${r.worst === null ? '—' : LEVELS[r.worst]}</span>
         <span class="share">${share(r)}</span>
-        ${r.calmest ? '<span class="tag">Más tranquila</span>' : ''}${r.isCruise ? '<span class="tag muted">altura prevista de tu vuelo</span>' : ''}
+        ${r.calmest || r.isCruise ? `<span class="tags">${r.calmest ? '<span class="tag">Más tranquila</span>' : ''}${r.isCruise ? '<span class="tag muted">altura prevista de tu vuelo</span>' : ''}</span>` : ''}
       </li>`).join('')}
     </ul>
-    <p class="note-small">Cómo se prevé el aire a distintas alturas por las que vuelan los aviones comerciales, en la parte central del viaje
-    (los pilotos anuncian la altura en pies).
+    <p class="note-small">Cómo se prevé el aire a distintas alturas por las que vuelan los aviones comerciales, en la parte central del viaje.
     La altitud real del vuelo depende del plan de vuelo, tráfico, control aéreo, peso y condiciones operativas.</p>`;
 }
 

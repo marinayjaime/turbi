@@ -34,9 +34,9 @@ export function recordSnapshot(key, snap, s = store()) {
 export function agoText(ms) {
   const min = Math.floor(ms / 60000);
   if (min < 1) return 'hace un momento';
-  if (min < 60) return `hace ${min} min`;
+  if (min < 60) return min === 1 ? 'hace 1 minuto' : `hace ${min} minutos`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `hace ${h} h`;
+  if (h < 24) return h === 1 ? 'hace 1 hora' : `hace ${h} horas`;
   const d = Math.floor(h / 24);
   return d === 1 ? 'hace 1 día' : `hace ${d} días`;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { esc, timeTicks, skippedText } from '../js/ui.js';
+import { esc, timeTicks, missingDateText } from '../js/ui.js';
 
 describe('ui helpers', () => {
   it('esc escapa HTML', () => {
@@ -98,16 +98,18 @@ describe('puerta de embarque en la ficha', () => {
     expect(h).toContain('Zona H');
     expect(h).toContain('la puerta exacta se anuncia más cerca de la salida');
   });
-  it('sin asignar: lo dice y explica cuándo suele salir', () => {
+  it('sin asignar: lo dice, sin más explicaciones', () => {
     const h = flightCardHtml(card(dep({ gate: null })));
     expect(h).toContain('Aún sin asignar');
-    expect(h).toContain('1–2 h antes de la salida');
+    expect(h).not.toContain('1–2 h antes de la salida');
   });
   it('cambio de puerta destacado', () => {
     expect(flightCardHtml(card(dep(), { gateChanged: true }))).toContain('Cambio de puerta');
   });
-  it('indica cuándo se actualizó el dato de Aena', () => {
-    expect(flightCardHtml(card(dep(), { updatedAgo: 'hace 25 min' }))).toContain('Datos de Aena actualizados hace 25 min');
+  it('pie: solo cuándo se actualizaron los datos', () => {
+    const h = flightCardHtml(card(dep(), { updatedAgo: 'hace 25 minutos', aircraft: 'Airbus A321' }));
+    expect(h).toContain('<p class="foot">Datos actualizados hace 25 minutos</p>');
+    expect(h).not.toContain('hora local de cada aeropuerto');
   });
   it('escapa la puerta', () => {
     expect(flightCardHtml(card(dep({ gate: '<b>' })))).not.toContain('<b>');
@@ -153,42 +155,51 @@ describe('radar', () => {
   });
 });
 
-describe('fecha pedida sin vuelo (EI737: Aena ya lo retiró y la app enseñaba el del domingo como si fuera hoy)', () => {
-  it('hoy: lo dice y explica por qué puede faltar', () => {
-    expect(skippedText('2026-09-24', '2026-09-27', '2026-09-24')).toBe(
-      'Aena ya no publica este vuelo para hoy: retira cada vuelo unas 2 h después de su salida (o puede que hoy no opere). Se muestra el siguiente: dom, 27 sept.');
+describe('solo la fecha pedida: si ese día no hay vuelo, se dice (nunca se salta a otro día)', () => {
+  const dates = ['2026-09-26', '2026-09-27', '2026-09-28'];
+  it('fecha futura sin vuelo: lo dice y lista los días que sí tiene', () => {
+    expect(missingDateText('IB1668', '2026-09-25', dates, '2026-09-24')).toBe(
+      'Aena no tiene el IB1668 el vie, 25 sept. Sí lo tiene: sáb, 26 sept · dom, 27 sept · lun, 28 sept.');
   });
-  it('otra fecha: Aena no lo tiene ese día', () => {
-    expect(skippedText('2026-09-25', '2026-09-27', '2026-09-24')).toBe('Aena no tiene este vuelo el vie, 25 sept. Se muestra el siguiente: dom, 27 sept.');
+  it('hoy sin vuelo', () => {
+    expect(missingDateText('IB1668', '2026-09-24', dates, '2026-09-24')).toBe(
+      'Aena no tiene hoy el IB1668 (puede que hoy no opere). Sí lo tiene: sáb, 26 sept · dom, 27 sept · lun, 28 sept.');
   });
-  it('misma fecha: nada', () => {
-    expect(skippedText('2026-09-27', '2026-09-27', '2026-09-24')).toBeNull();
+  it('fecha pasada: Aena no publica el pasado; solo se guardan los vuelos que salieron ayer y hoy', () => {
+    expect(missingDateText('IB1668', '2026-09-20', dates, '2026-09-24')).toBe(
+      'No hay datos del IB1668 del dom, 20 sept: Aena no publica vuelos pasados y Turbi solo guarda los que salieron ayer y hoy.');
   });
-  it('en la ficha, arriba del todo, antes del estado', () => {
-    const c = { al: 'EI', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'DUB', duration: 160,
-      dep: { date: '2026-09-27', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, skipped: 'Aena ya no publica este vuelo para hoy…' };
-    const html = flightCardHtml(c);
-    expect(html.indexOf('class="skipped"')).toBeGreaterThan(-1);
-    expect(html.indexOf('class="skipped"')).toBeLessThan(html.indexOf('class="status'));
+  it('sin ningún otro día', () => {
+    expect(missingDateText('IB1668', '2026-09-25', [], '2026-09-24')).toBe('Aena no tiene el IB1668 el vie, 25 sept.');
+  });
+  it('la ficha no lleva pestañas de otros días', () => {
+    const c = { al: 'IB', title: 'x', route: 'y', tabs: [{ date: '2026-09-25', active: true }, { date: '2026-09-26', active: false }], status: { text: 'Programado', tone: 'ok' },
+      o: 'PMI', a: 'MAD', duration: 90, dep: { date: '2026-09-25', time: '17:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null };
+    expect(flightCardHtml(c)).not.toContain('class="tabs"');
   });
 });
 
 describe('cabecera: foto del modelo y logo junto al número', () => {
   const c = { al: 'EI', number: 'EI 737', airline: 'Aer Lingus', title: 'Aer Lingus EI 737', route: 'Palma a Dublín', tabs: [], status: { text: 'Programado', tone: 'ok' },
     o: 'PMI', a: 'DUB', duration: 160, dep: { date: '2026-09-27', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null,
-    aircraft: 'Airbus A320', photo: 'airbus-a320' };
-  it('foto del modelo arriba del todo, a todo el ancho, con aviso de que es de ejemplo y su autor y licencia', () => {
-    const html = flightCardHtml(c);
+    aircraft: 'Airbus A320', photo: null };
+  const photo = { thumb: 'https://upload.wikimedia.org/x/1000px-EI.jpg', artist: 'Pedro Aragão', license: 'CC BY-SA 3.0', page: 'https://commons.wikimedia.org/wiki/File:EI.jpg' };
+  it('foto real (de esa aerolínea y ese modelo) arriba del todo, con modelo, autor y licencia', () => {
+    const html = flightCardHtml({ ...c, photo });
     expect(html.indexOf('class="plane-photo"')).toBeLessThan(html.indexOf('class="flight-head"'));
-    expect(html).toContain('src="img/aircraft/airbus-a320.jpg"');
-    expect(html).toContain('Airbus A320 · foto de ejemplo del modelo, no del avión de tu vuelo · Pedro Aragão, CC BY-SA 3.0');
+    expect(html).toContain('src="https://upload.wikimedia.org/x/1000px-EI.jpg"');
+    expect(html).toContain('Airbus A320 · Foto: <a href="https://commons.wikimedia.org/wiki/File:EI.jpg" target="_blank" rel="noopener">Pedro Aragão</a>, CC BY-SA 3.0');
+    expect(html).not.toContain('foto de ejemplo');
   });
-  it('logo en la misma línea que el número de vuelo; aerolínea y ruta debajo', () => {
+  it('número de vuelo a la izquierda y logo a la derecha; aerolínea y ruta debajo', () => {
     const html = flightCardHtml(c);
-    expect(html).toMatch(/<div class="flight-id">\s*<img class="logo"[^>]*>\s*<h2>EI 737<\/h2>\s*<\/div>/);
+    expect(html).toMatch(/<div class="flight-id">\s*<h2>EI 737<\/h2>\s*<img class="logo"[^>]*>\s*<\/div>/);
     expect(html).toContain('<p>Aer Lingus · Palma a Dublín</p>');
   });
-  it('modelo desconocido: sin foto', () => {
+  it('operada por otra aerolínea: se dice', () => {
+    expect(flightCardHtml({ ...c, operator: 'Air Nostrum' })).toContain('<p>Aer Lingus · Palma a Dublín · Operado por Air Nostrum</p>');
+  });
+  it('sin foto real de esa aerolínea y modelo: sin foto', () => {
     expect(flightCardHtml({ ...c, photo: null })).not.toContain('plane-photo');
   });
 });

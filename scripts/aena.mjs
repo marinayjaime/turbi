@@ -34,6 +34,8 @@ export function normalize({ airport, type, row }) {
     gate: clean(row.puertaPrimera),
     st: clean(row.estado),
     ac: clean(row.tipoAeronave),
+    // Primer código de codigosCompania distinto de la propia aerolínea = quien opera (IB1243 → YW, Air Nostrum).
+    opx: (() => { const c = clean(String(row.codigosCompania ?? '').split(',')[0]); return c && c !== al ? c : null; })(),
   };
 }
 
@@ -60,7 +62,7 @@ export function buildLegs(entries) {
     al: r.al, icao: r.icao, name: r.name, n: r.n,
     d: r.date, o: r.here, a: r.other, sd: r.sched, ed: r.est,
     sa: null, ea: null, td: r.term, ta: null, g: r.gate, st: r.st, std: r.st, sta: null, ac: r.ac,
-    ...(r.alt ? { edAlt: r.alt } : {}),
+    ...(r.alt ? { edAlt: r.alt } : {}), opx: r.opx,
   }));
 
   const key = (al, n, o, a) => `${al}|${n}|${o}|${a}`;
@@ -88,13 +90,33 @@ export function buildLegs(entries) {
       // Estado mostrado: el de la llegada si la salida no dice nada o ya está «Finalizado» (BOR) y la llegada informa.
       if (r.st && (QUIET_STATES.includes(best.st) || (best.st === 'BOR' && !QUIET_STATES.includes(r.st)))) best.st = r.st;
       best.ac = best.ac ?? r.ac;
+      best.opx = best.opx ?? r.opx;
     } else {
       legs.push({
         al: r.al, icao: r.icao, name: r.name, n: r.n,
         d: r.date, o: r.other, a: r.here, sd: null, ed: null,
         sa: r.sched, ea: r.est, td: null, ta: r.term, g: null, st: r.st, std: null, sta: r.st, ac: r.ac,
-        ...(r.alt ? { eaAlt: r.alt } : {}),
+        ...(r.alt ? { eaAlt: r.alt } : {}), opx: r.opx,
       });
+    }
+  }
+  return assignOperators(legs);
+}
+
+// op = aerolínea que opera el vuelo físico, solo si es segura: la indica Aena (codigosCompania) o no hay códigos
+// compartidos. Si varios números comparten vuelo y ninguno lo indica, no se pone (no se adivina).
+function assignOperators(legs) {
+  const groups = new Map();
+  for (const l of legs) {
+    const k = `${l.d}|${l.o}|${l.a}|${l.sd ?? `L${l.sa}`}`;
+    (groups.get(k) ?? groups.set(k, []).get(k)).push(l);
+  }
+  for (const g of groups.values()) {
+    const explicit = [...new Set(g.map(l => l.opx).filter(Boolean))];
+    const op = explicit.length === 1 ? explicit[0] : explicit.length ? null : g.length === 1 ? g[0].al : null;
+    for (const l of g) {
+      delete l.opx;
+      if (op) l.op = op;
     }
   }
   return legs;

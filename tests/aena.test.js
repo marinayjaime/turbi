@@ -16,7 +16,7 @@ describe('buildLegs', () => {
     expect(legs).toEqual([{
       al: 'IB', icao: 'IBE', name: 'Iberia', n: '1668',
       d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T17:55',
-      sa: '19:25', ea: '2026-09-24T19:25', td: 'N', ta: '4', g: 'D', st: 'SCH', std: 'SCH', sta: null, ac: 'A21N',
+      sa: '19:25', ea: '2026-09-24T19:25', td: 'N', ta: '4', g: 'D', st: 'SCH', std: 'SCH', sta: null, ac: 'A21N', op: 'IB', // sin códigos compartidos: la opera Iberia
     }]);
   });
   it('llegada al día siguiente se une con la salida de la noche anterior', () => {
@@ -175,3 +175,28 @@ describe('vuelos que Aena retira tras despegar', () => {
   });
 });
 
+
+describe('aerolínea que opera el vuelo (para la foto real)', () => {
+  it('Aena lo indica en codigosCompania: IB1243 lo opera Air Nostrum (YW)', () => {
+    const legs = buildLegs([dep({ iataCompania: 'IB', numVuelo: '1243', codigosCompania: 'YW,ANE,IB,IBE,ANE,IBE', tipoAeronave: 'CRJX' })]);
+    expect(legs[0].op).toBe('YW');
+  });
+  it('vuelo sin códigos compartidos: la opera la propia aerolínea', () => {
+    const legs = buildLegs([dep({ iataCompania: 'FR', numVuelo: '1234', codigosCompania: 'FR,RYR,FR,RYR,RYR,RYR' })]);
+    expect(legs[0].op).toBe('FR');
+  });
+  it('códigos compartidos sin que Aena diga quién opera: no se sabe (sin foto)', () => {
+    const legs = buildLegs([
+      dep({ iataCompania: 'IB', numVuelo: '1629', codigosCompania: 'IB,IBE,IB,IBE,IBE,IBE' }),
+      dep({ iataCompania: 'QR', numVuelo: '8031', codigosCompania: 'QR,QTR,,QR,QR,QTR' }),
+    ]);
+    expect(legs.map(l => l.op)).toEqual([undefined, undefined]);
+  });
+  it('códigos compartidos y uno de ellos dice quién opera: todos lo heredan', () => {
+    const legs = buildLegs([
+      dep({ iataCompania: 'IB', numVuelo: '1243', codigosCompania: 'YW,ANE,IB,IBE,ANE,IBE' }),
+      dep({ iataCompania: 'VY', numVuelo: '5554', codigosCompania: 'VY,VLG,VY,VLG,VLG,VLG' }),
+    ]);
+    expect(legs.map(l => l.op)).toEqual(['YW', 'YW']);
+  });
+});

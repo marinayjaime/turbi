@@ -45,7 +45,7 @@ describe('forecastTrend', () => {
   it('mejora, empeora y sin cambios desde hace X', () => {
     expect(forecastTrend([snap(0, 2), snap(4, 1)], T(4), fmt)).toBe('La previsión ha mejorado desde la consulta de las 07:00.');
     expect(forecastTrend([snap(0, 0), snap(4, 2)], T(4), fmt)).toBe('La previsión ha empeorado desde la consulta de las 07:00.');
-    expect(forecastTrend([snap(0, 1), snap(2, 2), snap(3, 1), snap(6, 1)], T(6), fmt)).toBe('Sin cambios relevantes desde hace 3 h.');
+    expect(forecastTrend([snap(0, 1), snap(2, 2), snap(3, 1), snap(6, 1)], T(6), fmt)).toBe('Sin cambios relevantes desde hace 3 horas.');
   });
   it('una sola consulta → null', () => {
     expect(forecastTrend([snap(0, 1)], T(0), fmt)).toBeNull();
@@ -69,8 +69,10 @@ describe('último pronóstico (offline)', () => {
 describe('agoText', () => {
   it('textos relativos', () => {
     expect(agoText(30 * 1000)).toBe('hace un momento');
-    expect(agoText(18 * 60000)).toBe('hace 18 min');
-    expect(agoText(2 * 3600000 + 10 * 60000)).toBe('hace 2 h');
+    expect(agoText(18 * 60000)).toBe('hace 18 minutos');
+    expect(agoText(60000)).toBe('hace 1 minuto');
+    expect(agoText(2 * 3600000 + 10 * 60000)).toBe('hace 2 horas');
+    expect(agoText(3600000)).toBe('hace 1 hora');
     expect(agoText(3 * 86400000)).toBe('hace 3 días');
     expect(agoText(86400000)).toBe('hace 1 día');
   });

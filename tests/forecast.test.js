@@ -69,7 +69,7 @@ describe('aviationView: frescura y datos que faltan', () => {
   const metar = t => ({ raw: 'METAR LEPA', t, wdir: 230, wspd: 8, visib: '6+', clouds: [], wx: '', temp: 27 });
   it('METAR reciente: con su antigüedad; de más de 3 h: no se muestra como actual', () => {
     const fresh = aviationView({ metar: { items: { LEPA: metar(NOW - 40 * 60000) } }, icao: { PMI: 'LEPA' } }, v, NOW);
-    expect(fresh.origin).toMatchObject({ metarAge: 'hace 40 min', metarStale: false });
+    expect(fresh.origin).toMatchObject({ metarAge: 'hace 40 minutos', metarStale: false });
     const old = aviationView({ metar: { items: { LEPA: metar(NOW - 5 * 3600000) } }, icao: { PMI: 'LEPA' } }, v, NOW);
     expect(old.origin).toMatchObject({ metarText: null, metarStale: true });
   });

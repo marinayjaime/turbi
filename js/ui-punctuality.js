@@ -24,9 +24,8 @@ function nowRow(label, side, doneWord) {
   return `<div class="prow"><span class="pk">${label}</span><span>${times}</span>${delay}<small>${side.final ? doneWord : 'prevista'}${source}</small></div>`;
 }
 
-function todayHtml(c, dayLabel = 'Hoy') {
+function todayHtml(c) {
   return `
-    <p class="apt-sub">${esc(dayLabel)}</p>
     ${nowRow('Salida', c.dep, 'salió')}${nowRow('Llegada', c.arr, 'llegó')}
     <p class="pbadge pband-${c.band ?? 'ok'}">${esc(c.text)}</p>
     ${c.dep?.alt ? `<p class="mismatch">Aena publica también otra hora de salida para este vuelo: ${c.dep.alt.map(esc).join(', ')}.</p>` : ''}
@@ -88,11 +87,11 @@ function historyHtml(p) {
     </details>`;
 }
 
-// p = { current, history (undefined = cargando, null = sin datos), flight, airline, route: [o, a], dow, slot, since, dayLabel }
+// p = { current, history (undefined = cargando, null = sin datos), flight, airline, route: [o, a], dow, slot, since }
 export function punctualityHtml(p) {
   return `
     <h3 class="section">Puntualidad</h3>
-    ${todayHtml(p.current, p.dayLabel)}
+    ${todayHtml(p.current)}
     ${historyHtml(p)}`;
 }
 

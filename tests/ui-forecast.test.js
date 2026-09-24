@@ -60,7 +60,7 @@ describe('cobertura, frescura y precisión', () => {
     expect(h).toContain('El último parte tiene más de 3 h: no se muestra');
     expect(h).toContain('Avisos oficiales no disponibles ahora');
     expect(h).toContain('Informes de pilotos no disponibles ahora');
-    expect(h).toContain('descargado hace 2 h');
+    expect(h).toContain('descargado hace 2 horas');
   });
 });
 
@@ -88,10 +88,16 @@ describe('timeline', () => {
 describe('condiciones por altitud', () => {
   it('filas FL300–FL400, destaca la más tranquila, marca el crucero y lleva el aviso', () => {
     const h = altitudeHtml(view.altitudes);
-    for (const km of ['9,1 km', '9,8 km', '10,4 km', '11 km', '11,6 km', '12,2 km', '30.000 pies']) expect(h).toContain(km);
+    for (const km of ['9,1 km', '9,8 km', '10,4 km', '11 km', '11,6 km', '12,2 km']) expect(h).toContain(km);
+    expect(h).not.toContain('pies');
     expect(h).not.toMatch(/FL\d/);
     expect(h).toContain('Más tranquila');
     expect(h).toContain('altura prevista de tu vuelo');
+    // Columna de la derecha: solo el porcentaje (cabe en una línea y queda alineado); el título lo explica.
+    expect(h).toContain('<span class="share">% del trayecto</span>');
+    expect(h).toContain('<span class="share">30 %</span>');
+    expect(h).toContain('<span class="share">0 %</span>');
+    expect(h).not.toContain('en el ');
     expect(h).toContain('La altitud real del vuelo depende del plan de vuelo, tráfico, control aéreo, peso y condiciones operativas.');
     expect(h).not.toMatch(/deber[ií]a volar/i);
   });
@@ -133,7 +139,7 @@ describe('Aviation Weather', () => {
 
 describe('pronóstico guardado', () => {
   it('franja clara, nunca como actualizado', () => {
-    expect(offlineBanner(NOW - 2 * 3600000, NOW)).toContain('Pronóstico guardado · consultado hace 2 h');
+    expect(offlineBanner(NOW - 2 * 3600000, NOW)).toContain('Pronóstico guardado · consultado hace 2 horas');
   });
 });
 

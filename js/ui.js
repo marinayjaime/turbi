@@ -1,5 +1,4 @@
 import { LEVELS, CAUSES } from './turbulence.js';
-import { PHOTO_CREDITS } from './aircraft-photos.js';
 
 const VERDICTS = {
   tranquilo: { emoji: '🟢', title: 'Tranquilo', text: 'No se espera turbulencia relevante.' },
@@ -26,13 +25,14 @@ export function formatDuration(min) {
 const DATE_FMT = new Intl.DateTimeFormat('es-ES', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 export const dateLabel = iso => DATE_FMT.format(new Date(`${iso}T12:00:00Z`)).replace('.', '');
 
-// La fecha pedida no está en Aena y se enseña otra: se dice siempre (si no, parece el vuelo de ese día).
-export function skippedText(requested, shown, today) {
-  if (!requested || requested === shown) return null;
-  const next = `Se muestra el siguiente: ${dateLabel(shown)}.`;
-  return requested === today
-    ? `Aena ya no publica este vuelo para hoy: retira cada vuelo unas 2 h después de su salida (o puede que hoy no opere). ${next}`
-    : `Aena no tiene este vuelo el ${dateLabel(requested)}. ${next}`;
+// La fecha pedida no tiene ese vuelo: se dice (nunca se enseña otro día en su lugar) y se listan los días que sí tiene.
+export function missingDateText(flight, requested, dates, today) {
+  if (requested < today) {
+    return `No hay datos del ${flight} del ${dateLabel(requested)}: Aena no publica vuelos pasados y Turbi solo guarda los que salieron ayer y hoy.`;
+  }
+  const upcoming = dates.filter(d => d >= today && d !== requested).slice(0, 5);
+  const head = requested === today ? `Aena no tiene hoy el ${flight} (puede que hoy no opere).` : `Aena no tiene el ${flight} el ${dateLabel(requested)}.`;
+  return upcoming.length ? `${head} Sí lo tiene: ${upcoming.map(dateLabel).join(' · ')}.` : head;
 }
 
 // Miles con punto (4.800), también con 4 cifras (Intl en español no lo pone).
@@ -56,18 +56,18 @@ function radarHtml(r) {
   return '<p class="radar muted">El radar no responde ahora mismo.</p>';
 }
 
-// Foto de ejemplo del modelo (img/aircraft), con autor y licencia como pide Wikimedia.
+// Foto real de la aerolínea que opera el vuelo con ese modelo (Wikimedia Commons), con autor y licencia.
 function photoHtml(c) {
-  if (!c.photo) return '';
-  const credit = PHOTO_CREDITS[c.photo];
+  const p = c.photo;
+  if (!p?.thumb) return '';
   return `
       <figure class="plane-photo">
-        <img src="img/aircraft/${esc(c.photo)}.jpg" alt="${esc(c.aircraft ?? '')}" onerror="this.closest('figure').remove()">
-        <figcaption>${esc(c.aircraft)} · foto de ejemplo del modelo, no del avión de tu vuelo${credit ? ` · ${esc(credit.artist)}, ${esc(credit.license)}` : ''}</figcaption>
+        <img src="${esc(p.thumb)}" alt="${esc(c.aircraft ?? '')}" onerror="this.closest('figure').remove()">
+        <figcaption>${c.aircraft ? `${esc(c.aircraft)} · ` : ''}Foto: <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.artist)}</a>, ${esc(p.license)}</figcaption>
       </figure>`;
 }
 
-// card = { al, number, airline, title, route, tabs: [{ date, active }], status: { text, tone }, o, a, duration,
+// card = { al, number, airline, operator, title, route, status: { text, tone }, o, a, duration,
 //          dep: { date, time, est, late, terminal, gate }, arr: { date, time, est, late, terminal } | null, aircraft, photo }
 export function flightCardHtml(c) {
   const meta = (t, g) => [t && `Terminal ${esc(t)}`, g && `Puerta ${esc(g)}`].filter(Boolean).join(' · ') || '&nbsp;';
@@ -85,15 +85,12 @@ export function flightCardHtml(c) {
 ${photoHtml(c)}
       <div class="flight-head">
         <div class="flight-id">
+          <h2>${esc(c.number ?? c.title)}</h2>
           <img class="logo" src="img/logos/${esc(c.al)}.png" alt="${esc(c.airline ?? '')}"
             onerror="if (!this.dataset.retry) { this.dataset.retry = 1; this.src = 'https://pics.avs.io/200/80/${esc(c.al)}.png'; } else this.remove();">
-          <h2>${esc(c.number ?? c.title)}</h2>
         </div>
-        <p>${c.number && c.airline ? `${esc(c.airline)} · ` : ''}${esc(c.route)}</p>
+        <p>${c.number && c.airline ? `${esc(c.airline)} · ` : ''}${esc(c.route)}${c.operator ? ` · Operado por ${esc(c.operator)}` : ''}</p>
       </div>
-      ${c.tabs.length > 1 ? `<nav class="tabs">${c.tabs.map(t =>
-        `<button type="button" data-date="${esc(t.date)}"${t.active ? ' class="active"' : ''}>${esc(dateLabel(t.date))}</button>`).join('')}</nav>` : ''}
-      ${c.skipped ? `<p class="skipped">${esc(c.skipped)}</p>` : ''}
       ${c.stale
         // Un estado viejo («Embarcando» de hace 2 h) no se presenta como actual: se dice de cuándo es.
         ? `<span class="status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>
@@ -112,10 +109,9 @@ ${photoHtml(c)}
         <span class="gate-k">Puerta de embarque</span>
         <span class="gate-v">${!c.dep.gate ? 'Aún sin asignar' : /^[A-Z]$/i.test(c.dep.gate) ? `Zona ${esc(c.dep.gate)}` : esc(c.dep.gate)}</span>
         ${c.gateChanged ? '<span class="tag warn">Cambio de puerta</span>' : ''}
-        ${!c.dep.gate ? '<small>Aena suele publicarla 1–2 h antes de la salida.</small>'
-          : /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
+        ${c.dep.gate && /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
       </div>` : ''}
-      <p class="foot">${c.aircraft ? `Avión ${esc(c.aircraft)} · ` : ''}${c.updatedAgo ? `Datos de Aena actualizados ${esc(c.updatedAgo)} · ` : 'Fuente: Aena · '}hora local de cada aeropuerto</p>
+      ${c.updatedAgo ? `<p class="foot">Datos actualizados ${esc(c.updatedAgo)}</p>` : ''}
     </section>`;
 }
 

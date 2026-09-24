@@ -25,11 +25,11 @@ describe('signedDelay', () => {
 describe('punctualityHtml', () => {
   it('hoy: salida y llegada programada → actual, retraso y estado', () => {
     const h = punctualityHtml(base);
-    for (const t of ['Hoy', 'Salida', '18:25 → 18:37', '+12 min', 'salió', 'Llegada', '19:50 → 19:56', '+6 min', 'prevista', 'Llegada prevista puntual']) expect(h).toContain(t);
+    for (const t of ['Salida', '18:25 → 18:37', '+12 min', 'salió', 'Llegada', '19:50 → 19:56', '+6 min', 'prevista', 'Llegada prevista puntual']) expect(h).toContain(t);
   });
-  it('el encabezado es la fecha del vuelo cuando no es hoy', () => {
+  it('sin fecha debajo del título (ya se sabe qué día se consulta)', () => {
     const h = punctualityHtml({ ...base, dayLabel: 'vie, 3 oct' });
-    expect(h).toContain('vie, 3 oct');
+    expect(h).not.toContain('vie, 3 oct');
     expect(h).not.toContain('>Hoy<');
   });
   it('horas escapadas y desvíos contados junto a cancelaciones', () => {
