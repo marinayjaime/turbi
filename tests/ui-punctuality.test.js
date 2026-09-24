@@ -91,3 +91,10 @@ describe('fetchPunctuality', () => {
     expect(await fetchPunctuality('VY', '1', 'PMI-BCN', vi.fn(async () => { throw new TypeError('x'); }))).toBeNull();
   });
 });
+
+describe('horas duplicadas en Aena', () => {
+  it('lo dice y muestra la otra hora', () => {
+    const c = { ...current, dep: { ...current.dep, alt: ['18:02'] } };
+    expect(punctualityHtml({ ...base, current: c })).toContain('Aena publica también otra hora de salida para este vuelo: 18:02');
+  });
+});

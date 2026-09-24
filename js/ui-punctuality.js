@@ -29,6 +29,8 @@ function todayHtml(c, dayLabel = 'Hoy') {
     <p class="apt-sub">${esc(dayLabel)}</p>
     ${nowRow('Salida', c.dep, 'salió')}${nowRow('Llegada', c.arr, 'llegó')}
     <p class="pbadge pband-${c.band ?? 'ok'}">${esc(c.text)}</p>
+    ${c.dep?.alt ? `<p class="mismatch">Aena publica también otra hora de salida para este vuelo: ${c.dep.alt.map(esc).join(', ')}.</p>` : ''}
+    ${c.arr?.alt ? `<p class="mismatch">Aena publica también otra hora de llegada para este vuelo: ${c.arr.alt.map(esc).join(', ')}.</p>` : ''}
     ${c.arr?.beforeTakeoff && c.arr.time ? '<p class="mismatch">El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.</p>' : ''}
     <p class="note-small">Horas publicadas por Aena. «Prevista» es una estimación y puede cambiar.</p>`;
 }

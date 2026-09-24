@@ -38,10 +38,12 @@ export function currentPunctuality(leg) {
   const depFinal = std === 'BOR' || ARR_FINAL.has(sta) || ARR_PROGRESS.has(sta) || sta === 'BOR';
 
   // Cada hora es la que publica Aena en ese aeropuerto (source); no se recalcula ni se corrige.
-  const dep = leg.sd ? { sched: leg.sd, time: hhmm(leg.ed), delay: delayMinutes(leg.d, leg.sd, leg.ed), final: depFinal, source: leg.o } : null;
+  const alt = list => (list?.length ? { alt: list.map(hhmm) } : {});
+  const dep = leg.sd ? { sched: leg.sd, time: hhmm(leg.ed), delay: delayMinutes(leg.d, leg.sd, leg.ed), final: depFinal, source: leg.o, ...alt(leg.edAlt) } : null;
   const arrDate = leg.sa ? (leg.sd && leg.sa < leg.sd ? nextDay(leg.d) : leg.d) : null;
   const arr = leg.sa ? {
     sched: leg.sa, time: hhmm(leg.ea), delay: delayMinutes(arrDate, leg.sa, leg.ea), final: arrFinal, source: leg.a, beforeTakeoff: !depFinal,
+    ...alt(leg.eaAlt),
   } : null;
 
   const basis = arr ? 'arr' : dep ? 'dep' : null;

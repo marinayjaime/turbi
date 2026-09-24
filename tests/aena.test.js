@@ -127,12 +127,33 @@ import { auditLegs } from '../scripts/aena.mjs';
 describe('auditoría: lo publicado coincide con Aena', () => {
   it('sin discrepancias cuando las horas salen de las filas correctas', () => {
     const entries = [dep({ horaEstimada: '18:02:00' }), arr({ horaEstimada: '19:50:00' })];
-    expect(auditLegs(entries, buildLegs(entries))).toEqual({ checked: 2, mismatches: [] });
+    expect(auditLegs(entries, buildLegs(entries))).toEqual({ checked: 2, mismatches: [], duplicates: 0 });
   });
   it('detecta una hora que no coincide con su fila de Aena', () => {
     const entries = [dep(), arr({ horaEstimada: '19:50:00' })];
     const legs = buildLegs(entries); legs[0].ea = '2026-09-24T20:07';
     const r = auditLegs(entries, legs);
     expect(r.mismatches).toEqual([{ flight: 'IB1668', side: 'llegada', airport: 'MAD', aena: '2026-09-24T19:50', turbi: '2026-09-24T20:07' }]);
+  });
+});
+
+describe('filas duplicadas en Aena (mismo vuelo, fecha y hora programada)', () => {
+  it('una sola ficha; principal = la que trae estado; la otra hora se conserva como alternativa', () => {
+    const legs = buildLegs([dep({ horaEstimada: '17:55:00', estado: '' }), dep({ horaEstimada: '18:02:00', estado: 'SCH' })]);
+    expect(legs).toHaveLength(1);
+    expect(legs[0]).toMatchObject({ ed: '2026-09-24T18:02', edAlt: ['2026-09-24T17:55'] });
+  });
+  it('llegadas duplicadas con horas distintas: igual', () => {
+    const [l] = buildLegs([dep(), arr({ horaEstimada: '19:25:00', estado: '' }), arr({ horaEstimada: '19:40:00', estado: 'FLY' })]);
+    expect(l).toMatchObject({ ea: '2026-09-24T19:40', eaAlt: ['2026-09-24T19:25'], sta: 'FLY' });
+  });
+  it('duplicadas con la misma hora: sin alternativa', () => {
+    const legs = buildLegs([dep(), dep()]);
+    expect(legs).toHaveLength(1);
+    expect(legs[0].edAlt).toBeUndefined();
+  });
+  it('la auditoría acepta cualquiera de las horas publicadas y cuenta los duplicados aparte', () => {
+    const entries = [dep({ horaEstimada: '17:55:00', estado: '' }), dep({ horaEstimada: '18:02:00', estado: 'SCH' })];
+    expect(auditLegs(entries, buildLegs(entries))).toEqual({ checked: 2, mismatches: [], duplicates: 1 });
   });
 });

@@ -134,6 +134,9 @@ Cada ejecución genera `data/punctuality/<AL>/<N>.json`, **uno por número de vu
 - Cada hora indica su fuente ("según Aena en PMI" / "según Aena en MAD"). Salida y llegada las publican aeropuertos distintos, que actualizan por separado.
 - Antes del despegue, la llegada se marca como estimación de Aena que puede cambiar. No se opina sobre si es correcta.
 - Si los datos de Aena tienen más de 40 min, la ficha lo avisa de forma visible.
+- **Filas duplicadas en Aena:** a veces Aena publica el mismo vuelo (número, fecha y hora programada) en dos filas con horas estimadas distintas; lo detectó la auditoría el 24/09/2026 (p. ej. FR1709 VLC 09:50 / 09:55).
+  - Se muestra como principal la fila que trae estado (si no, la primera).
+  - **La otra hora se muestra también**, con el aviso "Aena publica también otra hora…".
 - **Auditoría en cada descarga:** cada hora que se publica se compara con la fila de Aena de la que procede. Las discrepancias se registran en el log del workflow y en `data/flights/_meta.json`. Primera ejecución real: 27.597 horas, 0 discrepancias.
 
 ## 6. Límites y cosas que no se hacen

@@ -52,6 +52,11 @@ describe('currentPunctuality (vuelo de hoy)', () => {
     expect(c.dep).toMatchObject({ time: '18:02', delay: 7, source: 'PMI' });
     expect(c.arr).toMatchObject({ time: '20:07', delay: 42, source: 'MAD', beforeTakeoff: true });
   });
+  it('pasa las horas alternativas publicadas por Aena', () => {
+    const c = currentPunctuality(leg({ edAlt: ['2026-09-24T18:40'], eaAlt: ['2026-09-24T20:10'] }));
+    expect(c.dep.alt).toEqual(['18:40']);
+    expect(c.arr.alt).toEqual(['20:10']);
+  });
   it('en el aire o aterrizado: la llegada ya no es «antes del despegue»', () => {
     expect(currentPunctuality(leg()).arr.beforeTakeoff).toBe(false);
     expect(currentPunctuality(leg({ st: 'IBK', sta: 'IBK', std: 'BOR', ea: '2026-09-24T20:31' })).arr.beforeTakeoff).toBe(false);
