@@ -7,6 +7,14 @@ import { fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatu
 import { loadAirports, findAirport, searchAirports } from './airports.js';
 import { nameSegments } from './places.js';
 import { renderResult, esc } from './ui.js';
+import { buildProfile } from './altitude.js';
+import { forecastView, aviationView } from './forecast.js';
+import { fetchModelRuns } from './models.js';
+import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner } from './ui-forecast.js';
+import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
+import { loadAviation } from './aviation-weather.js';
+import { renderMap } from './map.js';
+import { buildSpeech, canSpeak, speak } from './speech.js';
 
 const $ = id => document.getElementById(id);
 const els = {
@@ -15,12 +23,13 @@ const els = {
   date: $('f-date'), time: $('f-time'), manual: $('manual'), toggleManual: $('toggle-manual'),
   notice: $('notice'), airportsList: $('airports-list'), result: $('result'), back: $('back'),
   changeTime: $('change-time'), refresh: $('refresh'), loading: $('loading'), error: $('error'),
-  errorMsg: $('error-msg'), retry: $('retry'), timeField: $('time-field'),
+  errorMsg: $('error-msg'), retry: $('retry'), timeField: $('time-field'), savedLink: $('saved-link'),
 };
 
 let lastQuery = null;
 let runId = 0; // solo la consulta más reciente puede pintar
 let airportsDb = null;
+let currentView = null; // pronóstico v2 en pantalla (para la timeline interactiva)
 
 function show(view) {
   els.queryView.hidden = view !== 'query';
@@ -35,6 +44,14 @@ function showError(msg, canRetry = false) {
   els.errorMsg.textContent = msg;
   els.retry.hidden = !canRetry;
   els.error.hidden = false;
+  if (canRetry) offerSaved();
+}
+
+// Sin conexión: ofrece abrir el último pronóstico guardado (dejando claro que no está actualizado).
+function offerSaved() {
+  const last = loadLast();
+  els.savedLink.hidden = !last;
+  if (last) els.savedLink.textContent = `Ver el último pronóstico guardado (${last.view.title} · ${agoText(Date.now() - last.savedAt)})`;
 }
 
 function setNotice(message = '') {
@@ -143,37 +160,34 @@ async function run(q) {
     const [oTz, dTz] = await Promise.all([fetchTimezone(q.origin), fetchTimezone(q.destination)]);
     if (stale()) return;
     const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
-    const route = buildRoute(q.origin, q.destination, departureMs, durationMin);
-    const flight = q.kind === 'schedule' ? flightCard(q, route.durationMin) : null;
+    const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
+    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
-    const note = route.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.'
+    const note = profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.'
       : rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'
       : null;
     if (note) {
       if (!flight) throw new Error(note);
+      currentView = null;
       renderResult(els.result, { flight, note });
       show('result');
       return;
     }
 
-    const weather = await fetchRouteWeather(route);
+    const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`;
+    let view;
+    try {
+      view = await forecastView({ q, profile, flight, times, nowMs: Date.now() });
+    } catch (err) {
+      // Sin red o sin cupo, el cálculo simplificado tampoco podría: se muestra el error.
+      if (err instanceof TypeError || /No se pudo conectar|Demasiadas consultas/.test(err.message)) throw err;
+      if (stale()) return;
+      return runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale);
+    }
     if (stale()) return;
-    const { segments, verdict } = analyze(route, weather);
-
-    const view = {
-      title: `${q.origin.iata} → ${q.destination.iata}`,
-      subtitle: [q.number, q.airline].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
-      times: `${formatLocal(route.departureMs, oTz)}–${formatLocal(route.arrivalMs, dTz)}`,
-      verdict, reliability: rel, durationMin: route.durationMin, segments, flight,
-    };
-    renderResult(els.result, view);
-    show('result');
-
-    await nameSegments(segments, q.origin.iata);
-    if (stale()) return;
-    renderResult(els.result, view);
+    showForecast(view, q, stale);
   } catch (err) {
     if (stale()) return;
     // fetch lanza TypeError sin conexión; su mensaje viene en inglés.
@@ -181,6 +195,71 @@ async function run(q) {
     const msg = network ? 'Sin conexión o el servicio no responde.' : err.message;
     showError(msg || 'Algo ha fallado. Inténtalo de nuevo.', network || err.retryable === true);
   }
+}
+
+// Cálculo v1 (una capa, modelo automático de Open-Meteo): respaldo si los modelos ECMWF/GFS no dan datos.
+async function runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale) {
+  const route = buildRoute(q.origin, q.destination, departureMs, durationMin);
+  const weather = await fetchRouteWeather(route);
+  if (stale()) return;
+  const { segments, verdict } = analyze(route, weather);
+  const view = {
+    title: `${q.origin.iata} → ${q.destination.iata}`,
+    subtitle: [q.number, q.airline].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
+    times: `${formatLocal(route.departureMs, oTz)}–${formatLocal(route.arrivalMs, dTz)}`,
+    verdict, reliability: rel, durationMin: route.durationMin, segments, flight,
+  };
+  currentView = null;
+  const paint = () => {
+    renderResult(els.result, view);
+    els.result.insertAdjacentHTML('afterbegin', '<p class="note-small">Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.</p>');
+  };
+  paint();
+  show('result');
+  await nameSegments(segments, q.origin.iata);
+  if (!stale()) paint();
+}
+
+const $in = id => els.result.querySelector(`#${id}`);
+const safely = async fn => { try { await fn(); } catch { /* mejora opcional: si falla, no pasa nada */ } };
+
+// Pinta el pronóstico y después, sin bloquear, añade lo secundario (cada cosa solo actualiza su hueco).
+async function showForecast(view, q, stale, saved = false) {
+  currentView = view;
+  renderForecast(els.result, saved ? { ...view, saved } : view, Date.now());
+  show('result');
+  const speakBtn = $in('speak');
+  if (canSpeak()) {
+    speakBtn.hidden = false;
+    speakBtn.onclick = () => speak(buildSpeech({ from: view.fromCity, to: view.toCity, summary: view.summary, confidence: view.confidence.level }));
+  }
+  if (saved) return; // guardado: tal cual, sin pedir nada a la red
+
+  saveLast(view, view.queriedAt);
+  await safely(async () => {
+    const snaps = recordSnapshot(flightKey(q), { t: view.queriedAt, maxLevel: view.summary.maxLevel, verdict: view.summary.verdict, confidence: view.confidence.level });
+    view.trend = forecastTrend(snaps, Date.now());
+    const el = $in('trend');
+    if (view.trend && el) { el.textContent = view.trend; el.hidden = false; }
+  });
+  await Promise.all([
+    safely(async () => {
+      await nameSegments(view.segments, view.originIata);
+      if (stale()) return;
+      $in('timeline').innerHTML = timelineHtml(view);
+    }),
+    safely(async () => {
+      view.runs = await fetchModelRuns(view.models);
+      if (!stale()) $in('fresh').innerHTML = freshnessHtml(view, Date.now());
+    }),
+    safely(async () => {
+      view.aviation = aviationView(await loadAviation(), view, Date.now());
+      if (!stale()) $in('aviation').innerHTML = aviationHtml(view.aviation);
+    }),
+  ]);
+  if (stale()) return;
+  saveLast(view, view.queriedAt);
+  safely(() => renderMap($in('map'), view));
 }
 
 async function submit() {
@@ -196,6 +275,19 @@ async function submit() {
 }
 
 els.form.addEventListener('submit', e => { e.preventDefault(); submit(); });
+
+// Timeline: al tocar un tramo se muestra su detalle (otra vez para ocultarlo).
+els.result.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-seg]');
+  if (!btn || !currentView) return;
+  const detail = $in('seg-detail');
+  const selected = btn.classList.contains('selected');
+  els.result.querySelectorAll('button[data-seg]').forEach(b => b.classList.remove('selected'));
+  if (selected) { detail.hidden = true; return; }
+  btn.classList.add('selected');
+  detail.innerHTML = segmentDetailHtml(currentView.segments[Number(btn.dataset.seg)], currentView.originIata);
+  detail.hidden = false;
+});
 
 // Pestañas de fechas de la ficha del vuelo.
 els.result.addEventListener('click', async e => {
@@ -222,6 +314,14 @@ for (const input of [els.origin, els.destination]) {
 }
 
 els.back.addEventListener('click', () => { setNotice(); show('query'); });
+els.savedLink.addEventListener('click', () => {
+  const last = loadLast();
+  if (!last) return;
+  runId++; // una consulta en curso ya no debe pintar encima
+  showForecast(last.view, null, () => true, last.savedAt);
+});
+window.addEventListener('offline', offerSaved);
+window.addEventListener('online', () => { els.savedLink.hidden = true; });
 els.changeTime.addEventListener('click', () => { setTimeNeeded(true); show('query'); els.time.focus(); });
 // Actualizar vuelve a pedir el horario (retrasos, puerta, estado).
 els.refresh.addEventListener('click', () => (lastQuery?.kind === 'schedule' ? submit() : lastQuery && run(lastQuery)));
@@ -231,7 +331,6 @@ els.retry.addEventListener('click', () => lastQuery && run(lastQuery));
 const now = new Date();
 els.date.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 els.time.value = `${String((now.getHours() + 1) % 24).padStart(2, '0')}:00`;
-// Borra el historial que guardaban versiones anteriores.
-try { localStorage.removeItem('turbi.history'); } catch { /* sin almacenamiento */ }
+if (navigator.onLine === false) offerSaved();
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

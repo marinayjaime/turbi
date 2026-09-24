@@ -85,9 +85,9 @@ const VERDICT_HELP = {
 };
 const LEVEL_HELP = [
   null,
-  ['Ligera', 'Pequeños botes. Se puede caminar y servir bebidas.'],
-  ['Moderada', 'Movimientos claros: se enciende la señal del cinturón, cuesta caminar y las bebidas pueden derramarse.'],
-  ['Fuerte', 'Movimientos bruscos: los objetos sueltos se mueven. Es poco frecuente.'],
+  ['Ligera', 'Pequeños botes. Normalmente se puede caminar por la cabina.'],
+  ['Moderada', 'Movimientos claros: suele encenderse la señal del cinturón y cuesta caminar.'],
+  ['Fuerte', 'Movimientos bruscos; los objetos sueltos pueden moverse. Es poco frecuente.'],
 ];
 const CAUSE_HELP = {
   ellrod: 'Cambios bruscos del viento en altura, típicos cerca de la corriente en chorro. No hay nubes que la anuncien.',
@@ -112,7 +112,7 @@ function explainHtml(current) {
         <h4>Intensidad de cada tramo</h4>
         <ul>${levels}
         </ul>
-        <p>La turbulencia es incómoda pero no pone en peligro el avión. Con el cinturón abrochado no pasa nada.</p>
+        <p>La turbulencia es habitual en la aviación comercial. Llevar el cinturón abrochado mientras estás sentado reduce mucho el riesgo de lesiones.</p>
         <h4>Causas</h4>
         <ul>${causes}
         </ul>
