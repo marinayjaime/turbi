@@ -41,7 +41,12 @@ main {
 }
 [hidden] { display: none !important; }
 
-.top h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 12px 0 20px; color: #fff; text-shadow: 0 2px 8px rgba(0, 30, 60, 0.35); }
+.top { text-align: center; }
+/* Logo sobre cristal blanco, como los paneles: sobre el cielo azul el texto azul marino no se leería. */
+.top h1 { display: inline-block; margin: 12px 0 20px; padding: 12px 22px; line-height: 0; border-radius: 22px;
+  background: var(--glass); -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+  box-shadow: 0 10px 30px rgba(10, 40, 70, 0.18); }
+.top .brand { height: 60px; width: auto; max-width: 100%; }
 h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
 
 .field { display: block; margin-bottom: 14px; }
