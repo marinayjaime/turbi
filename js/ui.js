@@ -105,14 +105,15 @@ ${photoHtml(c)}
         <strong>${esc(c.a)}</strong>
       </div>
       <div class="sides">${side('Salida', c.dep)}${side('Llegada', c.arr)}</div>
-      ${c.dep ? `
+      ${c.dep && !c.past ? `
       <div class="gate${c.dep.gate ? '' : ' pending'}">
         <span class="gate-k">Puerta de embarque</span>
         <span class="gate-v">${!c.dep.gate ? 'Aún sin asignar' : /^[A-Z]$/i.test(c.dep.gate) ? `Zona ${esc(c.dep.gate)}` : esc(c.dep.gate)}</span>
         ${c.gateChanged ? '<span class="tag warn">Cambio de puerta</span>' : ''}
         ${c.dep.gate && /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
       </div>` : ''}
-      ${c.updatedAgo ? `<p class="foot">Datos actualizados ${esc(c.updatedAgo)}</p>` : ''}
+      ${c.past ? '<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>'
+        : c.updatedAgo ? `<p class="foot">Datos actualizados ${esc(c.updatedAgo)}</p>` : ''}
     </section>`;
 }
 

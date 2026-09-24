@@ -167,3 +167,31 @@ describe('pack / unpack', () => {
     expect(pack(r)).toEqual(['2026-09-24', 'PMI', 'MAD', '17:55', 12, '19:25', 6, 0, ['IB1668', 'I21668']]);
   });
 });
+
+import { legFromHistory } from '../js/punctuality.js';
+describe('vuelo pasado desde el histórico (Aena ya no lo publica)', () => {
+  it('IB1668 del 24/09: horas finales = programada + retraso final guardado', () => {
+    const leg = legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'MAD' }, ['2026-09-24', '17:55', 49, '19:25', 45, 0]);
+    expect(leg).toMatchObject({ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T18:44', sa: '19:25', ea: '2026-09-24T20:10', std: 'BOR', sta: 'BOR', past: true });
+  });
+  it('llegada al día siguiente y retrasos que cruzan la medianoche', () => {
+    const leg = legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'MAD' }, ['2026-09-24', '23:30', 40, '00:45', 35, 0]);
+    expect(leg).toMatchObject({ ed: '2026-09-25T00:10', ea: '2026-09-25T01:20' });
+  });
+  it('sin dato final: sin hora (no se inventa); cancelado y desviado', () => {
+    expect(legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'LHR' }, ['2026-09-24', '10:00', 12, null, null, 0])).toMatchObject({ ed: '2026-09-24T10:12', sa: null, ea: null, sta: null });
+    expect(legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'MAD' }, ['2026-09-24', '10:00', null, '11:20', null, 1])).toMatchObject({ st: 'CAN', ed: null, ea: null });
+    expect(legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'MAD' }, ['2026-09-24', '10:00', 5, '11:20', null, 2]).st).toBe('DES');
+  });
+});
+
+import { fetchPastFlight } from '../js/punctuality.js';
+describe('fetchPastFlight', () => {
+  it('busca la fecha en todas las rutas del vuelo; si no está o no hay red, null', async () => {
+    const body = { routes: { 'PMI-MAD': { past: [['2026-09-24', '17:55', 49, '19:25', 45, 0]] } } };
+    const f = async () => ({ ok: true, json: async () => body });
+    expect(await fetchPastFlight('IB', '1668', '2026-09-24', f)).toMatchObject({ o: 'PMI', a: 'MAD', ea: '2026-09-24T20:10' });
+    expect(await fetchPastFlight('IB', '1668', '2026-09-23', f)).toBeNull();
+    expect(await fetchPastFlight('IB', '1668', '2026-09-24', async () => { throw new TypeError('x'); })).toBeNull();
+  });
+});

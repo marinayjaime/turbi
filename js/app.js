@@ -15,7 +15,7 @@ import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText }
 import { loadAviation } from './aviation-weather.js';
 import { renderMap } from './map.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
-import { currentPunctuality, fetchPunctuality, dowOf, slotOf } from './punctuality.js';
+import { currentPunctuality, fetchPunctuality, fetchPastFlight, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
@@ -86,9 +86,10 @@ async function airports() {
 
 async function scheduleQuery(schedule, date) {
   // Solo el vuelo de la fecha pedida: si ese día no está, se dice (nunca se enseña otro día).
-  const leg = pickLeg(schedule.legs, date);
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date());
+  // Fecha pasada que Aena ya no publica: el vuelo sale del histórico (horas finales de Aena guardadas por Turbi).
+  const leg = pickLeg(schedule.legs, date) ?? (date < today ? await fetchPastFlight(schedule.al, schedule.n, date) : null);
   if (!leg) {
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date());
     throw new Error(missingDateText(`${schedule.al}${schedule.n}`, date, [...new Set(schedule.legs.map(l => l.d))].sort(), today));
   }
   const db = await airports();
@@ -161,8 +162,9 @@ function flightCard(q, durationMin, photos = null) {
     arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : null,
     aircraft: aircraftName(leg.ac),
     gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
-    updatedAgo: schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
-    stale: schedule.updated ? Date.now() - Date.parse(schedule.updated) > 40 * 60000 : false,
+    updatedAgo: !leg.past && schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
+    stale: !leg.past && schedule.updated ? Date.now() - Date.parse(schedule.updated) > 40 * 60000 : false,
+    past: Boolean(leg.past),
   };
 }
 
@@ -177,7 +179,7 @@ function punctualityState(q) {
 
 // Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga.
 async function showRadar(q, flight, stale) {
-  if (!flight || flight.stale || !q.leg || !wantsRadar(q.leg)) return;
+  if (!flight || flight.stale || !q.leg || q.leg.past || !wantsRadar(q.leg)) return;
   const card = withRadar(flight, await fetchRadar(q.schedule.al, q.schedule.n));
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;

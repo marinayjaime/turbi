@@ -96,6 +96,11 @@ describe('aggregateFlights', () => {
     expect(ib.slot['3'].sample).toBe(40);
     expect(Object.values(ib.dow).reduce((a, s) => a + s.sample, 0)).toBe(52);
   });
+  it('vuelos pasados (para consultar una fecha que Aena ya no publica): horas programadas y retrasos finales', () => {
+    expect(ib.past[0]).toEqual([day(0), '18:25', 0, '19:50', 40, 0]);
+    expect(ib.past).toHaveLength(41); // 40 operados + 1 cancelado, todos los de 90 días
+    expect(ib.past.find(r => r[5] === 1)).toEqual([day(3), '18:25', null, '19:50', null, 1]);
+  });
   it('destino extranjero: puntualidad de salida', () => {
     expect(files['FR/100.json'].routes['PMI-LHR']).toMatchObject({ basis: 'dep' });
     expect(files['FR/100.json'].routes['PMI-LHR'].d90).toMatchObject({ sample: 5, quality: 'insuficiente' });

@@ -65,6 +65,35 @@ export function currentPunctuality(leg) {
   };
 }
 
+// Vuelo pasado a partir del histórico (horas programadas + retrasos finales que publicó Aena). route = { o, a };
+// row = [d, sd, dd, sa, ad, x]. Sin dato final, sin hora: no se estima nada.
+export function legFromHistory({ o, a }, [d, sd, dd, sa, ad, x]) {
+  const at = (date, hhmm, min) => (date && hhmm && typeof min === 'number'
+    ? new Date(Date.parse(`${date}T${hhmm}:00Z`) + min * 60000).toISOString().slice(0, 16) : null);
+  const arrDate = sa ? (sd && sa < sd ? nextDay(d) : d) : null;
+  const cancelled = x === 1, diverted = x === 2;
+  const ea = cancelled ? null : at(arrDate, sa, ad);
+  const st = cancelled ? 'CAN' : diverted ? 'DES' : 'BOR';
+  return {
+    d, o, a, sd: sd ?? null, ed: cancelled ? null : at(d, sd, dd), sa: sa ?? null, ea,
+    td: null, ta: null, g: null, st, std: cancelled ? 'CAN' : diverted ? 'DES' : 'BOR', sta: cancelled || diverted ? null : ea ? 'BOR' : null,
+    ac: null, past: true,
+  };
+}
+
+// Busca en el histórico publicado (data/punctuality/AL/N.json) el vuelo de una fecha pasada. Sin datos → null.
+export async function fetchPastFlight(al, n, date, fetchFn = fetch) {
+  try {
+    const res = await fetchFn(`data/punctuality/${al}/${n}.json`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    for (const [route, r] of Object.entries((await res.json()).routes ?? {})) {
+      const row = r.past?.find(p => p[0] === date);
+      if (row) { const [o, a] = route.split('-'); return legFromHistory({ o, a }, row); }
+    }
+  } catch { /* sin red o sin datos */ }
+  return null;
+}
+
 // --- Histórico ---
 
 // Registro compacto: [d, o, a, sd, dd, sa, ad, x, [números]] (x: 0 normal · 1 cancelado · 2 desviado)

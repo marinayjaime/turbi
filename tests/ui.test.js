@@ -214,6 +214,17 @@ describe('cabecera: foto del modelo y logo junto al número', () => {
   });
 });
 
+describe('vuelo pasado (del histórico)', () => {
+  const c = { al: 'IB', number: 'IB 1668', airline: 'Iberia', title: 'x', route: 'Palma de Mallorca a Madrid', status: { text: 'Ha llegado', tone: 'ok' },
+    o: 'PMI', a: 'MAD', duration: 90, dep: { date: '2026-09-24', time: '17:55', est: '18:44', late: true, terminal: null, gate: null },
+    arr: { date: '2026-09-24', time: '19:25', est: '20:10', late: true, terminal: null }, aircraft: null, past: true };
+  it('sin puerta de embarque ni «actualizado hace»; dice de dónde salen las horas', () => {
+    const html = flightCardHtml(c);
+    expect(html).not.toContain('Puerta de embarque');
+    expect(html).toContain('<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>');
+  });
+});
+
 describe('datos de Aena antiguos', () => {
   it('aviso visible si tienen más de 40 min', () => {
     const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90,

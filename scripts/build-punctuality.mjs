@@ -151,6 +151,8 @@ export function aggregateFlights(records, today) {
       airlineRoute: cached(`ar|${flight.slice(0, 2)}|${route}|${basis}`, () => stats(byAirlineRoute.get(`${flight.slice(0, 2)}|${route}`), basis)),
       dow: cached(`dow|${route}|${basis}`, () => splitBy(routeRecs, r => dowOf(r.d), basis)),
       slot: cached(`slot|${route}|${basis}`, () => splitBy(routeRecs, r => (r.sd ? slotOf(r.sd) : null), basis)),
+      // Vuelos pasados (90 días), para consultar una fecha que Aena ya no publica: [d, sd, dd, sa, ad, x].
+      past: lastFlights(recs, recs.length).map(r => [r.d, r.sd ?? null, r.dd ?? null, r.sa ?? null, r.ad ?? null, r.x]),
     };
   }
   return { files };
