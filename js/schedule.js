@@ -20,8 +20,9 @@ async function getJson(url, fetchFn) {
 
 const quiet = p => p.catch(() => null);
 
-// Hoy y mañana llegan de Railway (cada 10 min); el resto de los 14 días, de GitHub Pages.
-// Si Railway no responde, se usa solo GitHub Pages (con su hora de actualización, que la ficha muestra).
+// Hoy y mañana llegan de Render (cada 10 min); el resto de los 14 días, de GitHub Pages.
+// Si Render no responde o sus datos son más antiguos que los de GitHub Pages, se usa GitHub Pages
+// (con su hora de actualización, que la ficha muestra): siempre gana la descarga de Aena más reciente.
 export async function fetchSchedule(number, fetchFn = fetch, liveBase = LIVE_BASE) {
   const parsed = parseFlightNumber(number);
   if (!parsed) return null;
@@ -32,10 +33,11 @@ export async function fetchSchedule(number, fetchFn = fetch, liveBase = LIVE_BAS
       if (!al) return null;
     }
     const path = `${al}/${parsed.n}.json`;
-    const [pages, live] = await Promise.all([
+    let [pages, live] = await Promise.all([
       quiet(getJson(`${BASE}${path}`, fetchFn)),
       liveBase ? quiet(getJson(`${liveBase}/flights/${path}`, (u, o) => fetchFn(u, { ...o, signal: AbortSignal.timeout(5000) }))) : null,
     ]);
+    if (live && pages?.updated && live.updated && Date.parse(pages.updated) > Date.parse(live.updated)) live = null;
     const liveDates = new Set((live?.legs ?? []).map(l => l.d));
     const legs = [...(pages?.legs ?? []).filter(l => !liveDates.has(l.d)), ...(live?.legs ?? [])]
       .sort((x, y) => (x.d + (x.sd ?? x.sa)).localeCompare(y.d + (y.sd ?? y.sa)));

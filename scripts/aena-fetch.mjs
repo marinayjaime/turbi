@@ -1,4 +1,4 @@
-// Descarga de Aena Infovuelos, compartida por GitHub Actions (build-flights) y el proceso de Railway (server/live.mjs).
+// Descarga de Aena Infovuelos, compartida por GitHub Actions (build-flights) y el proceso de Render (server/live.mjs).
 export const AIRPORTS = [
   'MAD', 'BCN', 'PMI', 'AGP', 'ALC', 'LPA', 'TFS', 'IBZ', 'TFN', 'VLC', 'SVQ', 'BIO', 'ACE', 'FUE', 'MAH',
   'SCQ', 'GRO', 'REU', 'XRY', 'VGO', 'OVD', 'SDR', 'LEI', 'RMU', 'GRX', 'ZAZ', 'SPC', 'VIT', 'PNA', 'GMZ',
