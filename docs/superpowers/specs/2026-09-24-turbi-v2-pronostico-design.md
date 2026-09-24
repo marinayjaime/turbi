@@ -118,7 +118,7 @@ Nivel = 0 (<25) · 1 (25–49) · 2 (50–74) · 3 (≥75)
 
 ### 3.4 Altitud de un punto
 - El avión está a FL(t).
-- Si FL ≥ 200: se interpola el índice entre los **puntos medios de las capas** (A≈FL268, B≈FL320, C≈FL363, D≈FL416), con saturación en los extremos.
+- Si FL ≥ 200: se interpola el índice entre los **puntos medios de las capas** (A≈FL268, B≈FL320, C≈FL363, D≈FL417), con saturación en los extremos.
 - Si FL < 200: solo se evalúan CONV y MTW (sin capas en altura), como en la v1.
 
 ## 4. Comparación de modelos (`js/models.js`)

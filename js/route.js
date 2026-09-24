@@ -11,7 +11,7 @@ export function distanceKm(a, b) {
 }
 
 // Punto a fracción f (0..1) del círculo máximo entre a y b.
-function intermediatePoint(a, b, f) {
+export function intermediatePoint(a, b, f) {
   const φ1 = toRad(a.lat), λ1 = toRad(a.lon), φ2 = toRad(b.lat), λ2 = toRad(b.lon);
   const δ = distanceKm(a, b) / R_KM;
   const A = Math.sin((1 - f) * δ) / Math.sin(δ);
