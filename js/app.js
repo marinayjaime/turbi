@@ -1,6 +1,6 @@
 import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
-import { fetchRouteWeather, fetchUtcOffsetSec } from './weather.js';
+import { fetchRouteWeather, fetchTimezone } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
 import { loadAirports, findAirport, searchAirports } from './airports.js';
@@ -20,6 +20,7 @@ const els = {
 };
 
 let lastQuery = null;
+let runId = 0; // solo la consulta más reciente puede pintar
 let airportsDb = null;
 
 function show(view) {
@@ -48,6 +49,7 @@ function refreshHistory() {
   const entries = loadHistory();
   els.history.hidden = entries.length === 0;
   renderHistory(els.historyList, entries, entry => {
+    setManual(!entry.number);
     els.number.value = entry.number || '';
     els.origin.value = entry.origin.iata;
     els.destination.value = entry.destination.iata;
@@ -87,19 +89,20 @@ async function resolveFlight() {
 
 async function run(q) {
   lastQuery = q;
+  const token = ++runId;
+  const stale = () => token !== runId;
   show('loading');
   try {
-    const [oOff, dOff] = await Promise.all([
-      fetchUtcOffsetSec(q.origin, q.date),
-      fetchUtcOffsetSec(q.destination, q.date),
-    ]);
-    const departureMs = localToUtcMs(q.date, q.time, oOff);
+    const [oTz, dTz] = await Promise.all([fetchTimezone(q.origin), fetchTimezone(q.destination)]);
+    if (stale()) return;
+    const departureMs = localToUtcMs(q.date, q.time, oTz);
     const route = buildRoute(q.origin, q.destination, departureMs);
     if (route.arrivalMs < Date.now()) throw new Error('Ese vuelo ya ha aterrizado.');
     const rel = reliability(departureMs, Date.now());
     if (rel === null) throw new Error('Falta más de una semana: vuelve a consultar más cerca de la fecha.');
 
     const weather = await fetchRouteWeather(route);
+    if (stale()) return;
     const { segments, verdict } = analyze(route, weather);
 
     saveToHistory({ id: `${q.number || 'manual'}-${q.origin.iata}-${q.destination.iata}-${q.date}-${q.time}`,
@@ -108,15 +111,17 @@ async function run(q) {
     const view = {
       title: `${q.origin.iata} → ${q.destination.iata}`,
       subtitle: [q.number, q.airline].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
-      times: `${formatLocal(route.departureMs, oOff)}–${formatLocal(route.arrivalMs, dOff)}`,
+      times: `${formatLocal(route.departureMs, oTz)}–${formatLocal(route.arrivalMs, dTz)}`,
       verdict, reliability: rel, durationMin: route.durationMin, segments,
     };
     renderResult(els.result, view);
     show('result');
 
     await nameSegments(segments, q.origin.iata);
+    if (stale()) return;
     renderResult(els.result, view);
   } catch (err) {
+    if (stale()) return;
     // fetch lanza TypeError sin conexión; su mensaje viene en inglés.
     const msg = err instanceof TypeError ? 'Sin conexión o el servicio no responde.' : err.message;
     showError(msg || 'Algo ha fallado. Inténtalo de nuevo.', true);

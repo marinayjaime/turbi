@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { HOURLY_VARS, hourKey, neighbours, fetchLocations, fetchRouteWeather, fetchUtcOffsetSec } from '../js/weather.js';
+import { HOURLY_VARS, hourKey, neighbours, fetchLocations, fetchRouteWeather, fetchTimezone } from '../js/weather.js';
 
 const T0 = Date.parse('2026-09-25T22:00:00Z');
 const HOURS = ['2026-09-25T21:00', '2026-09-25T22:00', '2026-09-25T23:00', '2026-09-26T00:00', '2026-09-26T01:00'];
@@ -96,12 +96,16 @@ describe('fetchRouteWeather', () => {
   });
 });
 
-describe('fetchUtcOffsetSec', () => {
-  it('devuelve utc_offset_seconds de la zona automática', async () => {
-    const f = vi.fn(async () => ({ ok: true, json: async () => ({ utc_offset_seconds: 7200 }) }));
-    expect(await fetchUtcOffsetSec({ lat: 39.55, lon: 2.74 }, '2026-09-25', f)).toBe(7200);
+describe('fetchTimezone', () => {
+  it('devuelve el nombre de zona sin pedir una fecha concreta', async () => {
+    const f = vi.fn(async () => ({ ok: true, json: async () => ({ timezone: 'Europe/Madrid', utc_offset_seconds: 7200 }) }));
+    expect(await fetchTimezone({ lat: 39.55, lon: 2.74 }, f)).toBe('Europe/Madrid');
     const u = new URL(f.mock.calls[0][0]);
     expect(u.searchParams.get('timezone')).toBe('auto');
-    expect(u.searchParams.get('start_date')).toBe('2026-09-25');
+    expect(u.searchParams.has('start_date')).toBe(false);
+  });
+  it('lanza error legible si falla', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 500 }));
+    await expect(fetchTimezone({ lat: 39.55, lon: 2.74 }, f)).rejects.toThrow('No se pudo obtener el pronóstico (HTTP 500)');
   });
 });

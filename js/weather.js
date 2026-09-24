@@ -75,16 +75,15 @@ export async function fetchRouteWeather(route, fetchFn = fetch) {
   });
 }
 
-export async function fetchUtcOffsetSec(point, dateStr, fetchFn = fetch) {
+export async function fetchTimezone(point, fetchFn = fetch) {
   const params = new URLSearchParams({
     latitude: point.lat.toFixed(3),
     longitude: point.lon.toFixed(3),
     hourly: 'cape',
     timezone: 'auto',
-    start_date: dateStr,
-    end_date: dateStr,
+    forecast_days: '1',
   });
   const res = await fetchFn(`${BASE}?${params}`);
   if (!res.ok) throw new Error(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
-  return (await res.json()).utc_offset_seconds;
+  return (await res.json()).timezone;
 }
