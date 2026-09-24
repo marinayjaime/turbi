@@ -81,10 +81,19 @@ button { font: inherit; cursor: pointer; }
 .verdict .emoji { font-size: 44px; line-height: 1; }
 .verdict h2 { margin: 0; font-size: 24px; }
 .verdict p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
-.badge {
-  display: inline-block; margin-top: 14px; padding: 4px 10px; border-radius: 999px;
-  background: var(--field); color: var(--muted); font-size: 13px;
+.reliability { margin-top: 14px; font-size: 13px; color: var(--muted); }
+.reliability summary {
+  display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--field);
+  cursor: pointer; list-style: none;
 }
+.reliability summary::-webkit-details-marker { display: none; }
+.reliability .info { color: var(--accent); margin-left: 2px; }
+.reliability[open] summary { background: #e8f1ff; color: var(--accent); }
+.reliability p { margin: 12px 0 8px; font-size: 14px; line-height: 1.4; color: var(--text); }
+.reliability ul { list-style: none; margin: 0; padding: 0; }
+.reliability li { padding: 8px 10px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
+.reliability li strong { color: var(--text); }
+.reliability li.current { background: var(--field); color: var(--text); }
 
 .timeline { margin: 32px 0 8px; }
 .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; }

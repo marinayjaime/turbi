@@ -57,6 +57,26 @@ function flightCardHtml(c) {
     </section>`;
 }
 
+const RELIABILITY = [
+  { key: 'alta', label: 'Alta', when: 'Faltan menos de 24 h', text: 'El pronóstico a tan poco plazo suele acertar. Lo que ves es muy probable.' },
+  { key: 'media', label: 'Media', when: 'Faltan de 1 a 3 días', text: 'Orientativo: las zonas de viento fuerte y las tormentas aún pueden moverse o cambiar.' },
+  { key: 'baja', label: 'Baja', when: 'Faltan de 3 a 7 días', text: 'Solo una idea general. Vuelve a consultar más cerca del vuelo.' },
+  { key: null, label: 'Sin cálculo', when: 'Más de 7 días', text: 'A esa distancia el pronóstico no sirve.' },
+];
+
+function reliabilityHtml(current) {
+  const items = RELIABILITY.map(r => `
+        <li${r.key === current ? ' class="current"' : ''}><strong>${r.label}</strong> · ${r.when}<br>${r.text}</li>`).join('');
+  return `
+      <details class="reliability">
+        <summary>Fiabilidad ${esc(current)} <span class="info">ⓘ</span></summary>
+        <p>Indica cuánto puedes fiarte del pronóstico de turbulencia. Depende de cuánto falta para el vuelo:
+        cuanto más lejos, más puede cambiar el tiempo previsto (vientos en altura y tormentas).</p>
+        <ul>${items}
+        </ul>
+      </details>`;
+}
+
 export function renderResult(el, view) {
   if (view.note) {
     el.innerHTML = `<div class="summary">${flightCardHtml(view.flight)}<p class="note">${esc(view.note)}</p></div>`;
@@ -90,7 +110,7 @@ export function renderResult(el, view) {
         <span class="emoji">${v.emoji}</span>
         <div><h2>${v.title}</h2><p>${v.text}</p></div>
       </div>
-      <span class="badge">Fiabilidad ${esc(view.reliability)}</span>
+      ${reliabilityHtml(view.reliability)}
     </div>
     <div class="timeline">
       <div class="bar">${bar}</div>

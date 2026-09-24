@@ -25,3 +25,23 @@ describe('ficha del vuelo', () => {
     expect(dateLabel('2026-10-03')).toBe('sáb, 3 oct');
   });
 });
+
+import { renderResult } from '../js/ui.js';
+
+describe('explicación de la fiabilidad', () => {
+  const view = rel => ({
+    title: 'PMI → MAD', subtitle: 'IB1668', times: '17:55–19:25', verdict: 'tranquilo',
+    reliability: rel, durationMin: 90, segments: [{ level: 0, startMin: 0, endMin: 90 }],
+  });
+  it('la etiqueta se despliega y explica los niveles, resaltando el actual', () => {
+    const el = { innerHTML: '' };
+    renderResult(el, view('media'));
+    expect(el.innerHTML).toContain('<details class="reliability">');
+    expect(el.innerHTML).toContain('<summary>Fiabilidad media');
+    for (const txt of ['Faltan menos de 24 h', 'Faltan de 1 a 3 días', 'Faltan de 3 a 7 días', 'Más de 7 días']) {
+      expect(el.innerHTML).toContain(txt);
+    }
+    expect(el.innerHTML).toMatch(/<li class="current"><strong>Media<\/strong>/);
+    expect(el.innerHTML.match(/class="current"/g)).toHaveLength(1);
+  });
+});
