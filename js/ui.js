@@ -51,7 +51,8 @@ export function flightCardHtml(c) {
         // Un estado viejo («Embarcando» de hace 2 h) no se presenta como actual: se dice de cuándo es.
         ? `<span class="status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>
       <p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>`
-        : `<span class="status tone-${esc(c.status.tone)}">${esc(c.status.text)}</span>`}
+        : `<span class="status tone-${esc(c.status.tone)}${c.status.flying ? ' flying' : ''}">${esc(c.status.text)}${c.status.flying
+          ? '<span class="fly" aria-hidden="true"><span class="fly-plane">✈</span></span>' : ''}</span>`}
       <div class="route-line">
         <strong>${esc(c.o)}</strong>
         <span class="line"><em>${esc(formatDuration(c.duration))}</em><span class="plane">✈</span></span>

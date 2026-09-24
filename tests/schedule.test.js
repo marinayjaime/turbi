@@ -66,7 +66,9 @@ describe('flightStatus', () => {
     expect(flightStatus(leg({ st: 'DES', sta: 'DES' }))).toEqual({ text: 'Desviado', tone: 'bad' });
     expect(flightStatus(leg({ st: 'EMB', std: 'EMB' }))).toEqual({ text: 'Embarcando', tone: 'info' });
     expect(flightStatus(leg({ st: 'BOR', std: 'BOR', sta: 'SCH' }))).toEqual({ text: 'Ha salido', tone: 'info' });
-    expect(flightStatus(leg({ st: 'FLY', std: 'BOR', sta: 'FLY' }))).toEqual({ text: 'En vuelo', tone: 'info' });
+    expect(flightStatus(leg({ st: 'FLY', std: 'BOR', sta: 'FLY' }))).toEqual({ text: 'Volando', tone: 'info', flying: true });
+    expect(flightStatus(leg({ st: 'FNL', std: 'BOR', sta: 'FNL' }))).toEqual({ text: 'Aproximándose', tone: 'info', flying: true });
+    expect(flightStatus(leg({ st: 'BOR', std: 'BOR', sta: null })).flying).toBeUndefined(); // «Ha salido»: sin datos de llegada no se afirma que vuela
     expect(flightStatus(leg({ st: 'LND', std: 'BOR', sta: 'LND' }))).toEqual({ text: 'En tierra', tone: 'ok' });
     expect(flightStatus(leg({ st: 'IBK', std: 'BOR', sta: 'IBK' }))).toEqual({ text: 'Ha llegado', tone: 'ok' });
     expect(flightStatus(leg({ st: 'ZZZ' }))).toEqual({ text: 'Programado', tone: 'ok' });
@@ -77,7 +79,7 @@ describe('flightStatus', () => {
     expect(flightStatus(leg({ sd: null, ed: null, st: 'SCH', std: null, sta: 'SCH', ea: '2026-09-24T19:50' }))).toEqual({ text: 'Retrasado · llega 19:50', tone: 'warn' });
   });
   it('horarios antiguos sin estados separados siguen funcionando', () => {
-    expect(flightStatus(leg({ st: 'FLY' }))).toEqual({ text: 'En vuelo', tone: 'info' });
+    expect(flightStatus(leg({ st: 'FLY' }))).toEqual({ text: 'Volando', tone: 'info', flying: true });
   });
   it('retraso: estado RET o estimada > programada + 15 min', () => {
     expect(flightStatus(leg({ ed: '2026-09-24T18:30' }))).toEqual({ text: 'Retrasado · sale 18:30', tone: 'warn' });

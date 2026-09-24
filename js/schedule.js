@@ -91,8 +91,9 @@ const ARRIVAL_STATES = {
   OPE: { text: 'Ha llegado', tone: 'ok' },
   OPF: { text: 'Ha llegado', tone: 'ok' },
   BOR: { text: 'Ha llegado', tone: 'ok' },
-  FNL: { text: 'Aproximándose', tone: 'info' },
-  FLY: { text: 'En vuelo', tone: 'info' },
+  // flying: Aena (aeropuerto de llegada) dice que está en el aire → la ficha lo anima.
+  FNL: { text: 'Aproximándose', tone: 'info', flying: true },
+  FLY: { text: 'Volando', tone: 'info', flying: true },
 };
 const GATE_STATES = {
   EMB: { text: 'Embarcando', tone: 'info' },

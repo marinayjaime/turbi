@@ -146,6 +146,22 @@ button { font: inherit; cursor: pointer; }
 .tone-warn { background: #fff4e5; color: #b25e00; }
 .tone-bad { background: #fff2f1; color: #c4271c; }
 .tone-stale { background: #f2f2f7; color: #6e6e73; }
+/* En vuelo: un avión cruza en bucle junto al texto (decorativo; no indica la posición real). */
+.status.flying { display: inline-flex; align-items: center; gap: 6px; }
+.fly { position: relative; display: inline-block; width: 44px; height: 16px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); }
+.fly-plane { position: absolute; left: 0; top: -1px; font-size: 14px; line-height: 16px; animation: fly 2.4s linear infinite; }
+@keyframes fly {
+  0% { transform: translate(-16px, 1px); }
+  25% { transform: translate(-1px, -1px); }
+  50% { transform: translate(14px, 1px); }
+  75% { transform: translate(29px, -1px); }
+  100% { transform: translate(44px, 1px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fly-plane { animation: none; transform: translate(14px, 0); }
+}
 .route-line { display: flex; align-items: center; gap: 12px; margin: 18px 0 6px; }
 .route-line strong { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
 .route-line .line { flex: 1; position: relative; height: 1px; background: var(--line); }

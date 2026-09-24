@@ -114,6 +114,21 @@ describe('puerta de embarque en la ficha', () => {
   });
 });
 
+describe('en vuelo', () => {
+  const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Volando', tone: 'info', flying: true }, o: 'PMI', a: 'MAD', duration: 90,
+    dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D86' }, arr: null, aircraft: null };
+  it('«Volando» con el avión animado al lado', () => {
+    const html = flightCardHtml({ ...c, updatedAgo: 'hace 3 min', stale: false });
+    expect(html).toContain('class="status tone-info flying"');
+    expect(html).toMatch(/Volando<span class="fly" aria-hidden="true">/);
+  });
+  it('con datos antiguos no hay animación (no se sabe si sigue volando)', () => {
+    const html = flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true });
+    expect(html).not.toContain('class="fly"');
+    expect(html).toContain('Volando hace 2 h');
+  });
+});
+
 describe('datos de Aena antiguos', () => {
   it('aviso visible si tienen más de 40 min', () => {
     const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90,
