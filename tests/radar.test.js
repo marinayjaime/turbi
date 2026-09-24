@@ -1,22 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { keepDeparted, needsRadar, findOnRadar } from '../server/radar.mjs';
+import { needsRadar, findOnRadar } from '../server/radar.mjs';
 
 const leg = over => ({ al: 'EI', icao: 'EIN', n: '737', d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
 const now = Date.parse('2026-09-24T21:00:00Z'); // 23:00 en Palma
 const plane = over => ({ hex: 'abc', flight: 'EIN737  ', alt_baro: 15775, gs: 361.4, lat: 52.95, lon: -6.66, seen: 1, ...over });
 const radar = ac => vi.fn(async () => ({ ok: true, json: async () => ({ ac }) }));
 const find = (f, over) => findOnRadar({ leg: leg(over), fetchFn: f, pauseMs: 0 });
-
-describe('vuelos que Aena retira tras despegar', () => {
-  it('se conserva la salida ya despegada hasta el día siguiente', () => {
-    const old = [leg(), leg({ n: '100', std: 'EMB', st: 'EMB' }), leg({ n: '5', d: '2026-09-22' })];
-    const fresh = [leg({ n: '739', d: '2026-09-25' })];
-    expect(keepDeparted(old, fresh, '2026-09-24').map(l => l.n)).toEqual(['739', '737']);
-  });
-  it('si Aena lo sigue publicando, gana lo nuevo', () => {
-    expect(keepDeparted([leg({ ed: 'viejo' })], [leg()], '2026-09-24')).toEqual([leg()]);
-  });
-});
 
 describe('cuándo se mira el radar', () => {
   it('solo si Aena dice que ha salido y no informa de la llegada', () => {
@@ -55,6 +44,16 @@ describe('buscar el vuelo en el radar (solo su indicativo exacto)', () => {
     const r = await findOnRadar({ leg: la, siblings: [la, leg({ al: 'IB', icao: 'IBE', n: '5810', a: 'LYS' }), la], fetchFn: f, pauseMs: 0 });
     expect(r).toMatchObject({ state: 'volando', callsign: 'IBE5810' });
     expect(f.mock.calls.map(c => c[0].split('/').pop())).toEqual(['LAN1664', 'IBE5810']);
+  });
+  it('cuánto le queda: distancia hasta el destino y minutos a la velocidad actual (cálculo, no hora oficial)', async () => {
+    // Avión a 52.95, -6.66 a 669 km/h; Dublín en 53.4213, -6.27007 → 58 km → 5 min
+    const r = await findOnRadar({ leg: leg(), fetchFn: radar([plane()]), pauseMs: 0, dest: [53.4213, -6.27007] });
+    expect(r.remainingKm).toBe(58);
+    expect(r.etaMin).toBe(5);
+  });
+  it('sin coordenadas del destino o a poca velocidad: no se calcula', async () => {
+    expect((await findOnRadar({ leg: leg(), fetchFn: radar([plane()]), pauseMs: 0 })).etaMin).toBeUndefined();
+    expect((await findOnRadar({ leg: leg(), fetchFn: radar([plane({ gs: 60 })]), pauseMs: 0, dest: [53.42, -6.27] })).etaMin).toBeUndefined();
   });
   it('lleva un User-Agent con contacto (adsb.lol rechaza los genéricos con 403)', async () => {
     const f = radar([plane()]);

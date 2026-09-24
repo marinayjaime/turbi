@@ -1,7 +1,7 @@
 // Construye _site/ (la app + horarios de Aena) para desplegar en GitHub Pages.
 // Uso: MODE=full|live|auto node scripts/build-flights.mjs
 import { mkdir, writeFile, cp, rm } from 'node:fs/promises';
-import { buildLegs, mergeLegs, shardLegs, patchFailed, auditLegs } from './aena.mjs';
+import { buildLegs, mergeLegs, shardLegs, patchFailed, auditLegs, keepDeparted, departedLegs } from './aena.mjs';
 import { fetchMissingLogos } from './fetch-logos.mjs';
 import { buildAviation } from './build-aviation.mjs';
 import { buildPunctuality } from './build-punctuality.mjs';
@@ -16,6 +16,15 @@ async function previousLegs() {
     return await fetchJson(`${PAGES_URL}data/flights/_legs.json`, 2);
   } catch {
     return null;
+  }
+}
+
+// Salidas ya despegadas de la publicación anterior (Aena las retira unas 2 h después de despegar).
+async function previousDeparted() {
+  try {
+    return await fetchJson(`${PAGES_URL}data/flights/_departed.json`, 2);
+  } catch {
+    return [];
   }
 }
 
@@ -47,11 +56,14 @@ async function main() {
   } else {
     legs = fresh;
   }
+  // El vuelo que ya ha despegado no desaparece a las 2 h: se conserva hasta el día siguiente.
+  legs = keepDeparted(await previousDeparted(), legs, madridDate(0));
 
   const { files, airlines } = shardLegs(legs, new Date().toISOString());
   const out = `${SITE}/data/flights`;
   await mkdir(out, { recursive: true });
   await writeFile(`${out}/_legs.json`, JSON.stringify(legs));
+  await writeFile(`${out}/_departed.json`, JSON.stringify(departedLegs(legs, madridDate(0))));
   await writeFile(`${out}/airlines.json`, JSON.stringify(airlines));
   await writeFile(`${out}/_meta.json`, JSON.stringify({ updated: new Date().toISOString(), mode, legs: legs.length, audit: { checked: audit.checked, mismatches: audit.mismatches.length, duplicates: audit.duplicates } }));
   for (const [path, body] of Object.entries(files)) {

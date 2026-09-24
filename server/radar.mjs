@@ -12,15 +12,6 @@ const WINDOW_H = 20; // se mira el radar hasta 20 h después de la salida
 const CANARY = new Set(['LPA', 'TFN', 'TFS', 'ACE', 'FUE', 'SPC', 'VDE', 'GMZ']);
 const DEPARTED = 'BOR'; // Aena (salida): Finalizado = ha despegado
 
-// Aena retira la salida unas 2 h después de despegar: se conserva (tal cual la dejó Aena) hasta el día siguiente,
-// para poder seguir mirando el radar en vuelos largos.
-export function keepDeparted(old, fresh, today) {
-  const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
-  const key = l => `${l.al}|${l.n}|${l.d}|${l.o}|${l.a}`;
-  const present = new Set(fresh.map(key));
-  return [...fresh, ...old.filter(l => (l.std ?? l.st) === DEPARTED && l.d >= yesterday && !present.has(key(l)))];
-}
-
 // Hora local de salida (en el aeropuerto de origen, España) → milisegundos UTC.
 function departureMs(leg) {
   const local = leg.ed ?? (leg.sd ? `${leg.d}T${leg.sd}` : null);
@@ -40,6 +31,14 @@ export function needsRadar(leg, nowMs) {
   return dep !== null && nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;
 }
 
+const MIN_ETA_KMH = 150; // por debajo (rodando, despegando) no tiene sentido calcular cuánto le queda
+
+function distanceKm([la1, lo1], [la2, lo2]) {
+  const rad = x => (x * Math.PI) / 180;
+  const a = Math.sin(rad(la2 - la1) / 2) ** 2 + Math.cos(rad(la1)) * Math.cos(rad(la2)) * Math.sin(rad(lo2 - lo1) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(a));
+}
+
 const wait = ms => (ms ? new Promise(r => setTimeout(r, ms)) : null);
 
 // null = la consulta ha fallado (red, 429…): no se sabe nada, que no es lo mismo que «no está en el aire».
@@ -57,7 +56,8 @@ async function lookup(fetchFn, callsign, pauseMs) {
 const airborne = a => typeof a.alt_baro === 'number' && (a.seen ?? 0) <= MAX_SEEN_S;
 
 // siblings: el mismo vuelo con otros números (códigos compartidos); el avión emite con el de la operadora.
-export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS }) {
+// dest: [lat, lon] del destino, para calcular cuánto le queda (cálculo de Turbi, no una hora oficial).
+export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS, dest = null }) {
   const callsigns = [...new Set([leg, ...siblings].filter(l => l.icao).map(l => `${l.icao}${l.n}`))];
   let failed = false, a = null, callsign = callsigns[0];
   for (const [i, cs] of callsigns.entries()) {
@@ -68,9 +68,11 @@ export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs
     if (a) { callsign = cs; break; }
   }
   if (!a) return failed ? { state: 'no-disponible' } : { state: 'sin-datos', callsign };
-  return {
-    state: 'volando', callsign,
-    altFt: a.alt_baro, altM: Math.round(a.alt_baro * 0.3048), kmh: Number.isFinite(a.gs) ? Math.round(a.gs * 1.852) : null,
-    seenS: Math.round(a.seen ?? 0), source: 'adsb.lol',
-  };
+  const kmh = Number.isFinite(a.gs) ? Math.round(a.gs * 1.852) : null;
+  const out = { state: 'volando', callsign, altFt: a.alt_baro, altM: Math.round(a.alt_baro * 0.3048), kmh, seenS: Math.round(a.seen ?? 0), source: 'adsb.lol' };
+  if (dest && Number.isFinite(a.lat) && Number.isFinite(a.lon) && kmh >= MIN_ETA_KMH) {
+    out.remainingKm = Math.round(distanceKm([a.lat, a.lon], dest));
+    out.etaMin = Math.round((out.remainingKm / kmh) * 60);
+  }
+  return out;
 }

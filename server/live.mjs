@@ -5,10 +5,13 @@
 // Si el servicio se ha dormido, la primera petición lo despierta y dispara una descarga (la app, mientras, usa GitHub Pages).
 // Arranque: node server/live.mjs   (variable: PORT)
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { fetchAena, madridDate, AIRPORTS } from '../scripts/aena-fetch.mjs';
-import { keepDeparted, needsRadar, findOnRadar } from './radar.mjs';
-import { buildLegs, shardLegs, auditLegs, patchFailed } from '../scripts/aena.mjs';
+import { needsRadar, findOnRadar } from './radar.mjs';
+import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
+
+const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
 const EVERY_MS = 10 * 60000;
 const SAFE_PATH = /^\/flights\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
@@ -63,13 +66,13 @@ export function handle(state, path) {
 }
 
 // Radar de un vuelo (solo si Aena dice que ha salido y no informa de la llegada). Respuesta guardada 60 s.
-export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), pauseMs } = {}) {
+export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), pauseMs, airports = {} } = {}) {
   const m = path.match(RADAR_PATH);
   if (!m) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
   const cached = state.radar.get(path);
   if (cached && nowMs - cached.at < RADAR_CACHE_MS) return { status: 200, headers: HEADERS, body: cached.body };
   const leg = (state.legs ?? []).find(l => l.al === m[1] && l.n === m[2] && needsRadar(l, nowMs));
-  const result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd), fetchFn, pauseMs }) : { state: 'no-aplica' };
+  const result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd), fetchFn, pauseMs, dest: airports[leg.a] ? [airports[leg.a][2], airports[leg.a][3]] : null }) : { state: 'no-aplica' };
   const body = JSON.stringify({ ...result, checked: new Date(nowMs).toISOString() });
   if (state.radar.size > 500) state.radar.clear();
   state.radar.set(path, { at: nowMs, body });
@@ -78,6 +81,15 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
 
 async function main() {
   const state = createState();
+  const airports = JSON.parse(readFileSync(new URL('../data/airports.json', import.meta.url), 'utf8'));
+  // Tras un reinicio: las salidas ya despegadas que publicó GitHub (Aena las retira a las 2 h).
+  try {
+    const res = await fetch(`${PAGES_URL}data/flights/_departed.json`, { signal: AbortSignal.timeout(20000) });
+    if (res.ok) state.legs = await res.json();
+    console.log(`Salidas ya despegadas recuperadas de GitHub: ${state.legs?.length ?? 0}`);
+  } catch (err) {
+    console.warn(`No se pudieron recuperar las salidas ya despegadas: ${err.message}`);
+  }
 
   const cycle = async () => {
     if (state.running) return;
@@ -100,7 +112,7 @@ async function main() {
     const path = new URL(req.url, 'http://x').pathname;
     const send = r => { res.writeHead(r.status, r.headers); res.end(r.body); };
     if (path.startsWith('/radar/')) {
-      radarResponse(state, path).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
+      radarResponse(state, path, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
       return;
     }
     send(handle(state, path));

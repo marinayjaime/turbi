@@ -157,3 +157,21 @@ describe('filas duplicadas en Aena (mismo vuelo, fecha y hora programada)', () =
     expect(auditLegs(entries, buildLegs(entries))).toEqual({ checked: 2, mismatches: [], duplicates: 1 });
   });
 });
+
+import { keepDeparted, departedLegs } from '../scripts/aena.mjs';
+const dleg = over => ({ al: 'EI', icao: 'EIN', n: '737', d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
+describe('vuelos que Aena retira tras despegar', () => {
+  it('departedLegs: lo que hay que guardar para la siguiente descarga (salidos de ayer y hoy)', () => {
+    const legs = [dleg(), dleg({ n: '1', std: 'EMB', st: 'EMB' }), dleg({ n: '2', d: '2026-09-22' })];
+    expect(departedLegs(legs, '2026-09-24').map(l => l.n)).toEqual(['737']);
+  });
+  it('se conserva la salida ya despegada hasta el día siguiente', () => {
+    const old = [dleg(), dleg({ n: '100', std: 'EMB', st: 'EMB' }), dleg({ n: '5', d: '2026-09-22' })];
+    const fresh = [dleg({ n: '739', d: '2026-09-25' })];
+    expect(keepDeparted(old, fresh, '2026-09-24').map(l => l.n)).toEqual(['739', '737']);
+  });
+  it('si Aena lo sigue publicando, gana lo nuevo', () => {
+    expect(keepDeparted([dleg({ ed: 'viejo' })], [dleg()], '2026-09-24')).toEqual([dleg()]);
+  });
+});
+

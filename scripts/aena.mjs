@@ -108,6 +108,20 @@ export function mergeLegs(old, fresh, freshDates, today) {
   return [...fresh, ...kept];
 }
 
+// Aena retira la salida unas 2 h después de despegar: se conserva (tal cual la dejó Aena) hasta el día siguiente,
+// para poder seguir mirando el radar en vuelos largos.
+export function keepDeparted(old, fresh, today) {
+  const key = l => `${l.al}|${l.n}|${l.d}|${l.o}|${l.a}`;
+  const present = new Set(fresh.map(key));
+  return [...fresh, ...departedLegs(old, today).filter(l => !present.has(key(l)))];
+}
+
+// Salidas ya despegadas de ayer y hoy (lo que se guarda en data/flights/_departed.json para la siguiente descarga).
+export function departedLegs(legs, today) {
+  const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  return legs.filter(l => (l.std ?? l.st) === 'BOR' && l.d >= yesterday);
+}
+
 const SAFE_AL = /^[A-Z0-9]{2}$/;
 const SAFE_N = /^\d{1,4}[A-Z]?$/;
 

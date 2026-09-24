@@ -136,6 +136,14 @@ describe('radar', () => {
     const html = flightCardHtml({ ...c, radar: { state: 'volando', callsign: 'EIN737', altM: 4808, altFt: 15775, kmh: 669, seenS: 12 } });
     expect(html).toContain('Según el radar (adsb.lol): a 4.800 m (15.800 pies), a 669 km/h. Última señal hace 12 s, con el indicativo EIN737.');
   });
+  it('cuánto le queda: destacado, y dicho que es un cálculo de Turbi y no una hora oficial', () => {
+    const r = { state: 'volando', callsign: 'EIN737', altM: 10363, altFt: 34000, kmh: 812, seenS: 4 };
+    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: 320, etaMin: 24 } })).toContain(
+      '<strong>Aterrizaría en aprox. 24 min</strong> · cálculo de Turbi con el radar: quedan 320 km a 812 km/h. No es una hora oficial.');
+    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: 1300, etaMin: 96 } })).toContain('<strong>Aterrizaría en aprox. 1 h 36 min</strong>');
+    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: 20, etaMin: 2 } })).toContain('<strong>Está a punto de aterrizar</strong>');
+    expect(flightCardHtml({ ...c, radar: r })).not.toContain('Aterrizaría');
+  });
   it('sin datos: se dice sin deducir nada', () => {
     const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-datos', callsign: 'EIN737' } });
     expect(html).toContain('El radar no lo encuentra con el indicativo EIN737: puede haber aterrizado o emitir con otro indicativo.');

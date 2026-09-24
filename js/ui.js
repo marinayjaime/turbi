@@ -42,7 +42,12 @@ function radarHtml(r) {
   if (r.state === 'volando') {
     const alt = `a ${thousands(Math.round(r.altM / 100) * 100)} m (${thousands(Math.round(r.altFt / 100) * 100)} pies)`;
     const speed = r.kmh ? `, a ${r.kmh} km/h` : '';
-    return `<p class="radar">Según el radar (adsb.lol): ${esc(alt)}${esc(speed)}. Última señal hace ${esc(r.seenS)} s, con el indicativo ${esc(r.callsign)}.</p>`;
+    const eta = Number.isFinite(r.etaMin)
+      ? `<strong>${r.etaMin <= 2 ? 'Está a punto de aterrizar'
+        : `Aterrizaría en aprox. ${r.etaMin >= 60 ? `${Math.floor(r.etaMin / 60)} h ${r.etaMin % 60} min` : `${r.etaMin} min`}`}</strong>`
+        + ` · cálculo de Turbi con el radar: quedan ${esc(thousands(r.remainingKm))} km a ${esc(r.kmh)} km/h. No es una hora oficial.<br>`
+      : '';
+    return `<p class="radar">${eta}Según el radar (adsb.lol): ${esc(alt)}${esc(speed)}. Última señal hace ${esc(r.seenS)} s, con el indicativo ${esc(r.callsign)}.</p>`;
   }
   if (r.state === 'sin-datos') {
     return `<p class="radar muted">El radar no lo encuentra con el indicativo ${esc(r.callsign)}: puede haber aterrizado o emitir con otro indicativo.</p>`;
