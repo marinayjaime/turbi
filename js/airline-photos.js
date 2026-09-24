@@ -14,11 +14,14 @@ export async function loadAirlinePhotos(fetchFn = fetch) {
   }
 }
 
-// leg.op = aerolínea que opera según Aena (solo si es segura).
-export function photoFor(db, leg) {
+// leg.op = aerolínea que opera según Aena (solo si es segura). Si no lo es (código compartido), foto de la aerolínea
+// del número buscado (al), marcada con shared para que la ficha diga que Aena no indica quién lo opera.
+export function photoFor(db, leg, al = null) {
   const model = aircraftName(leg.ac);
-  if (!db || !leg.op || !model) return null;
-  return db.photos?.[`${leg.op}|${model}`] ?? null;
+  if (!db || !model) return null;
+  if (leg.op) return db.photos?.[`${leg.op}|${model}`] ?? null;
+  const p = al ? db.photos?.[`${al}|${model}`] : null;
+  return p ? { ...p, shared: true } : null;
 }
 
 export function operatorName(db, leg) {

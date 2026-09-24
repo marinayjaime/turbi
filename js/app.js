@@ -154,7 +154,7 @@ function flightCard(q, durationMin, photos = null) {
   return {
     al: schedule.al,
     title: `${schedule.name ?? schedule.al} ${schedule.al} ${schedule.n}`,
-    number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg), operator: operatorName(photos, leg),
+    number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg, schedule.al), operator: operatorName(photos, leg),
     route: `${origin.city} a ${destination.city}`,
     status: departedText(leg, destination.city) ? { text: departedText(leg, destination.city), tone: 'info' } : flightStatus(leg),
     o: leg.o, a: leg.a, duration: durationMin,

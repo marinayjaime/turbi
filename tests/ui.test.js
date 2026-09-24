@@ -209,6 +209,9 @@ describe('cabecera: foto del modelo y logo junto al número', () => {
   it('operada por otra aerolínea: se dice', () => {
     expect(flightCardHtml({ ...c, operator: 'Air Nostrum' })).toContain('<p>Aer Lingus · Palma a Dublín · Operado por Air Nostrum</p>');
   });
+  it('foto por código compartido: lo dice debajo de la foto', () => {
+    expect(flightCardHtml({ ...c, photo: { ...photo, shared: true } })).toContain('Vuelo con código compartido: Aena no indica qué aerolínea lo opera. ');
+  });
   it('sin foto real de esa aerolínea y modelo: sin foto', () => {
     expect(flightCardHtml({ ...c, photo: null })).not.toContain('plane-photo');
   });
