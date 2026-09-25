@@ -137,8 +137,8 @@ function airportBlock(label, a) {
   return `
       <div class="apt">
         <p class="apt-title">${label} · ${esc(a.icao ?? a.iata)}</p>
-        <p class="apt-sub">Ahora</p><p>${esc(metarLine(a))}</p>${raw('Ver parte oficial (METAR)', a.metarRaw)}
-        <p class="apt-sub">Previsión en el aeropuerto</p>${taf}${raw('Ver previsión oficial (TAF)', a.tafRaw)}
+        <p class="apt-label">Ahora</p><p>${esc(metarLine(a))}</p>${raw('Ver parte oficial (METAR)', a.metarRaw)}
+        <p class="apt-label">Previsión en el aeropuerto</p>${taf}${raw('Ver previsión oficial (TAF)', a.tafRaw)}
       </div>`;
 }
 
