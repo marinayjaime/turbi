@@ -129,7 +129,9 @@ ${photoHtml(c)}
         ${c.gateChanged ? '<span class="tag warn">Cambio de puerta</span>' : ''}
         ${c.dep.gate && /^[A-Z]$/i.test(c.dep.gate) ? '<small>Por ahora solo se conoce la zona; la puerta exacta se anuncia más cerca de la salida.</small>' : ''}
       </div>` : ''}
-      ${c.past ? '<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>'
+      ${c.past ? `<p class="foot">${c.arr?.estimated ? 'Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.'
+        : c.dep?.estimated ? 'Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.'
+        : 'Horas finales publicadas por Aena y guardadas por Turbi.'}</p>`
         : c.updatedAgo ? `<p class="foot">Datos actualizados ${esc(c.updatedAgo)}</p>` : ''}
     </section>`;
 }

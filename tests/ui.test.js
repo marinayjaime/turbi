@@ -266,6 +266,11 @@ describe('vuelo pasado (del histórico)', () => {
     const html = flightCardHtml(c);
     expect(html).not.toContain('Puerta de embarque');
     expect(html).toContain('<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>');
+    // Si una de las horas es una estimación de Turbi, el pie no puede decir que todas son de Aena
+    expect(flightCardHtml({ ...c, arr: { date: '2026-09-24', time: '22:50', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' } }))
+      .toContain('<p class="foot">Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.</p>');
+    expect(flightCardHtml({ ...c, dep: { date: '2026-09-24', time: '08:30', estimated: true, note: 'x' } }))
+      .toContain('<p class="foot">Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.</p>');
   });
 });
 
