@@ -34,14 +34,16 @@ Se aplica en este orden y nunca se mezclan fuentes:
   - Nunca se da una hora anterior a ahora + 5 min (+ 3 min a menos de 30 km) con el avión en el aire.
   - Se ignoran los saltos de posición imposibles (más de 100 km hacia atrás, o más de 1.300 km/h entre dos lecturas).
 - **Radar perdido:** el tiempo sin señal se mide desde la última observación ADS-B (consulta − `seenS`), no desde la consulta.
-  - Se conserva la última ETA en vuelo durante 60 min.
-  - Con menos de 12 min de antigüedad mantiene su confianza.
-  - A partir de 12 min, la confianza pasa a baja y la ficha dice «Última estimación Turbi disponible (hace X min…)».
+  - **Una ETA ya corregida en vuelo nunca se sustituye por la previa al vuelo** solo por perder la señal ADS-B: es mejor dato.
+  - Menos de 12 min: mantiene su confianza y la nota «Estimación Turbi actualizada en vuelo».
+  - De 12 a 60 min: confianza baja; «Última estimación Turbi disponible (hace X min, sin señal de radar desde entonces)».
+  - Más de 60 min: la misma hora, confianza muy baja (`very-low`); «Última estimación Turbi disponible · sin datos recientes (hace X h Y min)». Ya no se suaviza ni se compara con ella una lectura nueva.
+  - Límite absoluto: 24 h sin señal (el vuelo más largo dura ~17 h). Después, sin ETA («Llegada —»), nunca la previa al vuelo.
 - Se muestra redondeada a 5 min y en la hora local del aeropuerto de destino: se calcula en UTC y se convierte con su zona horaria, cambio de día incluido.
 - La última ETA en vuelo se guarda en memoria y, para que sobreviva a reabrir la app, también en el almacenamiento del navegador (`turbi-eta`, con limpieza a las 24 h).
 
 ## 4. Parámetros = heurísticas
-**Todos los valores anteriores son heurísticas razonables, no valores demostrados**: 800 km/h, 150 km y 23 min, ×1,05, pesos del 40/70/90 %, factores de subida y velocidad, curva de antigüedad (10 s, 180 s, 0,3), 12/60 min, límites de salto, suavizado (½, 8/4 min), mínimos de 5/3 min y redondeo a 5 min.
+**Todos los valores anteriores son heurísticas razonables, no valores demostrados**: 800 km/h, 150 km y 23 min, ×1,05, pesos del 40/70/90 %, factores de subida y velocidad, curva de antigüedad (10 s, 180 s, 0,3), 12/60 min y 24 h, límites de salto, suavizado (½, 8/4 min), mínimos de 5/3 min y redondeo a 5 min.
 
 Pendiente: guardar la ETA predicha (con su método, distancia y fase) y compararla con la llegada real cuando se conozca, para medir el error por fase y distancia y ajustar estos valores.
 

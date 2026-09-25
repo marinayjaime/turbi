@@ -45,6 +45,32 @@ describe('estimación Turbi', () => {
     const prev = { ms: dep('2026-09-25', '19:17'), at: now - 30 * MIN, method: 'estimated-inflight', remainingKm: 500, confidence: 'medium' };
     expect(estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: now, radar: null, prev }))).toMatchObject({ confidence: 'low', held: true, ageMin: 30 });
   });
+  describe('sin señal ADS-B mucho tiempo: nunca se vuelve a la estimación previa al vuelo', () => {
+    const obs = dep('2026-09-25', '18:00');
+    const prev = { ms: dep('2026-09-25', '19:17'), at: obs, method: 'estimated-inflight', remainingKm: 500, confidence: 'medium' };
+    const after = min => estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: obs + min * MIN, radar: { state: 'sin-datos' }, prev }));
+    it('exactamente 60 min: última ETA, confianza baja, «Última estimación Turbi disponible»', () => {
+      const r = after(60);
+      expect(r).toMatchObject({ time: '18:15', method: 'estimated-inflight', confidence: 'low', held: true, ageMin: 60 });
+      expect(etaSide(r).note).toBe('Última estimación Turbi disponible (hace 60 min, sin señal de radar desde entonces)');
+    });
+    it('61 min: la misma hora (no salta a 18:30), confianza aún menor y «sin datos recientes»', () => {
+      const r = after(61);
+      expect(r).toMatchObject({ time: '18:15', ms: prev.ms, method: 'estimated-inflight', confidence: 'very-low', held: true, ageMin: 61 });
+      expect(etaSide(r).note).toBe('Última estimación Turbi disponible · sin datos recientes (hace 1 h 1 min)');
+    });
+    it('varias horas sin radar: se mantiene la última ETA conocida', () => {
+      const r = after(5 * 60 + 7);
+      expect(r).toMatchObject({ ms: prev.ms, method: 'estimated-inflight', confidence: 'very-low' });
+      expect(etaSide(r).note).toBe('Última estimación Turbi disponible · sin datos recientes (hace 5 h 7 min)');
+    });
+    it('nunca pasa de estimated-inflight a estimated-preflight solo por perder el radar', () => {
+      for (let min = 0; min <= 24 * 60; min += 7) expect(after(min).method).toBe('estimated-inflight');
+    });
+    it('límite absoluto: más de 24 h sin señal → sin ETA (tampoco la previa al vuelo)', () => {
+      expect(after(24 * 60 + 1)).toBeNull();
+    });
+  });
   it('5. cancelado: sin ETA', () => {
     expect(estimateArrival(base({ leg: intl({ st: 'CAN', std: 'CAN' }) }))).toBeNull();
   });

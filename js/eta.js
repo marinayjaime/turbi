@@ -19,8 +19,10 @@ const DESCENT_MIN = 23; // heurística: …que llevan unos 23 min, con tráfico
 const ROUTE_FACTOR = 1.05; // heurística: la ruta real es algo más larga que la línea recta
 const APPROACH_FACTOR = 1.3, APPROACH_KMH = 400, APPROACH_MIN = 5; // heurística: < 100 km (vectores, aproximación)
 const WEIGHTS = { far: 0.4, mid: 0.7, near: 0.9 }; // heurística: peso del radar a > 500 km, 100–500 km y < 100 km
-const HOLD_MIN = 60; // heurística: una ETA en vuelo se conserva hasta 60 min sin observación ADS-B nueva…
-const STALE_MIN = 12; // heurística: …pero a partir de 12 min es «la última disponible», con confianza baja
+// Sin observación ADS-B nueva, la última ETA en vuelo NUNCA se sustituye por la previa al vuelo (es mejor dato):
+const STALE_MIN = 12; // heurística: hasta 12 min, igual que estaba; desde 12, «la última disponible», confianza baja
+const HOLD_MIN = 60; // heurística: desde 60 min, «sin datos recientes», confianza muy baja (y ya no suaviza ni compara)
+const MAX_HOLD_H = 24; // heurística: límite absoluto (el vuelo más largo dura ~17 h): después, sin ETA (nunca la previa)
 const JUMP_KM = 100; // heurística: la distancia restante no puede crecer más de esto entre dos lecturas
 const MAX_KMH_BETWEEN = 1300; // heurística: ni bajar más rápido que esto
 const MAX_STEP_MIN = { far: 8, near: 4 }; // heurística: cuánto puede moverse la ETA por actualización
@@ -94,10 +96,11 @@ function smooth(rawMs, prev, nowMs, remainingKm) {
 const result = (ms, tz, method, confidence, extra = {}) =>
   ({ ...localParts(round5(ms), tz), source: 'turbi', method, confidence, ms, ...extra });
 
-// Última ETA en vuelo, conservada sin radar: con su antigüedad; pasado STALE_MIN, confianza baja.
+// Última ETA en vuelo, conservada sin radar: con su antigüedad y su confianza rebajada según pasa el tiempo.
 function held(prev, nowMs, tz) {
   const ageMin = Math.round((nowMs - prev.at) / MIN);
-  return result(prev.ms, tz, 'estimated-inflight', ageMin < STALE_MIN ? prev.confidence ?? 'low' : 'low', { held: true, ageMin });
+  const confidence = ageMin < STALE_MIN ? prev.confidence ?? 'low' : ageMin <= HOLD_MIN ? 'low' : 'very-low';
+  return result(prev.ms, tz, 'estimated-inflight', confidence, { held: true, ageMin });
 }
 
 // leg: tramo de Aena · depUtcMs: salida (real/estimada/programada) en UTC · plannedMin: duración estimada ·
@@ -111,10 +114,12 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
   }
   if (!Number.isFinite(depUtcMs) || !(plannedMin > 0) || !tz) return null;
   const planMs = depUtcMs + plannedMin * MIN;
-  const holdPrev = prev?.method === 'estimated-inflight' && nowMs - prev.at <= HOLD_MIN * MIN;
+  const hadInflight = prev?.method === 'estimated-inflight';
+  const recentPrev = hadInflight && nowMs - prev.at <= HOLD_MIN * MIN; // para detectar saltos de posición
+  const withinMax = hadInflight && nowMs - prev.at <= MAX_HOLD_H * 3600000;
 
   if (radarUsable(radar)) {
-    if (holdPrev && jumped(radar, prev, nowMs)) return held(prev, nowMs, tz);
+    if (recentPrev && jumped(radar, prev, nowMs)) return held(prev, nowMs, tz);
     const phase = flightPhase(radar);
     const speedOk = radar.kmh >= VALID_KMH[0] && radar.kmh <= VALID_KMH[1];
     const w = radarWeight(radar, phase, speedOk);
@@ -125,15 +130,18 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
     const confidence = phase === 'cruise' && speedOk && (radar.seenS ?? 0) <= 60 ? 'medium' : 'low';
     return result(ms, tz, 'estimated-inflight', confidence, { remainingKm: radar.remainingKm, phase, seenS: radar.seenS ?? 0 });
   }
-  // Sin radar ahora (lo perdió un momento): la última ETA en vuelo sigue valiendo un rato.
-  if (holdPrev) return held(prev, nowMs, tz);
+  // Sin radar ahora: la última ETA en vuelo sigue siendo mejor que la previa al vuelo; nunca se vuelve a esta.
+  if (withinMax) return held(prev, nowMs, tz);
+  if (hadInflight) return null; // más de MAX_HOLD_H sin señal: sin ETA
   return result(planMs, tz, 'estimated-preflight', 'low');
 }
 
 // Lado «Llegada» de la ficha cuando la hora es una estimación Turbi (con Aena, la ficha usa su hora tal cual).
 export function etaSide(eta) {
   if (eta?.source !== 'turbi') return null;
+  const age = m => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
   const note = eta.method !== 'estimated-inflight' ? 'Estimación Turbi'
+    : eta.held && eta.ageMin > HOLD_MIN ? `Última estimación Turbi disponible · sin datos recientes (hace ${age(eta.ageMin)})`
     : eta.held && eta.ageMin >= STALE_MIN ? `Última estimación Turbi disponible (hace ${eta.ageMin} min, sin señal de radar desde entonces)`
     : 'Estimación Turbi actualizada en vuelo';
   return { date: eta.date, time: eta.time, estimated: true, note };

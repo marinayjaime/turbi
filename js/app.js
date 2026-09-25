@@ -226,11 +226,12 @@ async function run(q) {
     const etaCtx = { depUtcMs: departureMs, plannedMin: profile.durationMin, tz: dTz };
     const eta = turbiEta(q, etaCtx);
     const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta) : null;
-    const estimatedArrival = eta?.source === 'turbi';
+    // Sin llegada de Aena, cualquier hora de llegada es una estimación Turbi (aunque ya no haya ETA que mostrar).
+    const estimatedArrival = q.kind === 'schedule' && !legArrival(q.leg);
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
-    const arrivalMs = estimatedArrival ? eta.ms : profile.arrivalMs;
+    const arrivalMs = eta?.source === 'turbi' ? eta.ms : profile.arrivalMs;
     const note = arrivalMs < Date.now() ? (q.leg ? endedNote(q.leg, { estimated: estimatedArrival }) : 'Este vuelo ya ha aterrizado.')
       : rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'
