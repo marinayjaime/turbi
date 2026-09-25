@@ -194,3 +194,20 @@ describe('radar: el servidor está identificando el avión por su ruta (en segun
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('la sección Turbulencias aparece siempre en la ficha de un vuelo', () => {
+  it('vuelo ya aterrizado (Aena) y Open-Meteo con 429: ficha, puntualidad y la sección con el motivo', async () => {
+    const dep = Date.now() - 4 * 3600000, arr = dep + 75 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, MAD);
+    const leg = { d, o: 'PMI', a: 'MAD', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, st: 'LND', std: 'BOR', sta: 'LND', ac: '738W' };
+    await openApp(network({ flights: { UX6031: { name: 'Air Europa', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany }));
+    await search('UX6031', d);
+    await until(() => $('#result .flight'), 'ficha');
+    await networkIdle();
+    expect([...document.querySelectorAll('#result h3')].map(h => h.textContent)).toContain('Turbulencias');
+    expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+    expect($('#punctuality')).not.toBeNull();
+    expect($('#error').hidden).toBe(true);
+  });
+});
+

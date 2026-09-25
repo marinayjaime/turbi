@@ -26,13 +26,14 @@ export function departureMs(leg) {
   return guess - offset;
 }
 
-// Solo si Aena dice que ha salido y no informa de la llegada (destino fuera de Aena).
-// En el aire según Aena: salida «Finalizado» sin estado de llegada (destino extranjero) o el aeropuerto de llegada
-// dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no despegó, ya llegó, cancelado o desviado.
+// Puede estar en el aire según Aena: salida confirmada («Finalizado», BOR) y llegada todavía no final (sin estado o
+// uno intermedio: INI, SCH, HOR, TMA…), o la llegada dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no despegó,
+// ya llegó (LND, IBK, OPE, OPF o BOR en la llegada), cancelado o desviado. Misma regla que la app (js/radar.js).
+const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 export function needsRadar(leg, nowMs) {
   const flags = [leg.st, leg.std, leg.sta];
-  if (!leg.icao || flags.includes('CAN') || flags.includes('DES')) return false;
-  const inAir = ['FLY', 'FNL'].includes(leg.sta) || ((leg.std ?? leg.st) === DEPARTED && !leg.sta);
+  if (!leg.icao || flags.includes('CAN') || flags.includes('DES') || ARR_FINAL.has(leg.sta)) return false;
+  const inAir = ['FLY', 'FNL'].includes(leg.sta) || (leg.std ?? leg.st) === DEPARTED;
   if (!inAir) return false;
   const dep = departureMs(leg);
   return dep !== null && nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;

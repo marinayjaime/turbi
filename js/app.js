@@ -11,7 +11,7 @@ import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
 import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner,
-  flightShellHtml, forecastSectionHtml, forecastUnavailableHtml } from './ui-forecast.js';
+  flightShellHtml, flightNoteHtml, forecastSectionHtml, forecastUnavailableHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { renderMap } from './map.js';
@@ -269,8 +269,7 @@ async function run(q) {
     if (note) {
       if (!flight) throw new Error(note);
       currentView = null;
-      renderResult(els.result, { flight, note });
-      els.result.querySelector('.flight')?.insertAdjacentHTML('afterend', `<section id="punctuality">${punctualityHtml(punct)}</section>`);
+      els.result.innerHTML = flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
       show('result');
       await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale, etaCtx))]);
       return;

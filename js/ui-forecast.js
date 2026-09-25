@@ -223,6 +223,15 @@ export function flightShellHtml({ flight, punctuality = null }) {
     </div>`;
 }
 
+// Ficha con aviso (vuelo terminado, sin hora de llegada, cancelado, demasiado lejano…): no hay previsión que calcular,
+// pero la sección Turbulencias está siempre y dice por qué.
+export function flightNoteHtml({ flight, punctuality = null, note }) {
+  return `${headHtml({ flight, punctuality })}
+    <div id="forecast-area">
+      <p class="note">${esc(note)}</p>
+    </div>`;
+}
+
 export function forecastUnavailableHtml(err) {
   const why = err?.rateLimited
     ? `Open-Meteo ha recibido demasiadas consultas.${err.retryAfterMs ? ` Puedes reintentar en unos ${Math.ceil(err.retryAfterMs / 1000)} s.` : ''}`

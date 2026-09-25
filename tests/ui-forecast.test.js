@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summaryHtml, timelineHtml, segmentDetailHtml, altitudeHtml, freshnessHtml, aviationHtml, offlineBanner, renderForecast, flText } from '../js/ui-forecast.js';
+import { flightNoteHtml, summaryHtml, timelineHtml, segmentDetailHtml, altitudeHtml, freshnessHtml, aviationHtml, offlineBanner, renderForecast, flText } from '../js/ui-forecast.js';
 
 const NOW = Date.parse('2026-09-24T10:18:00Z');
 const seg = (level, startMin, endMin, extra = {}) => ({ level, startMin, endMin, causes: level ? ['vertical_shear', 'jet_stream'] : [], flMin: 350, flMax: 350, mid: { kmFromOrigin: 180 }, ...extra });
@@ -188,3 +188,14 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
     for (const id of ['trend', 'timeline', 'altitudes', 'aviation', 'map', 'fresh']) expect(html).toContain(`id="${id}"`);
   });
 });
+
+describe('ficha con aviso (vuelo terminado, sin llegada, cancelado…): la sección Turbulencias sigue ahí', () => {
+  it('encabezado Turbulencias y el motivo dentro de su sección', () => {
+    const flight = { al: 'UX', title: 'UX 6030', route: 'y', tabs: [], status: { text: 'Ha llegado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 75,
+      dep: { date: '2026-09-25', time: '10:51', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 1 min', stale: false };
+    const html = flightNoteHtml({ flight, punctuality: null, note: 'Este vuelo ya ha aterrizado.' });
+    expect(html).toContain('<h3 class="section">Turbulencias</h3>');
+    expect(html).toMatch(/<div id="forecast-area">\s*<p class="note">Este vuelo ya ha aterrizado\.<\/p>\s*<\/div>/);
+  });
+});
+

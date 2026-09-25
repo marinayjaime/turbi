@@ -6,14 +6,15 @@ import { flightStatus } from './schedule.js';
 
 const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 
-// Se consulta el radar si el vuelo está en el aire según Aena: salida «Finalizado» sin estado de llegada (destino
-// extranjero) o el aeropuerto de llegada dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no ha despegado, ya
-// llegó, está cancelado o desviado.
+// Se consulta el radar si el vuelo puede estar en el aire según Aena: salida confirmada («Finalizado», BOR) y llegada
+// todavía no final (sin estado, o uno intermedio: INI, SCH, HOR, TMA…), o la llegada dice «En vuelo»/«Aproximándose»
+// (FLY/FNL). Nunca si no ha despegado, ya llegó (LND, IBK, OPE, OPF, BOR), está cancelado o desviado.
+// La misma regla que el servidor (server/radar.mjs, needsRadar), que además limita la ventana de tiempo.
 const IN_AIR = new Set(['FLY', 'FNL']);
 export function wantsRadar(leg, liveBase = LIVE_BASE) {
   const flags = [leg.st, leg.std, leg.sta];
-  if (!liveBase || flags.includes('CAN') || flags.includes('DES')) return false;
-  return IN_AIR.has(leg.sta) || ((leg.std ?? leg.st) === 'BOR' && !leg.sta);
+  if (!liveBase || flags.includes('CAN') || flags.includes('DES') || ARR_FINAL.has(leg.sta)) return false;
+  return IN_AIR.has(leg.sta) || (leg.std ?? leg.st) === 'BOR';
 }
 
 // Aena da la salida por finalizada pero no publica la llegada (no es un aeropuerto suyo): se dice.
