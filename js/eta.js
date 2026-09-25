@@ -19,7 +19,7 @@ const DESCENT_MIN = 23; // heurística: …que llevan unos 23 min, con tráfico
 const ROUTE_FACTOR = 1.05; // heurística: la ruta real es algo más larga que la línea recta
 const APPROACH_FACTOR = 1.3, APPROACH_KMH = 400, APPROACH_MIN = 5; // heurística: < 100 km (vectores, aproximación)
 const WEIGHTS = { far: 0.4, mid: 0.7, near: 0.9 }; // heurística: peso del radar a > 500 km, 100–500 km y < 100 km
-const HOLD_MIN = 60; // heurística: una ETA en vuelo se conserva hasta 60 min sin radar…
+const HOLD_MIN = 60; // heurística: una ETA en vuelo se conserva hasta 60 min sin observación ADS-B nueva…
 const STALE_MIN = 12; // heurística: …pero a partir de 12 min es «la última disponible», con confianza baja
 const JUMP_KM = 100; // heurística: la distancia restante no puede crecer más de esto entre dos lecturas
 const MAX_KMH_BETWEEN = 1300; // heurística: ni bajar más rápido que esto
@@ -57,9 +57,11 @@ function radarRemainingMin({ remainingKm, kmh }, phase) {
 }
 
 // Antigüedad de la señal ADS-B (s): una posición de hace 2–3 min no vale lo mismo que una de hace 5 s.
-// Cerca del destino (donde el avión cambia rápido de rumbo y velocidad) la penalización es mayor. Heurística.
-function freshness(seenS = 0, remainingKm) {
-  const f = seenS <= 15 ? 1 : seenS <= 60 ? 0.8 : seenS <= 120 ? 0.6 : 0.4;
+// Heurística: ×1 hasta FRESH_S; después baja de forma continua hasta ×MIN_FRESHNESS a los MAX_SEEN_S (el servidor
+// no da por «en el aire» señales más viejas). Cerca del destino (rumbo y velocidad cambian rápido) se eleva al cuadrado.
+const FRESH_S = 10, MAX_SEEN_S = 180, MIN_FRESHNESS = 0.3;
+export function freshness(seenS = 0, remainingKm = Infinity) {
+  const f = seenS <= FRESH_S ? 1 : Math.max(MIN_FRESHNESS, 1 - (1 - MIN_FRESHNESS) * (seenS - FRESH_S) / (MAX_SEEN_S - FRESH_S));
   return remainingKm < 100 ? f * f : f;
 }
 
@@ -121,7 +123,7 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
     const raw = Math.max(floor, w * radarMs + (1 - w) * planMs);
     const ms = Math.max(floor, smooth(raw, prev, nowMs, radar.remainingKm));
     const confidence = phase === 'cruise' && speedOk && (radar.seenS ?? 0) <= 60 ? 'medium' : 'low';
-    return result(ms, tz, 'estimated-inflight', confidence, { remainingKm: radar.remainingKm, phase });
+    return result(ms, tz, 'estimated-inflight', confidence, { remainingKm: radar.remainingKm, phase, seenS: radar.seenS ?? 0 });
   }
   // Sin radar ahora (lo perdió un momento): la última ETA en vuelo sigue valiendo un rato.
   if (holdPrev) return held(prev, nowMs, tz);
@@ -155,7 +157,8 @@ export function recallEta(key, storage = globalThis.localStorage) {
 
 export function rememberEta(key, eta, nowMs = Date.now(), storage = globalThis.localStorage) {
   if (eta?.method !== 'estimated-inflight' || eta.held) return;
-  const v = { ms: eta.ms, at: nowMs, method: eta.method, remainingKm: eta.remainingKm, confidence: eta.confidence };
+  // at = momento de la observación ADS-B (consulta − seenS): de ahí se mide cuánto lleva sin señal.
+  const v = { ms: eta.ms, at: nowMs - (eta.seenS ?? 0) * 1000, method: eta.method, remainingKm: eta.remainingKm, confidence: eta.confidence };
   memory.set(key, v);
   try {
     const all = JSON.parse(storage?.getItem(STORE) ?? '{}');

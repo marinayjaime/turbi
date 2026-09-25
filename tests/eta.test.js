@@ -79,6 +79,12 @@ describe('estimación Turbi', () => {
     });
     expect(new Set(shown).size).toBeLessThanOrEqual(2);
   });
+  it('el peso del radar baja de forma continua con la antigüedad de la señal (nunca pesa igual una más vieja)', () => {
+    const at = seenS => estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: dep('2026-09-25', '19:00'), radar: cruise({ seenS, remainingKm: 300 }) })).ms;
+    const planMs = dep('2026-09-25', '19:30');
+    const pull = [5, 20, 45, 60, 90, 120, 170].map(sec => Math.abs(at(sec) - planMs)); // cuánto aparta el radar la ETA del plan
+    pull.slice(1).forEach((p, i) => expect(p).toBeLessThan(pull[i]));
+  });
   it('señal ADS-B vieja: pesa menos que una reciente, sobre todo cerca del destino', () => {
     const at = (seenS, km) => estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: dep('2026-09-25', '19:00'), radar: cruise({ seenS, remainingKm: km }) }));
     const planMs = dep('2026-09-25', '19:30');
@@ -130,6 +136,11 @@ describe('última ETA en vuelo (memoria de la sesión y almacenamiento)', () => 
     expect(recallEta('FR1|2026-09-25', st)).toBeNull();
     rememberEta('FR1|2026-09-25', { method: 'estimated-inflight', ms: 5, remainingKm: 400, confidence: 'medium' }, 100, st);
     expect(recallEta('FR1|2026-09-25', st)).toEqual({ ms: 5, at: 100, method: 'estimated-inflight', remainingKm: 400, confidence: 'medium' });
+  });
+  it('la antigüedad se cuenta desde la observación ADS-B, no desde la consulta (consulta − seenS)', () => {
+    const st = fake();
+    rememberEta('LH9|2026-09-25', { method: 'estimated-inflight', ms: 5, remainingKm: 400, confidence: 'medium', seenS: 120 }, 1000000, st);
+    expect(recallEta('LH9|2026-09-25', st).at).toBe(1000000 - 120000);
   });
   it('sobrevive a reabrir la app (se lee del almacenamiento si no está en memoria)', () => {
     const st = fake();
