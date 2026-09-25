@@ -1,6 +1,7 @@
 // Radar (ADS-B) en la ficha: solo para vuelos que Aena da por salidos sin publicar su llegada (destino extranjero).
 // El servidor en directo (server/radar.mjs) busca el vuelo por su indicativo exacto; aquí solo se muestra lo que dice.
 import { LIVE_BASE } from './config.js';
+import { STALE_MIN } from './eta.js';
 
 const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 
@@ -38,9 +39,48 @@ export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE) {
   }
 }
 
-// Ficha con la respuesta del radar. Solo «volando» cambia el estado; lo demás se explica sin cambiarlo.
-export function withRadar(card, radar) {
+const MIN = 60000;
+
+// Ficha con la respuesta del radar y la última vez que lo vio volando (lastSeenMs):
+//   ahora mismo            → «Volando» y panel de telemetría;
+//   hace menos de 12 min   → «Última señal: volando hace X min» (no es tiempo real; mismo umbral que la ETA);
+//   más tarde o nunca      → el estado oficial de Aena, y «sin señal ADS-B reciente».
+// Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
+// prueba varias variantes.
+export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
-  if (radar.state !== 'volando') return { ...card, radar };
-  return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
+  if (radar.state === 'volando') return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
+  const ageMin = Number.isFinite(lastSeenMs) ? Math.round((nowMs - lastSeenMs) / MIN) : null; // igual que la ETA
+  if (ageMin !== null && ageMin < STALE_MIN) {
+    const ago = ageMin < 1 ? 'menos de 1 min' : `${ageMin} min`;
+    return { ...card, status: { text: `Última señal: volando hace ${ago}`, tone: 'info' }, radar: { state: 'reciente', ageMin } };
+  }
+  return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal' } };
+}
+
+// Última vez que el radar vio el avión volando (hora de la observación = consulta − seenS): en memoria y, para
+// que sobreviva a reabrir la app, en el almacenamiento del navegador. Distinta de la ETA (js/eta.js).
+const seen = new Map();
+const SEEN_STORE = 'turbi-radar-seen';
+
+export function rememberSighting(key, radar, nowMs = Date.now(), storage = globalThis.localStorage) {
+  if (radar?.state !== 'volando') return;
+  const at = nowMs - (radar.seenS ?? 0) * 1000;
+  seen.set(key, at);
+  try {
+    const all = JSON.parse(storage?.getItem(SEEN_STORE) ?? '{}');
+    for (const [k, t] of Object.entries(all)) if (nowMs - t > 24 * 3600000) delete all[k];
+    all[key] = at;
+    storage?.setItem(SEEN_STORE, JSON.stringify(all));
+  } catch { /* sin almacenamiento: queda en memoria */ }
+}
+
+export function recallSighting(key, storage = globalThis.localStorage) {
+  if (seen.has(key)) return seen.get(key);
+  try {
+    const t = JSON.parse(storage?.getItem(SEEN_STORE) ?? '{}')[key];
+    return Number.isFinite(t) ? t : null;
+  } catch {
+    return null;
+  }
 }

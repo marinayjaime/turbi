@@ -19,7 +19,7 @@ import { currentPunctuality, fetchPunctuality, fetchPastFlight, dowOf, slotOf } 
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
-import { wantsRadar, fetchRadar, withRadar, departedText, endedNote, radarNote, ENDED_ESTIMATED } from './radar.js';
+import { wantsRadar, fetchRadar, withRadar, departedText, endedNote, radarNote, ENDED_ESTIMATED, rememberSighting, recallSighting } from './radar.js';
 import { estimateArrival, etaSide, recallEta, rememberEta } from './eta.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
@@ -192,7 +192,8 @@ function turbiEta(q, ctx, radar = null) {
 async function showRadar(q, flight, stale, ctx = null) {
   if (!flight || flight.stale || !q.leg || q.leg.past || !wantsRadar(q.leg)) return;
   const radar = await fetchRadar(q.schedule.al, q.schedule.n);
-  let card = withRadar(flight, radar);
+  rememberSighting(etaKey(q), radar);
+  let card = withRadar(flight, radar, recallSighting(etaKey(q)));
   if (flight.arr?.estimated) {
     const eta = turbiEta(q, ctx, radar);
     rememberEta(etaKey(q), eta);

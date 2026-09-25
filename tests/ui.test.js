@@ -165,9 +165,16 @@ describe('radar', () => {
     expect(html).toContain('class="status tone-info flying"');
     expect(html).not.toContain('telemetry');
   });
-  it('sin datos: se dice sin deducir nada', () => {
-    const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-datos', callsign: 'EIN737' } });
-    expect(html).toContain('El radar no lo encuentra con el indicativo EIN737: puede haber aterrizado o emitir con otro indicativo.');
+  it('sin señal reciente: mensaje genérico, sin un indicativo concreto (se prueban varias variantes) y sin deducir nada', () => {
+    const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-senal' } });
+    expect(html).toContain('<p class="radar muted">Sin señal ADS-B reciente para este vuelo.</p>');
+    expect(html).not.toMatch(/AEA|EIN|indicativo|aterriz/);
+  });
+  it('señal reciente (hace poco lo vio volando): lo dice el estado; sin panel ni texto extra', () => {
+    const html = flightCardHtml({ ...c, status: { text: 'Última señal: volando hace 5 min', tone: 'info' }, radar: { state: 'reciente', ageMin: 5 } });
+    expect(html).toContain('<span class="status tone-info">Última señal: volando hace 5 min</span>');
+    expect(html).not.toContain('telemetry');
+    expect(html).not.toContain('class="radar');
   });
   it('no disponible', () => {
     expect(flightCardHtml({ ...c, radar: { state: 'no-disponible' } })).toContain('El radar no responde ahora mismo.');

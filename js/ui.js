@@ -59,9 +59,8 @@ function radarHtml(r) {
   }<span class="tm-signal">Última señal hace ${esc(r.seenS)} s · ${esc(r.callsign)}</span></div>
       </div>`;
   }
-  if (r.state === 'sin-datos') {
-    return `<p class="radar muted">El radar no lo encuentra con el indicativo ${esc(r.callsign)}: puede haber aterrizado o emitir con otro indicativo.</p>`;
-  }
+  if (r.state === 'reciente') return ''; // lo dice el estado: «Última señal: volando hace X min»
+  if (r.state === 'sin-senal' || r.state === 'sin-datos') return '<p class="radar muted">Sin señal ADS-B reciente para este vuelo.</p>';
   return '<p class="radar muted">El radar no responde ahora mismo.</p>';
 }
 

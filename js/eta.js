@@ -20,7 +20,7 @@ const ROUTE_FACTOR = 1.05; // heurística: la ruta real es algo más larga que l
 const APPROACH_FACTOR = 1.3, APPROACH_KMH = 400, APPROACH_MIN = 5; // heurística: < 100 km (vectores, aproximación)
 const WEIGHTS = { far: 0.4, mid: 0.7, near: 0.9 }; // heurística: peso del radar a > 500 km, 100–500 km y < 100 km
 // Sin observación ADS-B nueva, la última ETA en vuelo NUNCA se sustituye por la previa al vuelo (es mejor dato):
-const STALE_MIN = 12; // heurística: hasta 12 min, igual que estaba; desde 12, «la última disponible», confianza baja
+export const STALE_MIN = 12; // heurística: hasta 12 min, igual que estaba; desde 12, «la última disponible», confianza baja
 const HOLD_MIN = 60; // heurística: desde 60 min, «sin datos recientes», confianza muy baja (y ya no suaviza ni compara)
 const MAX_HOLD_H = 24; // heurística: límite absoluto (el vuelo más largo dura ~17 h): después, sin ETA (nunca la previa)
 const JUMP_KM = 100; // heurística: la distancia restante no puede crecer más de esto entre dos lecturas
