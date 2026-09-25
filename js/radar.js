@@ -2,6 +2,7 @@
 // El servidor en directo (server/radar.mjs) busca el vuelo por su indicativo exacto; aquí solo se muestra lo que dice.
 import { LIVE_BASE } from './config.js';
 import { STALE_MIN } from './eta.js';
+import { flightStatus } from './schedule.js';
 
 const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 
@@ -22,6 +23,23 @@ export const ENDED_ESTIMATED = 'Según la estimación de Turbi, el vuelo ya habr
 export function endedNote(leg, { estimated = false } = {}) {
   if (ARR_FINAL.has(leg?.sta)) return 'Este vuelo ya ha aterrizado.';
   return estimated ? ENDED_ESTIMATED : 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.';
+}
+
+// Estado que se muestra (distinto del último estado oficial de Aena, que no se toca):
+//   Aena confirma la llegada (o da otro estado de llegada), no ha salido, cancelado o desviado → estado oficial;
+//   ha salido y la llegada VISIBLE en la ficha (Aena o estimación Turbi) aún no ha pasado → «Ha salido»;
+//   ha salido y esa llegada ya pasó, o la ficha no muestra ninguna → «Histórico», etiqueta neutra (no es un estado
+//   operativo: nunca «aterrizado», «ha llegado» ni «completado» si ninguna fuente lo confirma).
+// «Volando» (radar) lo pone withRadar encima de esto. visibleArrivalMs = la misma hora que muestra la ficha, o null.
+export function presentStatus({ leg, city, visibleArrivalMs = null, nowMs = Date.now() }) {
+  const official = flightStatus(leg);
+  const flags = [leg.st, leg.std, leg.sta];
+  if ((leg.std ?? leg.st) !== 'BOR' || leg.sta || flags.includes('CAN') || flags.includes('DES')) return official;
+  if (Number.isFinite(visibleArrivalMs) && visibleArrivalMs > nowMs) {
+    return leg.sa ? official : { text: `Ha salido · Aena no informa de la llegada a ${city}`, tone: 'info' };
+  }
+  return { text: 'Histórico', tone: 'stale',
+    note: leg.sa || leg.ea ? 'Aena no ha confirmado la llegada' : 'Aena no publica la llegada a este destino' };
 }
 
 export const NO_ARRIVAL_NOTE = 'El vuelo ya ha salido y no hay una hora de llegada que mostrar: no se muestra la previsión de turbulencias.';

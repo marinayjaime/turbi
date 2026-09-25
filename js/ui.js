@@ -112,7 +112,8 @@ ${photoHtml(c)}
         ? `<span class="status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>
       <p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>`
         : `<span class="status tone-${esc(c.status.tone)}${c.status.flying ? ' flying' : ''}">${esc(c.status.text)}${c.status.flying
-          ? '<span class="fly" aria-hidden="true"><span class="fly-plane">✈</span></span>' : ''}</span>`}
+          ? '<span class="fly" aria-hidden="true"><span class="fly-plane">✈</span></span>' : ''}</span>${c.status.note
+          ? `<p class="status-note">${esc(c.status.note)}</p>` : ''}`}
       ${c.stale ? '' : radarHtml(c.radar)}
       <div class="route-line">
         <strong>${esc(c.o)}</strong>

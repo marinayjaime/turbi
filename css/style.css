@@ -169,6 +169,7 @@ button { font: inherit; cursor: pointer; }
 .tone-warn { background: #fff4e5; color: #b25e00; }
 .tone-bad { background: #fff2f1; color: #c4271c; }
 .tone-stale { background: #f2f2f7; color: #6e6e73; }
+.status-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 /* Panel de telemetría del radar: una sola ficha, siempre en cuadrícula 2×2 (la ficha nunca pasa de 480 px). */
 .telemetry { margin: 14px 0 6px; padding: 14px 16px 10px; border-radius: 16px; background: rgba(255, 255, 255, 0.62); border: 1px solid var(--line); }
 .tm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }

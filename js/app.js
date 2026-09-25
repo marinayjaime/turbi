@@ -19,7 +19,7 @@ import { currentPunctuality, fetchPunctuality, fetchPastFlight, dowOf, slotOf } 
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
-import { wantsRadar, fetchRadar, withRadar, departedText, arrivalNote, radarNote, ENDED_ESTIMATED, rememberSighting, recallSighting } from './radar.js';
+import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, rememberSighting, recallSighting } from './radar.js';
 import { turbiEstimate, etaSide, recallEta, rememberEta } from './eta.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
@@ -150,7 +150,7 @@ function flightTimes(q, oTz, dTz) {
 }
 
 // eta: llegada estimada por Turbi (solo si Aena no publica la llegada); durationEstimated: la duración es un cálculo.
-function flightCard(q, durationMin, photos = null, eta = null) {
+function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs = null) {
   const { leg, schedule, origin, destination } = q;
   const dep = legDeparture(leg), arr = legArrival(leg);
   return {
@@ -158,7 +158,8 @@ function flightCard(q, durationMin, photos = null, eta = null) {
     title: `${schedule.name ?? schedule.al} ${schedule.al} ${schedule.n}`,
     number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg, schedule.al), operator: operatorName(photos, leg, schedule.al),
     route: `${origin.city} a ${destination.city}`,
-    status: departedText(leg, destination.city) ? { text: departedText(leg, destination.city), tone: 'info' } : flightStatus(leg),
+    // Estado mostrado: con la misma llegada visible que la ficha (Aena o estimación Turbi); ver presentStatus.
+    status: presentStatus({ leg, city: destination.city, visibleArrivalMs }),
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: !arr,
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
     arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : etaSide(eta),
@@ -198,7 +199,11 @@ async function showRadar(q, flight, stale, ctx = null) {
   if (flight.arr?.estimated) {
     const eta = turbiEta(q, ctx, radar);
     rememberEta(etaKey(q), eta);
-    if (etaSide(eta)) card = { ...card, arr: etaSide(eta) };
+    // Nueva ETA visible → el estado se recalcula con ella (y el radar, si lo ve, sigue mandando).
+    const base = etaSide(eta)
+      ? { ...flight, arr: etaSide(eta), status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: eta.ms }) }
+      : { ...flight, arr: null, status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: null }) };
+    card = withRadar(base, radar, recallSighting(etaKey(q)));
   }
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
@@ -227,15 +232,18 @@ async function run(q) {
     // Llegada: la de Aena si la publica; si no, estimación Turbi (salida + duración estimada, en la hora del destino).
     const etaCtx = { depUtcMs: departureMs, plannedMin: profile.durationMin, tz: dTz };
     const eta = turbiEta(q, etaCtx);
-    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta) : null;
+    // La llegada visible (una sola fuente para la ficha, el estado y el aviso): Aena o la estimación Turbi.
+    const official = q.kind === 'schedule' ? legArrival(q.leg) : null;
+    const officialMs = official ? localToUtcMs(official.date, official.time, dTz) : null;
+    const visibleArrivalMs = officialMs ?? (eta?.source === 'turbi' ? eta.ms : null);
+    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs) : null;
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
     // Aviso de llegada: solo con la llegada que muestra la ficha (Aena o estimación Turbi visible), nunca con la
     // duración interna de buildProfile. En la consulta manual (sin horario de Aena) se usa la del perfil, como antes.
-    const official = q.kind === 'schedule' ? legArrival(q.leg) : null;
     const arrived = q.kind === 'schedule'
-      ? arrivalNote({ leg: q.leg, officialMs: official ? localToUtcMs(official.date, official.time, dTz) : null, eta, departureMs, nowMs: Date.now() })
+      ? arrivalNote({ leg: q.leg, officialMs, eta, departureMs, nowMs: Date.now() })
       : profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.' : null;
     const note = arrived ?? (rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'

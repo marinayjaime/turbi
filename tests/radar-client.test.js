@@ -174,3 +174,50 @@ describe('una sola fuente de verdad para la llegada: el aviso solo usa la llegad
     expect(arrivalNote({ leg: ei737({ past: false }), officialMs: null, eta: null, departureMs: now + 3600000, nowMs: now })).toBeNull();
   });
 });
+
+import { presentStatus } from '../js/radar.js';
+describe('estado de presentación: último estado oficial frente a lo que se muestra ahora', () => {
+  const H = 3600000, now = Date.parse('2026-09-25T02:00:00Z');
+  const ei = over => ({ d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
+  const st = (leg, arrivalMs) => presentStatus({ leg, city: 'Dublín', visibleArrivalMs: arrivalMs, nowMs: now });
+  it('salida confirmada + llegada visible futura → «Ha salido»', () => {
+    expect(st(ei(), now + 20 * 60000)).toEqual({ text: 'Ha salido · Aena no informa de la llegada a Dublín', tone: 'info' });
+  });
+  const HIST = { text: 'Histórico', tone: 'stale', note: 'Aena no publica la llegada a este destino' };
+  it('salida confirmada + llegada visible ya pasada, sin llegada oficial ni radar → «Histórico» (neutro)', () => {
+    expect(st(ei(), now - 60000)).toEqual(HIST);
+  });
+  it('llegada pasada hace 5 h: sigue sin «Ha salido»', () => {
+    expect(st(ei(), now - 5 * H)).toEqual(HIST);
+  });
+  it('sin ninguna llegada visible («Llegada —»): tampoco «Ha salido» indefinido', () => {
+    expect(st(ei({ past: true }), null)).toEqual(HIST);
+  });
+  it('ADS-B activo después de la llegada estimada → «Volando» vuelve a ganar', () => {
+    const card = { status: st(ei(), now - 2 * H) };
+    expect(withRadar(card, { state: 'volando', seenS: 0 }, null, now).status).toEqual({ text: 'Volando', tone: 'info', flying: true });
+  });
+  it('llegada confirmada por Aena → su estado oficial', () => {
+    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'LND', st: 'LND' }), now - 5 * H)).toEqual({ text: 'En tierra', tone: 'ok' });
+    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'IBK', st: 'IBK' }), now - 5 * H)).toEqual({ text: 'Ha llegado', tone: 'ok' });
+  });
+  it('Aena publica la hora de llegada pero no la confirma y ya pasó → «Histórico» · «Aena no ha confirmado la llegada»', () => {
+    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10' }), now - 5 * H))
+      .toEqual({ text: 'Histórico', tone: 'stale', note: 'Aena no ha confirmado la llegada' });
+  });
+  it('nunca infiere «aterrizado», «ha llegado», «completado» ni «llegada no confirmada» sin confirmación', () => {
+    for (const ms of [now + H, now - 60000, now - 5 * H, now - 48 * H, null]) {
+      expect(JSON.stringify(st(ei(), ms))).not.toMatch(/aterriz|llegado|en tierra|completado|no confirmada/i);
+    }
+  });
+  it('sin salida confirmada, cancelado o desviado: el estado oficial, aunque la hora haya pasado', () => {
+    expect(st(ei({ st: 'SCH', std: 'SCH', ed: null }), now - H)).toEqual({ text: 'Programado', tone: 'ok' });
+    expect(st(ei({ st: 'CAN', std: 'CAN' }), now - H)).toEqual({ text: 'Cancelado', tone: 'bad' });
+    expect(st(ei({ st: 'DES', sta: 'DES' }), now - H)).toEqual({ text: 'Desviado', tone: 'bad' });
+  });
+  it('coherencia con la hora visible: el estado cambia justo cuando pasa la llegada que muestra la ficha', () => {
+    const arrival = now;
+    expect(presentStatus({ leg: ei(), city: 'Dublín', visibleArrivalMs: arrival, nowMs: arrival - 1 }).text).toMatch(/^Ha salido/);
+    expect(presentStatus({ leg: ei(), city: 'Dublín', visibleArrivalMs: arrival, nowMs: arrival + 1 }).text).toBe('Histórico');
+  });
+});
