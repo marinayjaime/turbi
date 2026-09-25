@@ -33,6 +33,8 @@ export function observe(entries, legs) {
     if (!out.has(k)) out.set(k, { d: leg.d, o: leg.o, a: leg.a, sd: leg.sd, sa: leg.sa, f: [] });
     const o = out.get(k);
     if (!o.f.includes(flight)) o.f.push(flight);
+    if (leg.ac) o.ac = leg.ac;
+    if (leg.op) o.op = leg.op;
     return o;
   };
 
@@ -91,6 +93,8 @@ export function mergeRecords(store, observations) {
     const r = store.get(k) ?? { d: o.d, o: o.o, a: o.a, sd: o.sd, sa: o.sa, x: 0, f: [] };
     if (o.dd !== undefined) r.dd = o.dd;
     if (o.ad !== undefined) r.ad = o.ad;
+    if (o.ac) r.ac = o.ac;
+    if (o.op) r.op = o.op;
     const operated = isNum(r.dd) || isNum(r.ad);
     if (o.x === 2) r.x = 2;
     else if (o.x === 1 && !operated) r.x = 1; // una cancelación no borra un vuelo que ya operó
@@ -151,8 +155,8 @@ export function aggregateFlights(records, today) {
       airlineRoute: cached(`ar|${flight.slice(0, 2)}|${route}|${basis}`, () => stats(byAirlineRoute.get(`${flight.slice(0, 2)}|${route}`), basis)),
       dow: cached(`dow|${route}|${basis}`, () => splitBy(routeRecs, r => dowOf(r.d), basis)),
       slot: cached(`slot|${route}|${basis}`, () => splitBy(routeRecs, r => (r.sd ? slotOf(r.sd) : null), basis)),
-      // Vuelos pasados (90 días), para consultar una fecha que Aena ya no publica: [d, sd, dd, sa, ad, x].
-      past: lastFlights(recs, recs.length).map(r => [r.d, r.sd ?? null, r.dd ?? null, r.sa ?? null, r.ad ?? null, r.x]),
+      // Vuelos pasados (90 días), para consultar una fecha que Aena ya no publica: [d, sd, dd, sa, ad, x, ac, op].
+      past: lastFlights(recs, recs.length).map(r => [r.d, r.sd ?? null, r.dd ?? null, r.sa ?? null, r.ad ?? null, r.x, r.ac ?? null, r.op ?? null]),
     };
   }
   return { files };

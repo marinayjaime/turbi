@@ -166,6 +166,11 @@ describe('pack / unpack', () => {
     expect(unpack(pack(r))).toEqual(r);
     expect(pack(r)).toEqual(['2026-09-24', 'PMI', 'MAD', '17:55', 12, '19:25', 6, 0, ['IB1668', 'I21668']]);
   });
+  it('con tipo de avión y operadora (para la foto de vuelos pasados); sin ellos, el formato de siempre', () => {
+    const r = rec('2026-09-24', 6, { dd: 12, f: ['IB1243'], ac: 'CRJX', op: 'YW' });
+    expect(pack(r)).toEqual(['2026-09-24', 'PMI', 'MAD', '17:55', 12, '19:25', 6, 0, ['IB1243'], 'CRJX', 'YW']);
+    expect(unpack(pack(r))).toEqual(r);
+  });
 });
 
 import { legFromHistory } from '../js/punctuality.js';
@@ -173,6 +178,9 @@ describe('vuelo pasado desde el histórico (Aena ya no lo publica)', () => {
   it('IB1668 del 24/09: horas finales = programada + retraso final guardado', () => {
     const leg = legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'MAD' }, ['2026-09-24', '17:55', 49, '19:25', 45, 0]);
     expect(leg).toMatchObject({ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T18:44', sa: '19:25', ea: '2026-09-24T20:10', std: 'BOR', sta: 'BOR', past: true });
+    expect(legFromHistory({ o: 'PMI', a: 'MAD' }, ['2026-09-24', '17:55', 49, '19:25', 45, 0, 'A21N', null])).toMatchObject({ ac: 'A21N' });
+    expect(legFromHistory({ o: 'PMI', a: 'MAD' }, ['2026-09-24', '17:55', 49, '19:25', 45, 0, 'A21N', null]).op).toBeUndefined();
+    expect(legFromHistory({ o: 'MAD', a: 'BLQ' }, ['2026-09-24', '21:20', 65, null, null, 0, 'CRJX', 'YW'])).toMatchObject({ ac: 'CRJX', op: 'YW' });
   });
   it('llegada al día siguiente y retrasos que cruzan la medianoche', () => {
     const leg = legFromHistory({ d: '2026-09-24', o: 'PMI', a: 'MAD' }, ['2026-09-24', '23:30', 40, '00:45', 35, 0]);

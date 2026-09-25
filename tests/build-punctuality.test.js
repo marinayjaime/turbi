@@ -14,7 +14,7 @@ const obsOf = entries => observe(entries, buildLegs(entries));
 describe('observe: solo datos finales', () => {
   it('salida «Finalizado» y llegada «Entrega equip.» → un vuelo con ambos retrasos', () => {
     const o = [...obsOf([S(), L()]).values()];
-    expect(o).toEqual([{ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '18:25', sa: '19:50', f: ['IB1668'], dd: 12, ad: 6 }]);
+    expect(o).toEqual([{ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '18:25', sa: '19:50', f: ['IB1668'], dd: 12, ad: 6, ac: 'A21N', op: 'IB' }]);
   });
   it('estimaciones (embarcando, en vuelo, aproximándose) no se guardan', () => {
     expect([...obsOf([S({ estado: 'EMB' }), L({ estado: 'FLY' })]).values()]).toEqual([]);
@@ -24,7 +24,7 @@ describe('observe: solo datos finales', () => {
   it('llegada al día siguiente: se asocia a la fecha de salida', () => {
     const o = [...obsOf([S({ horaProgramada: '23:15:00', horaEstimada: '23:40:00' }),
       L({ fecha: '25/09/2026', fechaEstimada: '25/09/2026', horaProgramada: '00:15:00', horaEstimada: '00:35:00', estado: 'LND' })]).values()];
-    expect(o).toEqual([{ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '23:15', sa: '00:15', f: ['IB1668'], dd: 25, ad: 20 }]);
+    expect(o).toEqual([{ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '23:15', sa: '00:15', f: ['IB1668'], dd: 25, ad: 20, ac: 'A21N', op: 'IB' }]);
   });
   it('códigos compartidos: un solo vuelo físico con los dos números', () => {
     const cs = over => ({ iataCompania: 'I2', oaciCompania: 'IBS', numVuelo: '1668', ...over });
@@ -97,13 +97,23 @@ describe('aggregateFlights', () => {
     expect(Object.values(ib.dow).reduce((a, s) => a + s.sample, 0)).toBe(52);
   });
   it('vuelos pasados (para consultar una fecha que Aena ya no publica): horas programadas y retrasos finales', () => {
-    expect(ib.past[0]).toEqual([day(0), '18:25', 0, '19:50', 40, 0]);
+    expect(ib.past[0]).toEqual([day(0), '18:25', 0, '19:50', 40, 0, null, null]);
     expect(ib.past).toHaveLength(41); // 40 operados + 1 cancelado, todos los de 90 días
-    expect(ib.past.find(r => r[5] === 1)).toEqual([day(3), '18:25', null, '19:50', null, 1]);
+    expect(ib.past.find(r => r[5] === 1)).toEqual([day(3), '18:25', null, '19:50', null, 1, null, null]);
   });
   it('destino extranjero: puntualidad de salida', () => {
     expect(files['FR/100.json'].routes['PMI-LHR']).toMatchObject({ basis: 'dep' });
     expect(files['FR/100.json'].routes['PMI-LHR'].d90).toMatchObject({ sample: 5, quality: 'insuficiente' });
+  });
+});
+
+describe('tipo de avión y operadora en el histórico (foto de vuelos pasados)', () => {
+  it('se guardan al observar y no se borran si una observación posterior no los trae', () => {
+    const store = new Map();
+    mergeRecords(store, obsOf([S({ tipoAeronave: 'A21N', codigosCompania: 'IB,IBE,IB,IBE,IBE,IBE' }), L({ tipoAeronave: 'A21N' })]));
+    expect([...store.values()][0]).toMatchObject({ ac: 'A21N', op: 'IB' });
+    mergeRecords(store, new Map([['k', { ...[...store.values()][0], ac: undefined, op: undefined, ad: 9 }]]));
+    expect([...store.values()][0]).toMatchObject({ ac: 'A21N', op: 'IB', ad: 9 });
   });
 });
 

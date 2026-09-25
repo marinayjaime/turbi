@@ -66,8 +66,8 @@ export function currentPunctuality(leg) {
 }
 
 // Vuelo pasado a partir del histórico (horas programadas + retrasos finales que publicó Aena). route = { o, a };
-// row = [d, sd, dd, sa, ad, x]. Sin dato final, sin hora: no se estima nada.
-export function legFromHistory({ o, a }, [d, sd, dd, sa, ad, x]) {
+// row = [d, sd, dd, sa, ad, x, ac, op]. Sin dato final, sin hora: no se estima nada.
+export function legFromHistory({ o, a }, [d, sd, dd, sa, ad, x, ac = null, op = null]) {
   const at = (date, hhmm, min) => (date && hhmm && typeof min === 'number'
     ? new Date(Date.parse(`${date}T${hhmm}:00Z`) + min * 60000).toISOString().slice(0, 16) : null);
   const arrDate = sa ? (sd && sa < sd ? nextDay(d) : d) : null;
@@ -77,7 +77,7 @@ export function legFromHistory({ o, a }, [d, sd, dd, sa, ad, x]) {
   return {
     d, o, a, sd: sd ?? null, ed: cancelled ? null : at(d, sd, dd), sa: sa ?? null, ea,
     td: null, ta: null, g: null, st, std: cancelled ? 'CAN' : diverted ? 'DES' : 'BOR', sta: cancelled || diverted ? null : ea ? 'BOR' : null,
-    ac: null, past: true,
+    ac: ac ?? null, ...(op ? { op } : {}), past: true,
   };
 }
 
@@ -96,9 +96,13 @@ export async function fetchPastFlight(al, n, date, fetchFn = fetch) {
 
 // --- Histórico ---
 
-// Registro compacto: [d, o, a, sd, dd, sa, ad, x, [números]] (x: 0 normal · 1 cancelado · 2 desviado)
-export const pack = r => [r.d, r.o, r.a, r.sd, r.dd, r.sa, r.ad, r.x, r.f];
-export const unpack = ([d, o, a, sd, dd, sa, ad, x, f]) => ({ d, o, a, sd, dd, sa, ad, x, f });
+// Registro compacto: [d, o, a, sd, dd, sa, ad, x, [números], ac?, op?] (x: 0 normal · 1 cancelado · 2 desviado;
+// ac = tipo de avión y op = operadora según Aena, desde el 25/09/2026, para la foto de los vuelos pasados)
+export const pack = r => {
+  const base = [r.d, r.o, r.a, r.sd, r.dd, r.sa, r.ad, r.x, r.f];
+  return r.ac || r.op ? [...base, r.ac ?? null, r.op ?? null] : base;
+};
+export const unpack = ([d, o, a, sd, dd, sa, ad, x, f, ac, op]) => ({ d, o, a, sd, dd, sa, ad, x, f, ...(ac ? { ac } : {}), ...(op ? { op } : {}) });
 
 // Percentil por rango más cercano sobre valores ordenados.
 export function percentile(sorted, p) {
