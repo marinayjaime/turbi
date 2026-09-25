@@ -19,6 +19,10 @@ describe('foto real de la operadora y el modelo', () => {
     expect(photoFor(db, { ac: '7M8' }, 'FR')).toBeNull(); // esa aerolínea no tiene foto de ese modelo
     expect(photoFor(db, { op: 'FR', ac: '73H' }, 'IB')).toEqual({ thumb: 't', artist: 'a', license: 'l', page: 'p' }); // si Aena dice quién opera, manda Aena
   });
+  it('«Operado por» con el código de la aerolínea buscada (los tramos publicados no lo llevan)', () => {
+    expect(operatorName(db, { op: 'FR' }, 'FR')).toBeNull();
+    expect(operatorName(db, { op: 'YW' }, 'IB')).toBe('Air Nostrum');
+  });
   it('«Operado por» solo si opera otra aerolínea', () => {
     expect(operatorName(db, { al: 'IB', op: 'YW' })).toBe('Air Nostrum');
     expect(operatorName(db, { al: 'FR', op: 'FR' })).toBeNull();

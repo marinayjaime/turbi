@@ -24,7 +24,8 @@ export function photoFor(db, leg, al = null) {
   return p ? { ...p, shared: true } : null;
 }
 
-export function operatorName(db, leg) {
-  if (!leg.op || leg.op === leg.al) return null;
+// al: código de la aerolínea buscada (los tramos publicados no lo llevan).
+export function operatorName(db, leg, al = leg.al) {
+  if (!leg.op || leg.op === al) return null;
   return db?.airlines?.[leg.op] ?? leg.op;
 }

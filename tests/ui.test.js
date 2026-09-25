@@ -229,7 +229,7 @@ describe('llegada estimada por Turbi (Aena no publica la llegada)', () => {
   it('antes del despegue: «Llegada estimada» y «Estimación Turbi», nunca «prevista»', () => {
     const html = flightCardHtml({ ...c, arr: { date: '2026-09-25', time: '18:30', estimated: true, note: 'Estimación Turbi' } });
     expect(html).toContain('<p class="lbl">Llegada estimada</p>');
-    expect(html).toContain('<p class="big">18:30</p>');
+    expect(html).toContain('<p class="big estimated">18:30</p>'); // color neutro: no es un dato oficial «en hora»
     expect(html).toContain('<p class="est-note">Estimación Turbi</p>');
     expect(html).not.toContain('prevista');
   });

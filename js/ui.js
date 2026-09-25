@@ -72,7 +72,7 @@ export function flightCardHtml(c) {
   const side = (label, x) => x?.estimated ? `
       <div class="side">
         <p class="lbl">${label} estimada${nextDay(x)}</p>
-        <p class="big">${esc(x.time)}</p>
+        <p class="big estimated">${esc(x.time)}</p>
         <p class="est-note">${esc(x.note)}</p>
       </div>` : x ? `
       <div class="side">
