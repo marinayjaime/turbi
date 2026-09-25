@@ -3,7 +3,7 @@ import { vi } from 'vitest';
 import { createState, runCycle, handle, needsRefresh, radarResponse } from '../server/live.mjs';
 import { adsbLimiter } from '../server/adsb.mjs';
 // El limitador global de adsb.lol sin espera en las pruebas (su separación se prueba aparte, en tests/adsb.test.js).
-beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
 
 const row = over => ({
   iataCompania: 'IB', oaciCompania: 'IBE', nombreCompania: 'Iberia', numVuelo: '1668',
@@ -106,5 +106,22 @@ describe('caché por vuelo físico: los códigos compartidos del mismo avión no
     const r2 = JSON.parse((await radarResponse(state, '/radar/VY/9001.json', { fetchFn, nowMs: nowMs + 20000, pauseMs: 0 })).body);
     expect(fetchFn.mock.calls.length).toBe(calls);
     expect(r2.state).toBe('sin-datos');
+  });
+});
+
+describe('vuelos de Aena con el mismo aeropuerto de origen y destino (observado el 25/09/2026: «FR7129D» ALC → ALC)', () => {
+  it('el radar responde con normalidad, sin lanzar error ni identificar por ruta', async () => {
+    const state = createState();
+    const leg = { al: 'FR', icao: 'RYR', n: '7129D', d: '2026-09-25', o: 'ALC', a: 'ALC', sd: '16:50', ed: '2026-09-25T16:50', sa: null, ea: null,
+      st: 'BOR', std: 'BOR', sta: null, ac: 'B38M', op: 'FR' };
+    state.legs = [leg];
+    const airports = { ALC: ['Alicante', 'Alicante', 38.2822, -0.558156, 'Europe/Madrid'] };
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ ac: [] }) }));
+    const r = await radarResponse(state, '/radar/FR/7129D.json', { fetchFn, nowMs: Date.parse('2026-09-25T15:30:00Z'), pauseMs: 0, airports });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body);
+    expect(body.state).toBe('sin-datos');
+    expect(body.identifying).toBeUndefined();
+    expect(fetchFn.mock.calls.some(([url]) => url.includes('/point/'))).toBe(false);
   });
 });

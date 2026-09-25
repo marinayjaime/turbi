@@ -6,7 +6,7 @@ import { identifyByZone } from '../server/identify.mjs';
 import { createState, radarResponse } from '../server/live.mjs';
 
 const T0 = Date.parse('2026-09-25T08:00:00Z');
-beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: T0 }); adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: T0 }); adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
 afterEach(() => vi.useRealTimers());
 
 const PMI = [39.5517, 2.73881], LBA = [53.8659, -1.66057], MAD = [40.4719, -3.5626], LHR = [51.4706, -0.461941];
@@ -79,7 +79,7 @@ describe('la identificación nunca empeora el radar que ya funciona', () => {
     expect(await ask(state, '/radar/IB/715.json', a.fetchFn)).toMatchObject({ state: 'volando', callsign: 'IBE715' });
   });
   it('el radar normal pasa por delante de las consultas de identificación que esperan', async () => {
-    const limiter = createLimiter(0, { identifyIntervalMs: 0 });
+    const limiter = createLimiter(0, { identifyIntervalMs: 0, maxPerWindow: Infinity });
     const order = [];
     let release;
     const gate = new Promise(r => { release = r; });
@@ -91,7 +91,7 @@ describe('la identificación nunca empeora el radar que ya funciona', () => {
     expect(order).toEqual(['radar-1', 'radar-2', 'zona-1', 'zona-2']);
   });
   it('al primer 429, las consultas de identificación que esperaban se cancelan sin llamar a adsb.lol', async () => {
-    const limiter = createLimiter(0, { identifyIntervalMs: 0 });
+    const limiter = createLimiter(0, { identifyIntervalMs: 0, maxPerWindow: Infinity });
     let n = 0;
     const fetchFn = vi.fn(async () => (++n === 1 ? tooMany() : ok({ ac: [] })));
     const results = await Promise.all([
@@ -103,7 +103,7 @@ describe('la identificación nunca empeora el radar que ya funciona', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
   it('se cancelan aunque la pausa sea de 0 s (Retry-After: 0): el 429 cancela, no solo la pausa', async () => {
-    const limiter = createLimiter(0, { identifyIntervalMs: 0 });
+    const limiter = createLimiter(0, { identifyIntervalMs: 0, maxPerWindow: Infinity });
     let n = 0;
     const fetchFn = vi.fn(async () => (++n === 1 ? tooMany('0') : ok({ ac: [] })));
     const results = await Promise.all([
@@ -115,7 +115,7 @@ describe('la identificación nunca empeora el radar que ya funciona', () => {
   });
   it('las consultas de identificación dejan más hueco que las del radar (heurística ajustable)', async () => {
     vi.useFakeTimers({ now: T0 }); // reloj simulado: medidas exactas, sin depender de la velocidad de la máquina
-    const limiter = createLimiter(0, { identifyIntervalMs: 60 });
+    const limiter = createLimiter(0, { identifyIntervalMs: 60, maxPerWindow: Infinity });
     const starts = [];
     const task = () => async () => { starts.push(Date.now()); };
     await limiter.schedule(task());

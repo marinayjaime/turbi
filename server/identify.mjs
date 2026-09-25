@@ -4,14 +4,17 @@
 //    se prueban juntos los prefijos OACI del grupo de códigos compartidos, sin adivinar ninguno.
 //  - Un candidato solo vale si cumple TODO a la vez: operadora posible (prefijo OACI del grupo), tipo compatible con
 //    el de Aena, dentro del pasillo de la ruta, rumbo hacia el destino, recorrido físicamente posible y ruta exacta
-//    (origen y destino) confirmada por adsbdb o por la base VRS de ADSB.lol. Si ambas están obsoletas, la traza debe
-//    demostrar que ese indicativo salió del origen a la hora prevista. Debe ser el ÚNICO; si no, no se elige ninguno.
+//    (origen y destino) confirmada por adsbdb o por la base VRS de ADSB.lol (se consultan las dos para todos). Si
+//    ninguna la confirma (asignación antigua de un indicativo reutilizado) y el origen es de Aena, vale la traza:
+//    ese indicativo despegó del origen a la hora prevista y ninguna otra salida de Aena de la misma operadora explica
+//    el avión. Debe ser el ÚNICO y los demás candidatos tienen que quedar descartados por alguna prueba; si una zona,
+//    una base o una traza fallan, no se elige por descarte.
 //  - Después, el avión se sigue solo por /v2/hex/. Un registro en memoria por vuelo físico (compartido por los códigos
 //    compartidos y por todos los usuarios) evita repetir la identificación.
 //  - Nunca hay mapeos fijos de indicativos ni de hex: los indicativos operativos se reasignan cada día.
 // Todas las consultas a adsb.lol pasan por el limitador global (server/adsb.mjs).
 import { adsbGet, adsbLimiter } from './adsb.mjs';
-import { estimatedDepartureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S, radarGateFor, plannedMinFor } from './radar.mjs';
+import { estimatedDepartureMs, departureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S, radarGateFor, plannedMinFor } from './radar.mjs';
 import { aircraftName } from '../js/plain.js';
 
 // HEURÍSTICAS AJUSTABLES (valores razonables, no demostrados; revisar con casos reales). Todas las funciones aceptan
@@ -30,6 +33,8 @@ export const LIMITS = {
   maxCandidates: 12, // candidatos que pasan los filtros gratuitos, como mucho; más → ambiguo (sin consultar adsbdb)
   maxTraceCandidates: 6, // si las bases de rutas están obsoletas, como mucho estas trazas se validan contra el origen
   traceOriginKm: 40, // una traza confirma el vuelo solo si ese indicativo apareció cerca del origen
+  traceAwayKm: 20, // … y después, con el mismo indicativo, se alejó del origen al menos esto (despega, no llega)
+  traceLagMin: 20, // retraso tolerado de la traza publicada; si no cubre la salida, «no» no vale como prueba
   traceDepartureWindowMin: 120, // margen alrededor de la salida de Aena para retrasos y salidas extranjeras estimadas
   adsbdbCacheMin: 360, // la ruta de un indicativo en adsbdb se guarda este tiempo (no se vuelve a pedir)
   sameRouteWindowMin: 120, // rivales de la misma ruta que se comprueban por progreso (no es un veto previo)
@@ -108,88 +113,92 @@ export function operatorIcaos(leg, legs = []) {
 // 15 min de la salida más reciente), Aena da la operadora (y su código OACI) y el tipo de avión, y hay una hora de
 // salida: la suya o, si el origen es extranjero, la ESTIMADA desde su llegada. tz: zonas de origen y destino.
 export function canIdentify(leg, legs = [], { origin = null, dest = null, nowMs = Date.now(), originTz, destTz } = {}) {
-  if (!leg || cancelled(leg) || !leg.ac || !operatorIcaos(leg, legs).length || estimatedDepartureMs(leg, origin, dest) === null) return false;
+  // Mismo aeropuerto de origen y destino: no hay ruta ni pasillo en el que buscar.
+  if (!leg || leg.o === leg.a || cancelled(leg) || !leg.ac || !operatorIcaos(leg, legs).length || estimatedDepartureMs(leg, origin, dest) === null) return false;
   return radarGateFor(leg, nowMs, { originTz, destTz, plannedMin: plannedMinFor(origin, dest) }).mode === 'identify';
 }
 
-// Ruta de un indicativo en adsbdb, con caché por indicativo (por cliente HTTP). Los fallos no se guardan.
+// Ruta de un indicativo según una base pública: { status: 'ok', route: { o, a } } | { status: 'desconocida' } (la
+// base no conoce el indicativo: 404) | { status: 'fallo' } (red, 5xx, respuesta rara: no se sabe nada).
+// Caché por indicativo y base (por cliente HTTP) para lo que la base sabe o no sabe; los fallos no se guardan.
 const routeCaches = new WeakMap();
-async function adsbdbRoute(callsign, fetchFn, limits) {
+async function cachedRoute(source, callsign, fetchFn, limits) {
   const cache = routeCaches.get(fetchFn) ?? routeCaches.set(fetchFn, new Map()).get(fetchFn);
-  const hit = cache.get(callsign);
-  if (hit && Date.now() - hit.at < limits.adsbdbCacheMin * 60000) return hit.route;
-  const route = await fetchRoute(callsign, fetchFn);
-  if (route) { if (cache.size > 2000) cache.clear(); cache.set(callsign, { at: Date.now(), route }); }
-  return route;
+  const key = `${source}|${callsign}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < limits.adsbdbCacheMin * 60000) return hit.value;
+  const value = await (source === 'adsbdb' ? fetchAdsbdbRoute : fetchVrsRoute)(callsign, fetchFn);
+  if (value.status !== 'fallo') { if (cache.size > 4000) cache.clear(); cache.set(key, { at: Date.now(), value }); }
+  return value;
 }
 
-async function fetchRoute(callsign, fetchFn) {
+const routeOf = (o, a) => (o && a ? { status: 'ok', route: { o, a } } : { status: 'fallo' });
+
+async function fetchAdsbdbRoute(callsign, fetchFn) {
   try {
     const res = await fetchFn(`${ADSBDB}${callsign}`, { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json', 'User-Agent': UA } });
-    if (!res.ok) return null;
-    const r = (await res.json())?.response?.flightroute;
-    return { o: r?.origin?.iata_code ?? null, a: r?.destination?.iata_code ?? null };
+    if (res.status === 404) return { status: 'desconocida' };
+    if (!res.ok) return { status: 'fallo' };
+    const body = (await res.json())?.response;
+    if (body === 'unknown callsign') return { status: 'desconocida' };
+    return routeOf(body?.flightroute?.origin?.iata_code, body?.flightroute?.destination?.iata_code);
   } catch {
-    return null;
+    return { status: 'fallo' };
   }
 }
 
-// Segunda base pública de rutas, servida por ADSB.lol y actualizada cada hora. Se usa solo si adsbdb no coincide:
-// los indicativos operativos se reutilizan y una de las dos bases puede conservar la asignación anterior.
+// Segunda base pública de rutas (VRS standing data, publicada por ADSB.lol en GitHub Pages; no es la API limitada).
+// Los indicativos operativos se reutilizan y cualquiera de las dos bases puede conservar la asignación anterior.
 async function fetchVrsRoute(callsign, fetchFn) {
   try {
     const res = await fetchFn(`${VRS_ROUTES}/${callsign.slice(0, 2)}/${callsign}.json`, {
       signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json', 'User-Agent': UA },
     });
-    if (res.status === 404) return { route: null, unavailable: false };
-    if (!res.ok) return { route: null, unavailable: true };
+    if (res.status === 404) return { status: 'desconocida' };
+    if (!res.ok) return { status: 'fallo' };
     const data = await res.json();
     const airports = Array.isArray(data?._airports) ? data._airports.map(x => x?.iata).filter(Boolean) : [];
     const text = typeof data?._airport_codes_iata === 'string' ? data._airport_codes_iata.split('-').filter(Boolean) : [];
     const codes = airports.length >= 2 ? airports : text;
-    return codes.length >= 2 ? { route: { o: codes[0], a: codes.at(-1) }, unavailable: false }
-      : { route: null, unavailable: true };
+    return routeOf(codes[0], codes.length >= 2 ? codes.at(-1) : null);
   } catch {
-    return { route: null, unavailable: true };
+    return { status: 'fallo' };
   }
 }
 
-// Los indicativos operativos se reutilizan y adsbdb puede conservar una ruta antigua. Como segunda prueba,
-// tar1090 publica la traza reciente del hex: solo confirma un candidato si ESE MISMO indicativo apareció cerca del
-// aeropuerto de origen y alrededor de la salida de Aena. No se acepta por estar simplemente dentro del pasillo.
-async function traceStartedAtOrigin({ hex, callsign, origin, depMs, fetchFn, limits }) {
-  try {
-    const suffix = hex.slice(-2).toLowerCase();
-    const res = await fetchFn(`${TRACE_BASE}/${suffix}/trace_full_${hex.toLowerCase()}.json`, {
-      signal: AbortSignal.timeout(10000), headers: { Accept: 'application/json', 'User-Agent': UA },
-    });
-    if (!res.ok) return { match: false, unavailable: true };
-    const data = await res.json();
-    if (!Number.isFinite(data?.timestamp) || !Array.isArray(data.trace)) return { match: false, unavailable: true };
-    const windowMs = limits.traceDepartureWindowMin * 60000;
-    let activeCallsign = null;
-    for (const point of data.trace) {
-      const announced = point?.[8]?.flight?.trim();
-      // Solo el inicio de cada tramo de indicativo puede confirmar el origen. Aceptar cualquier punto confundiría,
-      // por ejemplo, un avión que llega a nuestro origen desde otro aeropuerto.
-      if (!announced || announced === activeCallsign) continue;
-      activeCallsign = announced;
-      if (activeCallsign !== callsign || !Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1]) || !Number.isFinite(point?.[2])) continue;
-      const at = (data.timestamp + point[0]) * 1000;
-      if (Math.abs(at - depMs) > windowMs) continue;
-      const originKm = distanceKm(origin, [point[1], point[2]]);
-      if (originKm <= limits.traceOriginKm) return { match: true, unavailable: false, originKm, at };
-    }
-    return { match: false, unavailable: false };
-  } catch {
-    return { match: false, unavailable: true };
+// Traza pública del hex en ADSB.lol (tar1090), pedida a través del limitador global como cualquier otra consulta.
+// Resultado: 'si' (con ESE indicativo, el último punto cerca del origen —el despegue— cae a la hora de este vuelo y
+// después se aleja), 'no' (la traza cubre la salida y no lo muestra) o 'desconocido' (sin traza, fallo, o la traza aún
+// no llega a la salida). Un avión que llega al origen se acerca y se queda: nunca pasa por uno que despega.
+async function traceFromOrigin({ hex, callsign, origin, depMs, nowMs, fetchFn, limiter, limits }) {
+  const url = `${TRACE_BASE}/${hex.slice(-2).toLowerCase()}/trace_full_${hex.toLowerCase()}.json`;
+  const res = await adsbGet(url, { fetchFn, limiter, priority: 'identificacion' });
+  if (res.error === 'rate-limited') return { trace: 'desconocido', rateLimited: true };
+  const data = res.data;
+  if (res.error || !Number.isFinite(data?.timestamp) || !Array.isArray(data.trace)) return { trace: 'desconocido' };
+  const windowMs = limits.traceDepartureWindowMin * 60000;
+  let active = null, near = null;
+  let lastAt = -Infinity;
+  for (const point of data.trace) {
+    if (!Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1]) || !Number.isFinite(point?.[2])) continue;
+    const at = (data.timestamp + point[0]) * 1000;
+    lastAt = Math.max(lastAt, at);
+    const announced = point[8]?.flight?.trim();
+    if (announced && announced !== active) { active = announced; near = null; } // otro tramo de indicativo
+    if (active !== callsign) continue;
+    const km = distanceKm(origin, [point[1], point[2]]);
+    if (km <= limits.traceOriginKm) near = { km, at };
+    else if (near && km >= near.km + limits.traceAwayKm && Math.abs(near.at - depMs) <= windowMs) return { trace: 'si' };
   }
+  // Si la traza publicada aún no llega al final de la ventana de salida (se publica con retraso), no demuestra nada.
+  return { trace: lastAt >= Math.min(nowMs, depMs + windowMs) - limits.traceLagMin * 60000 ? 'no' : 'desconocido' };
 }
 
 // Identificación por zona. Devuelve { state: 'identificado', hex, callsign } | { state: 'ambiguo' | 'sin-datos' |
 // 'no-disponible' | 'no-aplica' }. Nunca elige entre varios.
+// coordsOf(iata) → [lat, lon] | null: coordenadas de otros aeropuertos, para comprobar rivales con otro destino.
 export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Date.now(), fetchFn = fetch, limiter = adsbLimiter, limits = LIMITS,
-  onDiagnostic = null }) {
+  onDiagnostic = null, coordsOf = null }) {
   const diag = { attempted: true, blockedReason: null, operatorPrefixes: operatorIcaos(leg, legs), zoneCalls: 0,
     candidatesBeforeRoute: 0, candidatesAfterRoute: 0, traceCandidates: 0, traceMatches: 0, identifiedBy: null, rateLimited: false };
   const done = result => { onDiagnostic?.({ ...diag, result: result.state }); return result; };
@@ -215,7 +224,6 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
   const alongs = [expected, Math.min(reach, expected + step), Math.max(0, expected - step)]
     .filter((x, i, all) => all.indexOf(x) === i).slice(0, limits.maxZoneCalls);
   const found = new Map();
-  let failed = false;
   let zoneFailed = false;
   for (const km of alongs) {
     diag.zoneCalls++;
@@ -223,7 +231,7 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
     const res = await adsbGet(`/point/${lat.toFixed(3)}/${lon.toFixed(3)}/${limits.zoneRadiusNm}`, { fetchFn, limiter, priority: 'identificacion' });
     // Primer 429 (o pausa activa, o cancelada por un 429): se abandona la identificación entera en el acto.
     if (res.error === 'rate-limited') { diag.rateLimited = true; return done({ state: 'no-disponible', rateLimited: true }); }
-    if (res.error) { failed = true; zoneFailed = true; continue; }
+    if (res.error) { zoneFailed = true; continue; }
     for (const a of res.data.ac ?? []) {
       const cs = a.flight?.trim();
       const operator = icaos.find(icao => cs?.startsWith(icao));
@@ -237,81 +245,86 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
   // Los candidatos salen solo de las consultas por zona; adsbdb es el filtro semántico (ruta exacta) posterior.
   if (found.size > limits.maxCandidates) { diag.blockedReason = 'demasiados-candidatos'; return done({ state: 'ambiguo' }); }
   const candidates = [...found].map(([hex, candidate]) => ({ hex, ...candidate }));
-  const hasAmbiguousRival = ({ aircraft, operator }) => legs.some(rival => rival !== leg && rival.o === leg.o && rival.a === leg.a
-    && !samePhysical(rival, leg) && operatorIcaos(rival, legs).includes(operator)
-    && Math.abs((estimatedDepartureMs(rival, origin, dest) ?? Infinity) - depMs) <= limits.sameRouteWindowMin * 60000
-    && (nowMs - estimatedDepartureMs(rival, origin, dest)) / 60000 > 0
-    && corridor({ origin, dest, lat: aircraft.lat, lon: aircraft.lon, track: aircraft.track,
-      elapsedMin: (nowMs - estimatedDepartureMs(rival, origin, dest)) / 60000 }, limits).ok);
-  // Ruta exacta según adsbdb, candidato a candidato (en serie, sin prisa, con caché por indicativo).
-  const matches = [];
-  for (const candidate of candidates) {
-    const { hex, callsign, aircraft, operator } = candidate;
-    const route = await adsbdbRoute(callsign, fetchFn, limits);
-    if (!route) { failed = true; continue; }
-    if (route.o !== leg.o || route.a !== leg.a) continue;
-    // Un vuelo próximo de la misma ruta ya no veta todo el intento. Solo bloquea este candidato si, con la hora de
-    // salida de ese rival, su posición también sería físicamente compatible. Los rivales futuros se descartan solos.
-    const ambiguousRival = hasAmbiguousRival({ aircraft, operator });
-    if (!ambiguousRival) matches.push({ hex, callsign });
-    else diag.blockedReason = 'rival-compatible';
-  }
-  diag.candidatesAfterRoute = matches.length;
-  if (matches.length > 1) return done({ state: 'ambiguo' });
-  if (matches.length) {
-    if (!failed) {
-      diag.identifiedBy = 'adsbdb';
-      return done({ state: 'identificado', ...matches[0] });
-    }
-  }
+  // Otro vuelo de Aena de la MISMA operadora que ya ha salido cerca de nuestra hora y cuya propia ruta también
+  // explicaría la posición y el rumbo del avión. sameRoute: solo los del mismo origen y destino (basta para una ruta
+  // confirmada por una base); si no, todos los que salen de nuestro origen hacia cualquier destino (la traza solo
+  // demuestra el origen). Un destino sin coordenadas conocidas cuenta como rival: no se puede descartar.
+  const rivalFor = ({ aircraft, operator }, { sameRoute, windowMin }) => legs.some(rival => {
+    if (rival === leg || rival.o !== leg.o || (sameRoute && rival.a !== leg.a) || samePhysical(rival, leg) || cancelled(rival)) return false;
+    if (!operatorIcaos(rival, legs).includes(operator)) return false;
+    const rivalDest = rival.a === leg.a ? dest : coordsOf?.(rival.a) ?? null;
+    const rivalDep = estimatedDepartureMs(rival, origin, rivalDest);
+    if (rivalDep === null || Math.abs(rivalDep - depMs) > windowMin * 60000 || nowMs <= rivalDep) return false;
+    if (!rivalDest) return true;
+    return corridor({ origin, dest: rivalDest, lat: aircraft.lat, lon: aircraft.lon, track: aircraft.track,
+      elapsedMin: (nowMs - rivalDep) / 60000 }, limits).ok;
+  });
 
-  // Si adsbdb no coincide o dejó algún candidato sin respuesta, se contrasta la segunda base con TODOS. Se combinan
-  // sus confirmaciones: si las dos fuentes señalan aviones distintos, el resultado es ambiguo, nunca se adivina.
-  let vrsUnavailable = false;
-  if (candidates.length) {
-    diag.vrsCandidates = candidates.length;
-    const checked = await Promise.all(candidates.map(async candidate => ({ candidate,
-      vrs: await fetchVrsRoute(candidate.callsign, fetchFn) })));
-    const vrsMatches = checked.filter(x => x.vrs.route?.o === leg.o && x.vrs.route?.a === leg.a)
-      .filter(x => !hasAmbiguousRival(x.candidate));
-    diag.vrsMatches = vrsMatches.length;
-    vrsUnavailable = checked.some(x => x.vrs.unavailable);
-    const confirmed = new Map(matches.map(x => [x.hex, x]));
-    for (const { candidate } of vrsMatches) confirmed.set(candidate.hex, { hex: candidate.hex, callsign: candidate.callsign });
-    if (confirmed.size > 1) return done({ state: 'ambiguo' });
-    // Una zona que no respondió podría ocultar otro avión compatible. Aunque una ruta coincida, no elegimos por
-    // descarte hasta haber visto todas las zonas previstas.
-    if (confirmed.size === 1 && !vrsUnavailable && !zoneFailed) {
-      const [result] = confirmed.values();
-      diag.identifiedBy = matches.some(x => x.hex === result.hex) ? 'adsbdb' : 'vrs-route';
-      const { hex, callsign } = result;
-      return done({ state: 'identificado', hex, callsign });
-    }
+  // 1) Ruta exacta según las DOS bases públicas, para TODOS los candidatos (en serie, con caché por indicativo). Una
+  //    base obsoleta que da otra ruta no impide que la otra confirme; si confirman aviones distintos, es ambiguo.
+  const ours = r => r.o === leg.o && r.a === leg.a;
+  const evidence = [];
+  for (const c of candidates) {
+    const sources = { adsbdb: await cachedRoute('adsbdb', c.callsign, fetchFn, limits), vrs: await cachedRoute('vrs', c.callsign, fetchFn, limits) };
+    const routes = Object.values(sources).filter(x => x.status === 'ok').map(x => x.route);
+    const matchedBy = Object.keys(sources).filter(k => sources[k].status === 'ok' && ours(sources[k].route));
+    const routeFailed = Object.values(sources).some(x => x.status === 'fallo');
+    evidence.push({ ...c, matchedBy, routeFailed,
+      // Descartado por ruta solo si ninguna base falló: la que no respondió podría haber confirmado este avión.
+      otherRoute: !matchedBy.length && routes.length > 0 && !routeFailed,
+      // Otra salida de NUESTRO aeropuerto hacia otro destino: la traza nunca puede convertirlo en nuestro vuelo.
+      sameOriginElsewhere: routes.some(r => r.o === leg.o && r.a !== leg.a),
+      sameRouteRival: rivalFor(c, { sameRoute: true, windowMin: limits.sameRouteWindowMin }) });
   }
+  const confirmed = evidence.filter(e => e.matchedBy.length && !e.sameRouteRival);
+  if (evidence.some(e => e.matchedBy.length && e.sameRouteRival)) diag.blockedReason = 'rival-compatible';
+  diag.candidatesAfterRoute = confirmed.length;
+  diag.routeSources = evidence.map(e => ({ callsign: e.callsign, matchedBy: e.matchedBy, otherRoute: e.otherRoute, routeFailed: e.routeFailed }));
+  if (confirmed.length > 1) return done({ state: 'ambiguo' });
+  // Una zona que no respondió podría ocultar otro avión compatible: nunca se elige por descarte.
+  if (zoneFailed) return done({ state: 'no-disponible' });
 
-  // Ninguna base de rutas ha dejado una confirmación segura: puede ser una asignación antigua de un indicativo
-  // reutilizado. La traza reciente
-  // aporta una prueba independiente y más fuerte: que el hex salió del origen a la hora de este vuelo. Se exige un
-  // único candidato y que todas las trazas consultadas respondan, para no elegir por descarte tras un fallo de red.
-  if (candidates.length && candidates.length <= limits.maxTraceCandidates) {
-    diag.traceCandidates = candidates.length;
-    const traced = await Promise.all(candidates.map(async candidate => ({ candidate,
-      trace: await traceStartedAtOrigin({ hex: candidate.hex, callsign: candidate.callsign, origin, depMs, fetchFn, limits }) })));
-    const unavailable = traced.some(x => x.trace.unavailable);
-    const traceMatches = traced.filter(x => x.trace.match).filter(({ candidate }) => !hasAmbiguousRival(candidate));
-    diag.traceMatches = traceMatches.length;
-    if (traceMatches.length > 1) return done({ state: 'ambiguo' });
-    if (traceMatches.length === 1 && !unavailable && !zoneFailed) {
+  // 2) Trazas (a través del limitador): para los candidatos de los que ninguna base sabe nada y, si no hay ruta
+  //    confirmada, para todos. Cada candidato no elegido debe quedar descartado por alguna prueba; si no, no se elige.
+  const unresolved = evidence.filter(e => !e.matchedBy.length && !e.otherRoute);
+  // Sin ruta confirmada, la traza solo puede confirmar si Aena publica las salidas de ese origen (conocemos todos los
+  // rivales posibles); en un origen extranjero sería elegir por descarte entre vuelos que no vemos.
+  const traceConfirms = !confirmed.length && departureMs(leg) !== null;
+  // Sin ruta confirmada y sin poder confirmar por traza, ninguna traza cambiaría el resultado: no se piden.
+  const toTrace = confirmed.length ? unresolved : traceConfirms ? evidence : [];
+  if (toTrace.length > limits.maxTraceCandidates) { diag.blockedReason = 'demasiadas-trazas'; return done({ state: 'no-disponible' }); }
+  diag.traceCandidates = toTrace.length;
+  for (const e of toTrace) {
+    const t = await traceFromOrigin({ hex: e.hex, callsign: e.callsign, origin, depMs, nowMs, fetchFn, limiter, limits });
+    if (t.rateLimited) { diag.rateLimited = true; return done({ state: 'no-disponible', rateLimited: true }); }
+    e.trace = t.trace;
+  }
+  const departedHere = toTrace.filter(e => e.trace === 'si');
+  diag.traceMatches = departedHere.length;
+  const traceUnknown = toTrace.some(e => e.trace === 'desconocido');
+
+  if (confirmed.length === 1) {
+    // Otro avión sin ruta conocida que también salió de nuestro origen a nuestra hora: dos candidatos válidos.
+    if (departedHere.length) return done({ state: 'ambiguo' });
+    if (traceUnknown) return done({ state: 'no-disponible' });
+    const [c] = confirmed;
+    diag.identifiedBy = c.matchedBy.includes('adsbdb') ? 'adsbdb' : 'vrs-route';
+    return done({ state: 'identificado', hex: c.hex, callsign: c.callsign });
+  }
+  if (traceConfirms) {
+    const valid = departedHere.filter(e => !e.sameOriginElsewhere && !e.sameRouteRival
+      && !rivalFor(e, { sameRoute: false, windowMin: limits.traceDepartureWindowMin }));
+    if (departedHere.length > valid.length) diag.blockedReason = 'rival-mismo-origen';
+    if (valid.length > 1) return done({ state: 'ambiguo' });
+    if (valid.length === 1 && !traceUnknown) {
       diag.identifiedBy = 'trace-origin';
-      const { hex, callsign } = traceMatches[0].candidate;
-      return done({ state: 'identificado', hex, callsign });
+      return done({ state: 'identificado', hex: valid[0].hex, callsign: valid[0].callsign });
     }
-    if (unavailable) failed = true;
-  } else if (candidates.length > limits.maxTraceCandidates) {
-    diag.blockedReason = 'demasiadas-trazas';
+    // Salió de aquí pero otra salida de Aena también lo explica: podría ser cualquiera de las dos.
+    if (departedHere.some(e => !e.sameOriginElsewhere)) return done({ state: traceUnknown ? 'no-disponible' : 'ambiguo' });
   }
-  // Si algo falló, no se puede asegurar que el candidato sea el único: mejor no decir nada.
-  if (failed || vrsUnavailable) return done({ state: 'no-disponible' });
+  // Si algo falló, no se puede asegurar que no haya un candidato: mejor no decir nada.
+  if (traceUnknown || evidence.some(e => e.routeFailed && !e.matchedBy.length)) return done({ state: 'no-disponible' });
   return done(diag.blockedReason === 'rival-compatible' ? { state: 'ambiguo' } : { state: 'sin-datos' });
 }
 

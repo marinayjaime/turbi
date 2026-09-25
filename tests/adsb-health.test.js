@@ -5,7 +5,7 @@ import { adsbLimiter, adsbGet, ADSB_DEFAULT_COOLDOWN_MS } from '../server/adsb.m
 import { createState, handle } from '../server/live.mjs';
 
 const T0 = Date.parse('2026-09-25T10:00:00Z');
-beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: T0 }); adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: T0 }); adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
 afterEach(() => vi.useRealTimers());
 
 const health = () => JSON.parse(handle(createState(), '/health').body);

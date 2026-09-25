@@ -170,7 +170,7 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
     const base = state.radarDiagnostics.get(phys) ?? diagnostic();
     hexes.resolve(phys, async ({ queueWaitMs }) => {
       let idDiagnostic = null;
-      const identified = await identifyByZone({ leg, legs: state.legs, origin, dest, nowMs: nowMs + queueWaitMs, fetchFn,
+      const identified = await identifyByZone({ leg, legs: state.legs, origin, dest, nowMs: nowMs + queueWaitMs, fetchFn, coordsOf: coords,
         onDiagnostic: d => { idDiagnostic = { ...d, queueWaitMs }; } });
       const full = { ...base, identification: idDiagnostic, identifiedBy: idDiagnostic?.identifiedBy ?? null };
       state.radarDiagnostics.set(phys, full);

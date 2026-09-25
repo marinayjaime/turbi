@@ -8,7 +8,7 @@ import { findOnRadar } from '../server/radar.mjs';
 import { createState, radarResponse } from '../server/live.mjs';
 import { adsbLimiter, createLimiter } from '../server/adsb.mjs';
 
-beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
 
 const PMI = [39.5517, 2.73881], LBA = [53.8659, -1.66057];
 const MIN = 60000;
@@ -119,7 +119,7 @@ describe('3) un único limitador global para todas las consultas a adsb.lol', ()
     // fallaba a veces en la CI (35 ms en vez de ≥ 40) aunque el limitador respetaba la separación.
     vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
     try {
-      const limiter = createLimiter(40, { identifyIntervalMs: 40 });
+      const limiter = createLimiter(40, { identifyIntervalMs: 40, maxPerWindow: Infinity });
       const starts = [];
       let open = 0, maxOpen = 0;
       const fetchFn = vi.fn(async url => {
@@ -181,15 +181,16 @@ describe('FR2311 con el tráfico real del 25/09/2026 (09:02 UTC): regresión, si
         const cs = url.split('/').pop();
         const r = fx.responses.find(x => x.url.endsWith(`/callsign/${cs}`) && x.url.includes('adsbdb'));
         const body = routeOverride[cs] ? { response: { flightroute: { origin: { iata_code: routeOverride[cs][0] }, destination: { iata_code: routeOverride[cs][1] } } } } : r?.body;
-        const valid = body?.response?.flightroute?.origin?.iata_code && body?.response?.flightroute?.destination?.iata_code;
-        return { ok: true, status: 200, json: async () => valid ? body : { response: { flightroute: {
-          origin: { iata_code: 'XXX' }, destination: { iata_code: 'YYY' },
-        } } } };
+        return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 404, json: async () => null };
       }
       return { ok: false, status: 404, json: async () => null };
     });
   };
-  const run = fetchFn => identifyByZone({ leg: fx.leg, legs: [fx.leg], origin: PMI, dest: LBA, nowMs: fx.nowMs, fetchFn });
+  // La captura se hizo con el pasillo de entonces (120 km). Con el actual (180 km) entran tres Ryanair más de los que
+  // la captura no guardó ninguna ruta: se reproduce con el pasillo de la captura y, aparte, se comprueba que esos
+  // desconocidos nunca se descartan sin pruebas.
+  const run = (fetchFn, limits = { ...LIMITS, corridorKm: 120 }) => identifyByZone({ leg: fx.leg, legs: [fx.leg], origin: PMI, dest: LBA,
+    nowMs: fx.nowMs, fetchFn, limits });
   it('varios Ryanair pasan los filtros gratuitos; adsbdb deja uno solo (PMI→LBA) → ese hex', async () => {
     const f = replay();
     expect(await run(f)).toEqual({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
@@ -200,6 +201,11 @@ describe('FR2311 con el tráfico real del 25/09/2026 (09:02 UTC): regresión, si
   });
   it('si dos candidatos tuvieran la ruta exacta → ambiguo, ninguno', async () => {
     expect((await run(replay({ RYR6PG: ['PMI', 'LBA'] }))).state).toBe('ambiguo');
+  });
+  it('con el pasillo actual, tres candidatos sin ruta en ninguna base y sin traza → no se elige por descarte', async () => {
+    const f = replay();
+    expect(await run(f, LIMITS)).toEqual({ state: 'no-disponible' });
+    expect(f.mock.calls.filter(c => c[0].includes('/data/traces/')).length).toBe(3);
   });
   it('si ninguno la tiene → no se elige ninguno', async () => {
     expect((await run(replay({ RYR19HB: ['PMI', 'EMA'] }))).state).not.toBe('identificado');

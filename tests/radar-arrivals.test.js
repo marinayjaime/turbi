@@ -11,7 +11,7 @@ import { localToUtcMs } from '../js/time.js';
 import { createState, radarResponse } from '../server/live.mjs';
 import { adsbLimiter } from '../server/adsb.mjs';
 
-beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
 
 const HHN = [49.9487, 7.26389], VLC = [39.4893, -0.481625];
 const airports = { HHN: ['Frankfurt-Hahn', 'Hahn', ...HHN, 'Europe/Berlin'], VLC: ['Valencia', 'Valencia', ...VLC, 'Europe/Madrid'] };

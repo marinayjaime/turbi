@@ -44,15 +44,19 @@ export function estimatedDepartureMs(leg, origin, dest) {
   const dep = departureMs(leg);
   if (dep !== null) return dep;
   const arr = arrivalMs(leg);
-  if (arr === null || !origin || !dest) return null;
-  return arr - plannedMinFor(origin, dest) * 60000;
+  const planned = plannedMinFor(origin, dest);
+  if (arr === null || planned === null) return null;
+  return arr - planned * 60000;
 }
 
 // ¿Se mira el radar? La regla está en js/radar-gate.js (compartida con la app): Aena no es el guardián del radar.
 // originTz/destTz: zona de cada aeropuerto (por defecto, la de Aena: península o Canarias). plannedMin: duración
 // estimada de la ruta (para calcular lo que Aena no publica); sin ella, solo cuentan las horas de Aena.
+// Aena publica a veces vuelos con el mismo aeropuerto de origen y destino (observado el 25/09/2026 en ALC y MAD): no hay ruta
+// que medir y la duración queda desconocida (null), sin lanzar un error que tumbaría la consulta del radar.
 export function plannedMinFor(origin, dest) {
-  return origin && dest ? buildRoute({ lat: origin[0], lon: origin[1] }, { lat: dest[0], lon: dest[1] }, 0).durationMin : null;
+  if (!origin || !dest || distanceKm(origin, dest) < 1) return null;
+  return buildRoute({ lat: origin[0], lon: origin[1] }, { lat: dest[0], lon: dest[1] }, 0).durationMin;
 }
 export function radarGateFor(leg, nowMs, { originTz = aenaTz(leg.o), destTz = aenaTz(leg.a), plannedMin = null } = {}) {
   return radarGate({ leg, nowMs, ...legTimes(leg, { originTz, destTz }), plannedMin });

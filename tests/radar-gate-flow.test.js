@@ -9,7 +9,7 @@ import { flightStatus } from '../js/schedule.js';
 import { flightCardHtml } from '../js/ui.js';
 import { readFileSync } from 'node:fs';
 
-beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
 
 const airports = JSON.parse(readFileSync('data/airports.json', 'utf8'));
 const at = hhmm => Date.parse(`2026-09-25T${hhmm}:00Z`); // UTC
