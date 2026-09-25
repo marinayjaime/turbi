@@ -19,8 +19,8 @@ export const TZ_RULES = [
     reason: 'Xinjiang: la aviación funciona con la hora de Pekín (tzdb: «All planes, trains, and schools function on Beijing time»); Asia/Urumqi es la hora local de Xinjiang, de uso civil',
     source: 'https://github.com/eggert/tz/blob/main/asia' },
   { candidates: ['Asia/Tbilisi', 'Europe/Moscow'], tz: 'Europe/Moscow',
-    reason: 'Abjasia (Sujumi): el aeropuerto opera con la hora de Moscú (UTC+3); solo tiene vuelos de aerolíneas rusas',
-    source: 'https://en.wikipedia.org/wiki/Sukhum_International_Airport' },
+    reason: 'Abjasia (Sujumi): usa la hora de Moscú según timezone-boundary-builder, la fuente de las fronteras de geo-tz («state of Abkhazia using Moscow time»)',
+    source: 'https://github.com/evansiroky/timezone-boundary-builder/blob/master/expectedZoneOverlaps.json' },
 ];
 const sameSet = (a, b) => a.length === b.length && a.every(z => b.includes(z));
 

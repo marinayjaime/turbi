@@ -15,7 +15,7 @@
    "Asia/Tbilisi"
   ],
   "tz": "Europe/Moscow",
-  "rule": "Abjasia (Sujumi): el aeropuerto opera con la hora de Moscú (UTC+3); solo tiene vuelos de aerolíneas rusas"
+  "rule": "Abjasia (Sujumi): usa la hora de Moscú según timezone-boundary-builder, la fuente de las fronteras de geo-tz («state of Abkhazia using Moscow time»)"
  },
  {
   "iata": "AKU",
