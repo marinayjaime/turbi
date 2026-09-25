@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { fetchAena, madridDate, AIRPORTS } from '../scripts/aena-fetch.mjs';
 import { needsRadar, findOnRadar } from './radar.mjs';
+import { canIdentify, identifyByZone, trackByHex, createHexRegistry } from './identify.mjs';
 import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
@@ -19,7 +20,7 @@ const RADAR_PATH = /^\/radar\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 const RADAR_CACHE_MS = 60000;
 
 export function createState() {
-  return { flights: new Map(), legs: null, updated: null, audit: null, lastError: null, runs: 0, running: false, radar: new Map() };
+  return { flights: new Map(), legs: null, updated: null, audit: null, lastError: null, runs: 0, running: false, radar: new Map(), hexes: createHexRegistry() };
 }
 
 // Una descarga completa. Si Aena no responde, se conserva lo anterior (y se lanza el error para registrarlo).
@@ -79,9 +80,31 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
     state.radar.set(path, shared);
     return { status: 200, headers: HEADERS, body: shared.body };
   }
-  const result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd), fetchFn, pauseMs, nowMs,
-    dest: airports[leg.a] ? [airports[leg.a][2], airports[leg.a][3]] : null, origin: airports[leg.o] ? [airports[leg.o][2], airports[leg.o][3]] : null }) : { state: 'no-aplica' };
-  const body = JSON.stringify({ ...result, checked: new Date(nowMs).toISOString() });
+  const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
+  const origin = leg && coords(leg.o), dest = leg && coords(leg.a);
+  const hexes = state.hexes ??= createHexRegistry();
+  let result = null;
+  // 1) Avión ya identificado por su ruta (server/identify.mjs): se sigue por su hex. Una lectura rara no lo invalida.
+  const known = phys && hexes.get(phys);
+  if (known && origin && dest) {
+    const t = await trackByHex({ entry: known, leg, origin, dest, nowMs, fetchFn });
+    hexes.observe(phys, t.observation, nowMs);
+    result = t.result;
+  }
+  // 2) Indicativo exacto (OACI + número, códigos compartidos), como siempre.
+  if (!result) {
+    result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd), fetchFn, pauseMs, nowMs,
+      dest, origin }) : { state: 'no-aplica' };
+  }
+  // 3) No aparece con su indicativo: identificación por ruta EN SEGUNDO PLANO (nunca se espera aquí). La respuesta
+  //    «identificando» no se guarda en caché, para que la app pueda volver a preguntar en unos segundos.
+  let identifying = false;
+  if (result.state === 'sin-datos' && phys && !hexes.get(phys) && origin && dest && canIdentify(leg, state.legs)) {
+    hexes.resolve(phys, () => identifyByZone({ leg, legs: state.legs, origin, dest, nowMs, fetchFn }), nowMs).catch(() => {});
+    identifying = hexes.busy(phys);
+  }
+  const body = JSON.stringify({ ...result, ...(identifying ? { identifying: true } : {}), checked: new Date(nowMs).toISOString() });
+  if (identifying) return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body };
   if (state.radar.size > 500) state.radar.clear();
   state.radar.set(path, { at: nowMs, body });
   if (phys) state.radar.set(phys, { at: nowMs, body });

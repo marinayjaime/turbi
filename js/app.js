@@ -21,7 +21,7 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, RADAR_RECHECK_MS } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
@@ -195,9 +195,13 @@ function turbiEta(q, ctx, radar = null) {
 
 // Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga
 // (estado ADS-B y, si la llegada es una estimación Turbi, esa estimación refinada en vuelo).
-async function showRadar(q, flight, stale, ctx = null) {
+async function showRadar(q, flight, stale, ctx = null, recheck = true) {
   if (!flight || flight.stale || !q.leg || q.leg.past || !wantsRadar(q.leg)) return;
   const radar = await fetchRadar(q.schedule.al, q.schedule.n);
+  // El servidor identifica el avión por su ruta en segundo plano: se vuelve a mirar una sola vez, sin bloquear nada.
+  if (radar?.identifying && recheck) {
+    setTimeout(() => { if (!stale()) safely(() => showRadar(q, flight, stale, ctx, false)); }, RADAR_RECHECK_MS);
+  }
   rememberSighting(etaKey(q), radar);
   rememberLanding(etaKey(q), radar);
   let card = withRadar(flight, radar, recallSighting(etaKey(q)));

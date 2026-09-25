@@ -56,7 +56,8 @@ function radarHtml(r) {
   cell('Distancia restante', Number.isFinite(r.remainingKm) ? thousands(r.remainingKm) : null, 'km')}
         </div>
         <div class="tm-foot"><span class="tm-source" title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}">Radar ADS-B</span>${''
-  }<span class="tm-signal">Última señal hace ${esc(r.seenS)} s · ${esc(r.callsign)}</span></div>
+  }<span class="tm-signal">Última señal hace ${esc(r.seenS)} s · ${esc(r.callsign)}</span></div>${
+  r.match === 'ruta' ? '\n        <p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>' : ''}
       </div>`;
   }
   if (r.state === 'reciente' || r.state === 'aterrizado') return ''; // lo dice el estado (y su nota)

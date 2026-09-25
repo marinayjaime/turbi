@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { vi } from 'vitest';
 import { createState, runCycle, handle, needsRefresh, radarResponse } from '../server/live.mjs';
+import { adsbLimiter } from '../server/adsb.mjs';
+// El limitador global de adsb.lol sin espera en las pruebas (su separación se prueba aparte, en tests/adsb.test.js).
+beforeEach(() => { adsbLimiter.minIntervalMs = 0; });
 
 const row = over => ({
   iataCompania: 'IB', oaciCompania: 'IBE', nombreCompania: 'Iberia', numVuelo: '1668',

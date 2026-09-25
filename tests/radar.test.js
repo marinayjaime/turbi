@@ -1,5 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { needsRadar, findOnRadar } from '../server/radar.mjs';
+import { adsbLimiter } from '../server/adsb.mjs';
+// El limitador global de adsb.lol sin espera en las pruebas (su separación se prueba aparte, en tests/adsb.test.js).
+beforeEach(() => { adsbLimiter.minIntervalMs = 0; });
 
 const leg = over => ({ al: 'EI', icao: 'EIN', n: '737', d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
 const now = Date.parse('2026-09-24T21:00:00Z'); // 23:00 en Palma

@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { LIVE_BASE } from '../js/config.js';
 import { formatLocal } from '../js/time.js';
 import { FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
+import { RADAR_RECHECK_MS } from '../js/radar.js';
 
 const MAD = 'Europe/Madrid';
 const dayOf = ms => new Intl.DateTimeFormat('en-CA', { timeZone: MAD }).format(ms);
@@ -36,6 +37,7 @@ const RADAR_FLYING = { state: 'volando', callsign: 'IBE715', altM: 10668, altFt:
 
 let calls;
 function network({ flights, radar = null, openMeteo }) {
+  const radars = Array.isArray(radar) ? [...radar] : null;
   calls = [];
   return vi.fn(async url => {
     url = String(url);
@@ -44,7 +46,7 @@ function network({ flights, radar = null, openMeteo }) {
     if (url === 'data/airline-photos.json') return json(JSON.parse(readFileSync('data/airline-photos.json', 'utf8')));
     const f = url.match(/^data\/flights\/(\w+)\/(\d+)\.json$/);
     if (f && flights[`${f[1]}${f[2]}`]) return json(flights[`${f[1]}${f[2]}`]);
-    if (url.startsWith(`${LIVE_BASE}/radar/`)) return radar ? json(radar) : notFound;
+    if (url.startsWith(`${LIVE_BASE}/radar/`)) return radars ? json(radars.length > 1 ? radars.shift() : radars[0]) : radar ? json(radar) : notFound;
     if (url.startsWith('https://api.open-meteo.com/v1/forecast')) return openMeteo(url);
     if (url.startsWith('https://api.open-meteo.com/data/')) return json({ last_run_initialisation_time: Math.floor(Date.now() / 1000) - 6 * 3600 });
     return notFound; // Render, puntualidad, METAR, nombres de lugares: sin datos en la prueba
@@ -147,5 +149,48 @@ describe('Actualizar con un pronóstico válido en caché', () => {
     expect(openMeteoCalls()).toHaveLength(first); // ni pronóstico ni meta.json: todo de la caché
     expect($('#result .flight').textContent).toContain('IB 1668');
     expect(area()).not.toContain(FORECAST_UNAVAILABLE);
+  });
+});
+
+describe('radar: el servidor está identificando el avión por su ruta (en segundo plano)', () => {
+  it('la ficha no espera; la app vuelve a mirar el radar una sola vez y entonces muestra el panel', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true });
+    try {
+      const dep = Date.now() - 45 * 60000;
+      const d = dayOf(dep), sd = formatLocal(dep, MAD);
+      const leg = { d, o: 'PMI', a: 'LBA', sd, ed: `${d}T${sd}`, st: 'BOR', ac: '738W', op: 'FR' };
+      await openApp(network({
+        flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } },
+        radar: [{ state: 'sin-datos', identifying: true }, { ...RADAR_FLYING, callsign: 'RYR12AB', hex: 'abc123', match: 'ruta' }],
+        openMeteo: () => tooMany,
+      }));
+      await search('FR2311', d);
+      await until(() => $('#result .flight') && calls.filter(u => u.includes('/radar/')).length === 1 && area().includes(FORECAST_UNAVAILABLE), 'ficha con la primera respuesta del radar');
+      expect($('.telemetry')).toBeNull();
+      vi.advanceTimersByTime(RADAR_RECHECK_MS);
+      await until(() => $('.telemetry'), 'panel tras la segunda consulta');
+      expect($('.telemetry').textContent).toContain('RYR12AB');
+      expect($('.tm-match')).not.toBeNull();
+      vi.advanceTimersByTime(RADAR_RECHECK_MS * 3);
+      await networkIdle();
+      expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(2); // una sola nueva consulta
+    } finally { vi.useRealTimers(); }
+  });
+  it('si sigue identificando, no insiste: una sola consulta más (luego, «Actualizar»)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true });
+    try {
+      const dep = Date.now() - 45 * 60000;
+      const d = dayOf(dep), sd = formatLocal(dep, MAD);
+      const leg = { d, o: 'PMI', a: 'LBA', sd, ed: `${d}T${sd}`, st: 'BOR', ac: '738W', op: 'FR' };
+      await openApp(network({
+        flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } },
+        radar: { state: 'sin-datos', identifying: true },
+        openMeteo: () => tooMany,
+      }));
+      await search('FR2311', d);
+      await until(() => calls.filter(u => u.includes('/radar/')).length === 1, 'primera consulta del radar');
+      for (let i = 0; i < 4; i++) { vi.advanceTimersByTime(RADAR_RECHECK_MS); await networkIdle(); }
+      expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
   });
 });

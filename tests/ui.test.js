@@ -148,6 +148,12 @@ describe('radar', () => {
     expect(html).not.toContain('Según el radar');
     expect(html).not.toMatch(/>[^<]*adsb\.lol/); // el proveedor no se muestra como texto
   });
+  it('avión identificado por su ruta (no por el indicativo del vuelo): se dice, en lenguaje llano', () => {
+    const html = flightCardHtml({ ...c, radar: { ...r, callsign: 'RYR12AB', hex: 'abc123', match: 'ruta' } });
+    expect(html).toContain('<span class="tm-signal">Última señal hace 0 s · RYR12AB</span>');
+    expect(html).toContain('<p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>');
+    expect(flightCardHtml({ ...c, radar: r })).not.toContain('tm-match');
+  });
   it('con el panel, la etiqueta exterior «Volando» no se repite', () => {
     const html = flightCardHtml({ ...c, radar: r });
     expect(html).not.toContain('class="status');

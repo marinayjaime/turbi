@@ -86,6 +86,10 @@ const MIN = 60000;
 //   más tarde o nunca      → el estado oficial de Aena, y «sin señal ADS-B reciente».
 // Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
 // prueba varias variantes.
+// El servidor está identificando el avión por su ruta (server/identify.mjs, en segundo plano): la app vuelve a mirar
+// el radar una sola vez, pasado este tiempo. La ficha nunca espera a esa identificación.
+export const RADAR_RECHECK_MS = 20000;
+
 export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
   if (radar.state === 'volando') return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
