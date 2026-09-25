@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { LIVE_BASE } from '../js/config.js';
 import { formatLocal } from '../js/time.js';
 import { FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
-import { RADAR_RECHECK_MS } from '../js/radar.js';
+import { RADAR_RECHECK_DELAYS_MS } from '../js/radar.js';
 
 const MAD = 'Europe/Madrid';
 const dayOf = ms => new Intl.DateTimeFormat('en-CA', { timeZone: MAD }).format(ms);
@@ -167,16 +167,16 @@ describe('radar: el servidor está identificando el avión por su ruta (en segun
       await search('FR2311', d);
       await until(() => $('#result .flight') && calls.filter(u => u.includes('/radar/')).length === 1 && area().includes(FORECAST_UNAVAILABLE), 'ficha con la primera respuesta del radar');
       expect($('.telemetry')).toBeNull();
-      vi.advanceTimersByTime(RADAR_RECHECK_MS);
+      vi.advanceTimersByTime(RADAR_RECHECK_DELAYS_MS[0]);
       await until(() => $('.telemetry'), 'panel tras la segunda consulta');
       expect($('.telemetry').textContent).toContain('RYR12AB');
       expect($('.tm-match')).not.toBeNull();
-      vi.advanceTimersByTime(RADAR_RECHECK_MS * 3);
+      vi.advanceTimersByTime(RADAR_RECHECK_DELAYS_MS.reduce((a, b) => a + b, 0));
       await networkIdle();
       expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(2); // una sola nueva consulta
     } finally { vi.useRealTimers(); }
   });
-  it('si sigue identificando, no insiste: una sola consulta más (luego, «Actualizar»)', async () => {
+  it('si sigue identificando, hace tres sondeos baratos a los 10, 25 y 45 s', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true });
     try {
       const dep = Date.now() - 45 * 60000;
@@ -189,8 +189,10 @@ describe('radar: el servidor está identificando el avión por su ruta (en segun
       }));
       await search('FR2311', d);
       await until(() => calls.filter(u => u.includes('/radar/')).length === 1, 'primera consulta del radar');
-      for (let i = 0; i < 4; i++) { vi.advanceTimersByTime(RADAR_RECHECK_MS); await networkIdle(); }
-      expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(2);
+      for (const delay of RADAR_RECHECK_DELAYS_MS) { vi.advanceTimersByTime(delay); await networkIdle(); }
+      const radarCalls = calls.filter(u => u.includes('/radar/'));
+      expect(radarCalls).toHaveLength(4);
+      expect(radarCalls.slice(1).every(u => u.endsWith('?poll=1'))).toBe(true);
     } finally { vi.useRealTimers(); }
   });
 });
@@ -226,4 +228,3 @@ describe('la ficha nunca espera al radar', () => {
     expect([...document.querySelectorAll('#result h3')].map(h => h.textContent)).toContain('Turbulencias');
   });
 });
-

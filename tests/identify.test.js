@@ -96,20 +96,30 @@ describe('identificación por zona (excepcional y conservadora)', () => {
     expect((await identifyByZone({ ...ctx(), fetchFn: apis({ routes: { RYR19HB: ['PMI', 'EMA'] } }).fetchFn })).state).toBe('sin-datos');
     expect((await identifyByZone({ ...ctx(), fetchFn: apis({ failRoute: ['RYR19HB'] }).fetchFn })).state).toBe('no-disponible');
   });
-  it('Aena tiene otro vuelo de la misma aerolínea y ruta en la franja → no se intenta', async () => {
+  it('un rival futuro que aún no puede estar volando no bloquea; uno activo compatible sí', async () => {
     const other = { ...fr2311, n: '2313', sd: '10:10', ed: '2026-09-25T10:12' };
     const { fetchFn, calls } = apis();
-    expect((await identifyByZone({ ...ctx({ legs: [fr2311, other] }), fetchFn })).state).toBe('ambiguo');
-    expect(calls.point).toBe(0);
+    expect((await identifyByZone({ ...ctx({ legs: [fr2311, other] }), fetchFn })).state).toBe('identificado');
+    expect(calls.point).toBeGreaterThan(0);
+    const active = { ...fr2311, n: '2313', sd: '09:30', ed: '2026-09-25T09:32' };
+    expect((await identifyByZone({ ...ctx({ legs: [fr2311, active] }), fetchFn: apis().fetchFn })).state).toBe('ambiguo');
   });
-  it('sin salida confirmada (antes de salida + 15 min), sin operadora o sin tipo de Aena → no se intenta', async () => {
+  it('sin salida confirmada (antes de salida + 15 min) o sin tipo de Aena → no se intenta', async () => {
     // Regla de radarGate (25/09/2026): sin confirmación de Aena, la identificación solo desde la salida más reciente + 15 min.
-    const cases = [[{ ...fr2311, st: 'EMB', std: 'EMB' }, dep + 10 * MIN], [{ ...fr2311, op: undefined }, now], [{ ...fr2311, ac: null }, now]];
+    const cases = [[{ ...fr2311, st: 'EMB', std: 'EMB' }, dep + 10 * MIN], [{ ...fr2311, ac: null }, now]];
     for (const [leg, nowMs] of cases) {
       const { fetchFn, calls } = apis();
       expect((await identifyByZone({ ...ctx({ leg, legs: [leg], nowMs }), fetchFn })).state).toBe('no-aplica');
       expect(calls.point).toBe(0);
     }
+  });
+  it('sin operadora explícita usa los OACI del grupo de códigos compartidos, sin llamadas de zona extra', async () => {
+    const marketing = { ...fr2311, al: 'XX', icao: 'XXX', n: '9001', op: undefined };
+    const operatingShare = { ...fr2311, op: undefined };
+    const { fetchFn, calls } = apis();
+    expect(await identifyByZone({ ...ctx({ leg: marketing, legs: [marketing, operatingShare] }), fetchFn }))
+      .toEqual({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
+    expect(calls.point).toBeLessThanOrEqual(LIMITS.maxZoneCalls);
   });
   it('demasiados candidatos locales (> máximo) → ambiguo sin inundar adsbdb', async () => {
     const many = Array.from({ length: LIMITS.maxCandidates + 3 }, (_, i) => [`RYR9${i}X`, `4f00${i}`, 'B738', 41 + i * 0.05, 1.5, 340, 35000, 'PMI', 'LBA']);
@@ -142,6 +152,16 @@ describe('registro vuelo → hex: seguimiento, reutilización, invalidación y e
     expect(await reg.resolve(phys, attempt, now + 9 * MIN)).toBeNull();
     expect(attempt).toHaveBeenCalledTimes(1);
     await reg.resolve(phys, attempt, now + LIMITS.cooldownMin * MIN + 1);
+    expect(attempt).toHaveBeenCalledTimes(2);
+  });
+  it('un 429 o fallo temporal del proveedor no crea cooldown del vuelo', async () => {
+    const reg = createHexRegistry();
+    const attempt = vi.fn()
+      .mockResolvedValueOnce({ state: 'no-disponible', rateLimited: true })
+      .mockResolvedValueOnce({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
+    expect(await reg.resolve(phys, attempt, now)).toBeNull();
+    expect(reg.status(phys, now + 1).cooldownRemainingMs).toBe(0);
+    expect(await reg.resolve(phys, attempt, now + 1)).toMatchObject({ hex: '4d225e' });
     expect(attempt).toHaveBeenCalledTimes(2);
   });
   it('dos usuarios a la vez → una sola identificación', async () => {

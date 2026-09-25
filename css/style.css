@@ -45,6 +45,13 @@ main {
   padding: calc(env(safe-area-inset-top) + 16px) 20px calc(env(safe-area-inset-bottom) + 32px);
 }
 [hidden] { display: none !important; }
+.update-notice {
+  position: fixed; z-index: 20; top: calc(env(safe-area-inset-top) + 10px); left: 50%; transform: translateX(-50%);
+  width: min(440px, calc(100% - 32px)); display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px 10px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(10, 40, 70, 0.24); color: var(--text); font-size: 14px;
+}
+.update-notice button { border: 0; border-radius: 999px; padding: 7px 12px; background: var(--accent); color: #fff; font-weight: 600; }
 /* Pantalla de inicio: el panel centrado en vertical. */
 #query-view { min-height: calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 48px);
   display: flex; flex-direction: column; justify-content: center; }

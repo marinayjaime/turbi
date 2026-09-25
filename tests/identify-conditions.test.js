@@ -68,8 +68,9 @@ function server({ holdZone = false } = {}) {
   const state = createState();
   state.legs = [leg];
   const airports = { PMI: ['', '', ...PMI], LBA: ['', '', ...LBA] };
-  const ask = nowMs => radarResponse(state, '/radar/FR/2311.json', { fetchFn, nowMs, pauseMs: 0, airports }).then(r => JSON.parse(r.body));
-  return { ask, calls, release: () => release(), state };
+  const askPath = (path, nowMs) => radarResponse(state, path, { fetchFn, nowMs, pauseMs: 0, airports }).then(r => JSON.parse(r.body));
+  const ask = nowMs => askPath('/radar/FR/2311.json', nowMs);
+  return { ask, askPath, calls, release: () => release(), state };
 }
 
 describe('2) identificación asíncrona: nunca retrasa la respuesta', () => {
@@ -82,6 +83,27 @@ describe('2) identificación asíncrona: nunca retrasa la respuesta', () => {
     const second = await s.ask(now + 20000); // la respuesta «identificando» no se guarda: la app puede volver a mirar
     expect(second).toMatchObject({ state: 'volando', callsign: 'RYR19HB', hex: '4d225e', match: 'ruta' });
     expect(s.calls.filter(u => u.includes('/v2/hex/'))).toHaveLength(1);
+  });
+  it('dos usuarios y los sondeos durante la identificación no repiten el indicativo directo', async () => {
+    const s = server({ holdZone: true });
+    expect(await s.ask(now)).toMatchObject({ state: 'sin-datos', identifying: true });
+    const direct = () => s.calls.filter(u => u.includes('/v2/callsign/')).length;
+    expect(direct()).toBe(1);
+    expect(await s.askPath('/radar/FR/2311.json?poll=1', now + 10000)).toMatchObject({ identifying: true });
+    expect(await s.ask(now + 12000)).toMatchObject({ identifying: true });
+    expect(direct()).toBe(1);
+    s.release();
+  });
+  it('debug=1 explica la puerta y el trabajo sin exponerlo en la respuesta normal', async () => {
+    const s = server({ holdZone: true });
+    const normal = await s.ask(now);
+    expect(normal.diagnostic).toBeUndefined();
+    const debug = await s.askPath('/radar/FR/2311.json?debug=1&poll=1', now + 1000);
+    expect(debug.diagnostic).toMatchObject({ gate: 'identify', gateReason: expect.any(String), registry: { busy: true } });
+    s.release();
+    await vi.waitFor(() => expect(s.state.hexes.get('phys|2026-09-25|PMI|LBA|09:25')).toMatchObject({ hex: '4d225e' }));
+    expect(await s.askPath('/radar/FR/2311.json?debug=1', now + 20000)).toHaveProperty('diagnostic');
+    expect(await s.ask(now + 25000)).not.toHaveProperty('diagnostic'); // nunca se guarda el diagnóstico en la caché pública
   });
   it('fuera de la franja de espera, la identificación fallida no se repite (10 min) ni se anuncia', async () => {
     const s = server();

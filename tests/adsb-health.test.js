@@ -19,6 +19,8 @@ describe('/health.adsb', () => {
       blocked: false, blockedUntil: null, retryInSec: 0, last429At: null, lastSuccessAt: null, lastErrorAt: null,
       lastError: null, lastStatus: null, rateLimitedCount: 0, successCount: 0, failedCount: 0, pendingRadar: 0, pendingIdentification: 0,
     });
+    expect(h.radar).toMatchObject({ requests: 0, cacheHits: 0, directLookups: 0, directFound: 0,
+      identificationStarted: 0, identificationBusyPolls: 0, identificationSucceeded: 0, blockedReasons: {} });
   });
   it('1. un 429 → blocked, blockedUntil (la pausa global real), last429At, contador y segundos restantes', async () => {
     await adsbGet('/callsign/X', { fetchFn: vi.fn(async () => res(429, { 'retry-after': '30' })) });

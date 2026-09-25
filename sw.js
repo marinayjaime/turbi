@@ -2,8 +2,8 @@
 // con la caché como respaldo sin conexión. Las APIs externas no pasan por aquí.
 const CACHE = 'turbi-v51';
 const SHELL = [
-  './', 'index.html', 'css/style.css', 'manifest.json',
-  'js/app.js', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
+  './', 'index.html', 'css/style.css?v=2026-09-25.1', 'manifest.json',
+  'js/app.js?v=2026-09-25.1', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
   'js/flight.js', 'js/airports.js', 'js/places.js', 'js/schedule.js', 'js/radar.js', 'js/radar-gate.js', 'js/eta.js', 'js/airline-photos.js',
   'js/altitude.js', 'js/turbi-index.js', 'js/models.js', 'js/confidence.js', 'js/summary.js', 'js/forecast.js',
   'js/ui-forecast.js', 'js/storage.js', 'js/aviation-weather.js', 'js/map.js', 'js/speech.js', 'js/config.js', 'js/punctuality.js', 'js/ui-punctuality.js', 'js/plain.js', 'data/icao.json',
@@ -20,6 +20,10 @@ self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys =>
     Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))));
   self.clients.claim();
+});
+
+self.addEventListener('message', e => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', e => {

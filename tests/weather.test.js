@@ -152,6 +152,33 @@ describe('caché de Open-Meteo y Retry-After', () => {
     await fetchLocations([{ lat: 53.42, lon: -6.27 }], T0, T0, f); // otra consulta: sí se pide
     expect(f).toHaveBeenCalledTimes(2);
   });
+  it('dos consultas idénticas a la vez comparten una sola petición', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const f = vi.fn(async () => { await gate; return ok([fakeLocation()]); });
+    const args = [[{ lat: 39.55, lon: 2.73 }], T0, T0, f];
+    const a = fetchLocations(...args), b = fetchLocations(...args);
+    await Promise.resolve();
+    release();
+    await Promise.all([a, b]);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('las consultas diferentes se envían en serie, no en una ráfaga', async () => {
+    let open = 0, maxOpen = 0;
+    const f = vi.fn(async () => {
+      open++; maxOpen = Math.max(maxOpen, open);
+      await new Promise(r => setTimeout(r, 5));
+      open--;
+      return ok([fakeLocation()]);
+    });
+    await Promise.all([
+      fetchLocations([{ lat: 10, lon: 10 }], T0, T0, f),
+      fetchLocations([{ lat: 20, lon: 20 }], T0, T0, f),
+      fetchLocations([{ lat: 30, lon: 30 }], T0, T0, f),
+    ]);
+    expect(maxOpen).toBe(1);
+    expect(f).toHaveBeenCalledTimes(3);
+  });
   it('la caché caduca a los 45 min (los modelos se actualizan)', async () => {
     vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
     try {

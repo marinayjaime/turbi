@@ -16,7 +16,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const CACHE_MS = 45 * 60000;
 const DEFAULT_BLOCK_MS = 60000;
 const states = new WeakMap();
-const stateOf = fetchFn => states.get(fetchFn) ?? states.set(fetchFn, { cache: new Map(), blockedUntil: 0 }).get(fetchFn);
+const stateOf = fetchFn => states.get(fetchFn) ?? states.set(fetchFn, { cache: new Map(), pending: new Map(), queue: Promise.resolve(), blockedUntil: 0 }).get(fetchFn);
 const TOO_MANY = 'Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.';
 const tooMany = ms => Object.assign(retryable(TOO_MANY), { retryAfterMs: ms, rateLimited: true });
 
@@ -30,10 +30,9 @@ function retryAfterMs(res) {
 }
 
 // En el móvil la red puede cortarse un instante: un fallo de red o un 5xx se reintenta una vez.
-async function getJson(url, fetchFn, tries = 2) {
-  const st = stateOf(fetchFn);
-  const hit = st.cache.get(url);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
+async function requestJson(url, fetchFn, st, tries) {
+  // Se comprueba al empezar de verdad (no al entrar en la cola): un 429 de la petición anterior cancela las que
+  // esperaban sin volver a tocar Open-Meteo.
   if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
   for (let attempt = 1; ; attempt++) {
     let res;
@@ -55,6 +54,21 @@ async function getJson(url, fetchFn, tries = 2) {
     st.cache.set(url, { at: Date.now(), body });
     return body;
   }
+}
+
+async function getJson(url, fetchFn, tries = 2) {
+  const st = stateOf(fetchFn);
+  const hit = st.cache.get(url);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
+  if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
+  // La misma consulta concurrente se comparte. Las distintas se ejecutan una detrás de otra para no lanzar de golpe
+  // centros, laterales, ECMWF y GFS; el resultado visual es el mismo y se reducen mucho los 429.
+  if (st.pending.has(url)) return st.pending.get(url);
+  const task = st.queue.then(() => requestJson(url, fetchFn, st, tries));
+  st.queue = task.catch(() => {});
+  st.pending.set(url, task);
+  task.finally(() => st.pending.delete(url)).catch(() => {});
+  return task;
 }
 
 export const HOURLY_VARS = [

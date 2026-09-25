@@ -21,8 +21,9 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, RADAR_RECHECK_MS } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, RADAR_RECHECK_DELAYS_MS } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
+import { BUILD_ID } from './config.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
@@ -34,7 +35,10 @@ const els = {
   notice: $('notice'), airportsList: $('airports-list'), result: $('result'), back: $('back'),
   changeTime: $('change-time'), refresh: $('refresh'), loading: $('loading'), error: $('error'),
   errorMsg: $('error-msg'), retry: $('retry'), timeField: $('time-field'), savedLink: $('saved-link'),
+  updateNotice: $('update-notice'), updateApp: $('update-app'),
 };
+
+document.documentElement.dataset.turbiBuild = BUILD_ID;
 
 let lastQuery = null;
 let runId = 0; // solo la consulta más reciente puede pintar
@@ -195,13 +199,14 @@ function turbiEta(q, ctx, radar = null) {
 
 // Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga
 // (estado ADS-B y, si la llegada es una estimación Turbi, esa estimación refinada en vuelo).
-async function showRadar(q, flight, stale, ctx = null, recheck = true) {
+async function showRadar(q, flight, stale, ctx = null, pollIndex = 0) {
   if (!flight || flight.stale || !q.leg || q.leg.past) return;
   if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) return;
-  const radar = await fetchRadar(q.schedule.al, q.schedule.n);
-  // El servidor identifica el avión por su ruta en segundo plano: se vuelve a mirar una sola vez, sin bloquear nada.
-  if (radar?.identifying && recheck) {
-    setTimeout(() => { if (!stale()) safely(() => showRadar(q, flight, stale, ctx, false)); }, RADAR_RECHECK_MS);
+  const radar = await fetchRadar(q.schedule.al, q.schedule.n, undefined, undefined, { poll: pollIndex > 0 });
+  // Los sondeos solo leen el trabajo compartido del servidor. Si aún continúa, esperan progresivamente hasta 45 s.
+  if (radar?.identifying && pollIndex < RADAR_RECHECK_DELAYS_MS.length) {
+    const delay = RADAR_RECHECK_DELAYS_MS[pollIndex];
+    setTimeout(() => { if (!stale()) safely(() => showRadar(q, flight, stale, ctx, pollIndex + 1)); }, delay);
   }
   rememberSighting(etaKey(q), radar);
   rememberLanding(etaKey(q), radar);
@@ -509,4 +514,31 @@ els.date.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, 
 els.time.value = `${String((now.getHours() + 1) % 24).padStart(2, '0')}:00`;
 if (navigator.onLine === false) offerSaved();
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    const offerUpdate = worker => {
+      if (!worker || !hadController || !els.updateNotice) return;
+      els.updateNotice.hidden = false;
+      els.updateApp.onclick = () => worker.postMessage({ type: 'SKIP_WAITING' });
+    };
+    if (reg.waiting) offerUpdate(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const worker = reg.installing;
+      worker?.addEventListener('statechange', () => { if (worker.state === 'installed') offerUpdate(worker); });
+    });
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      const key = `turbi-reloaded-${BUILD_ID}`;
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+      location.reload();
+    });
+    // Comprueba al abrir la app instalada, sin esperar al ciclo de actualización del navegador.
+    reg.update().catch(() => {});
+  } catch { /* la app sigue funcionando sin instalación PWA */ }
+}
+
+registerServiceWorker();

@@ -106,7 +106,8 @@ export function landedAt(a, callsign, { dest, origin, depMs, nowMs, byHex = fals
 
 // siblings: el mismo vuelo con otros números (códigos compartidos); el avión emite con el de la operadora.
 // dest: [lat, lon] del destino, para calcular cuánto le queda (cálculo de Turbi, no una hora oficial).
-export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS, dest = null, origin = null, nowMs = Date.now(), limiter = adsbLimiter }) {
+export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS, dest = null, origin = null, nowMs = Date.now(), limiter = adsbLimiter,
+  onDiagnostic = null }) {
   // Indicativo = OACI + número. Si el número tiene 1 o 2 cifras, se prueba después la variante con ceros a la izquierda
   // (Air Europa UX15 emite «AEA015»). No se cambia el número original ni se prueba ninguna otra transformación.
   const variants = l => [`${l.icao}${l.n}`, ...(/^\d{1,2}$/.test(l.n) ? [`${l.icao}${l.n.padStart(3, '0')}`] : [])];
@@ -115,21 +116,25 @@ export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs
   const group = [leg, ...siblings].filter(l => l.icao);
   const operator = leg.op ? group.filter(l => l.al === leg.op) : [];
   const callsigns = [...new Set((operator.length ? operator : group).flatMap(variants))].slice(0, MAX_LOOKUPS);
+  const diag = { lookupsPlanned: callsigns.length, lookupsMade: 0, found: false, rateLimited: false };
+  const done = result => { onDiagnostic?.({ ...diag, result: result.state }); return result; };
   let failed = false, a = null, landed = null, callsign = callsigns[0];
   const ctx = { dest, origin, depMs: departureMs(leg), nowMs };
   for (const [i, cs] of callsigns.entries()) {
     if (i) await wait(pauseMs);
+    diag.lookupsMade++;
     const res = await lookup(fetchFn, cs, pauseMs, limiter);
-    if (res.error === 'rate-limited') return { state: 'no-disponible' }; // adsb.lol en pausa: ni una consulta más
+    if (res.error === 'rate-limited') { diag.rateLimited = true; return done({ state: 'no-disponible' }); } // adsb.lol en pausa: ni una consulta más
     if (res.error) { failed = true; continue; }
     const r = res.data;
     a = (r.ac ?? []).find(airborne);
     if (a) { callsign = cs; break; }
     landed ??= (r.ac ?? []).map(x => landedAt(x, cs, ctx)).find(Boolean) ?? null;
   }
-  if (!a && landed) return landed; // en vuelo gana; si no, tierra confirmada en el destino
-  if (!a) return failed ? { state: 'no-disponible' } : { state: 'sin-datos', callsign };
-  return flyingResult(a, callsign, dest);
+  if (!a && landed) { diag.found = true; return done(landed); } // en vuelo gana; si no, tierra confirmada en el destino
+  if (!a) return done(failed ? { state: 'no-disponible' } : { state: 'sin-datos', callsign });
+  diag.found = true;
+  return done(flyingResult(a, callsign, dest));
 }
 
 // Datos medidos del avión en el aire (sin ninguna estimación).

@@ -120,13 +120,13 @@ describe('radar de una llegada desde el extranjero', () => {
     await vi.waitFor(() => expect(s.state.hexes.busy('phys|2026-09-25|HHN|VLC|L11:05')).toBe(false));
     expect(s.state.hexes.get('phys|2026-09-25|HHN|VLC|L11:05')).toBeNull();
   });
-  it('dos llegadas de la misma operadora y ruta, ambas sin salida, a menos de 2 h → no se intenta (no son el mismo vuelo)', async () => {
+  it('dos llegadas activas de la misma operadora y ruta → consulta la posición pero no asigna un candidato compatible con ambas', async () => {
     const other = { ...fr8606, n: '8608', sa: '12:30', ea: '2026-09-25T12:40' };
     const s = server({ pointAc: [plane()], routes: { RYR8KX: ['HHN', 'VLC'] }, legs: [fr8606, other] });
     await s.ask(now);
     await vi.waitFor(() => expect(s.state.hexes.busy('phys|2026-09-25|HHN|VLC|L11:05')).toBe(false));
     expect(s.state.hexes.get('phys|2026-09-25|HHN|VLC|L11:05')).toBeNull();
-    expect(s.calls.some(u => u.includes('/v2/point/'))).toBe(false);
+    expect(s.calls.some(u => u.includes('/v2/point/'))).toBe(true);
   });
 });
 

@@ -69,9 +69,10 @@ export function radarNote(radar) {
     ? 'El radar indica que el avión sigue en el aire: la previsión de turbulencias no se muestra con el vuelo en curso.' : null;
 }
 
-export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE) {
+export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE, { poll = false, debug = false } = {}) {
   try {
-    const res = await fetchFn(`${liveBase}/radar/${al}/${n}.json`, { signal: AbortSignal.timeout(20000) });
+    const query = new URLSearchParams({ ...(poll ? { poll: '1' } : {}), ...(debug ? { debug: '1' } : {}) }).toString();
+    const res = await fetchFn(`${liveBase}/radar/${al}/${n}.json${query ? `?${query}` : ''}`, { signal: AbortSignal.timeout(20000) });
     return res.ok ? await res.json() : null;
   } catch {
     return null;
@@ -86,9 +87,11 @@ const MIN = 60000;
 //   más tarde o nunca      → el estado oficial de Aena, y «sin señal ADS-B reciente».
 // Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
 // prueba varias variantes.
-// El servidor está identificando el avión por su ruta (server/identify.mjs, en segundo plano): la app vuelve a mirar
-// el radar una sola vez, pasado este tiempo. La ficha nunca espera a esa identificación.
-export const RADAR_RECHECK_MS = 20000;
+// El servidor está identificando el avión por su ruta en segundo plano. La app sondea a los 10, 25 y 45 s. Esos
+// sondeos llevan ?poll=1: mientras el trabajo siga activo solo leen su estado y no consumen nuevas llamadas ADS-B.
+// Son intervalos sucesivos (10 + 15 + 20 s), no tres búsquedas completas.
+export const RADAR_RECHECK_DELAYS_MS = [10000, 15000, 20000];
+export const RADAR_RECHECK_MS = RADAR_RECHECK_DELAYS_MS[0]; // compatibilidad para consumidores existentes
 
 export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;

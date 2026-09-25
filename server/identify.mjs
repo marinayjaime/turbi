@@ -1,7 +1,8 @@
 // Identificación EXCEPCIONAL de un vuelo comercial → avión físico (hex ICAO) cuando la aerolínea no emite con su
 // indicativo OACI + número (p. ej. Ryanair emite indicativos alfanuméricos como «RYR12AB»). Diseño: docs/turbi-roadmap.md.
-//  - Solo si falla el indicativo exacto y Aena confirma salida, operadora y tipo de avión.
-//  - Un candidato solo vale si cumple TODO a la vez: misma operadora (prefijo OACI del indicativo), tipo compatible con
+//  - Solo si falla el indicativo exacto y Aena confirma salida y tipo de avión. Si Aena no identifica la operadora,
+//    se prueban juntos los prefijos OACI del grupo de códigos compartidos, sin adivinar ninguno.
+//  - Un candidato solo vale si cumple TODO a la vez: operadora posible (prefijo OACI del grupo), tipo compatible con
 //    el de Aena, dentro del pasillo de la ruta, rumbo hacia el destino, recorrido físicamente posible y ruta exacta
 //    (origen y destino) según adsbdb. Debe ser el ÚNICO; si no, no se elige ninguno.
 //  - Después, el avión se sigue solo por /v2/hex/. Un registro en memoria por vuelo físico (compartido por los códigos
@@ -27,7 +28,7 @@ export const LIMITS = {
   maxZoneCalls: 3, // consultas por zona por identificación, como mucho
   maxCandidates: 12, // candidatos que pasan los filtros gratuitos, como mucho; más → ambiguo (sin consultar adsbdb)
   adsbdbCacheMin: 360, // la ruta de un indicativo en adsbdb se guarda este tiempo (no se vuelve a pedir)
-  sameRouteWindowMin: 120, // otro vuelo de la misma operadora y ruta en ± esta franja → no se intenta
+  sameRouteWindowMin: 120, // rivales de la misma ruta que se comprueban por progreso (no es un veto previo)
   cooldownMin: 10, // tras un fallo o una invalidación, sin reintentar durante este tiempo
   invalidateAfter: 3, // lecturas seguidas con indicativo distinto para invalidar el hex
   contradictionCrossKm: 400, // lejos de la ruta más que esto → contradicción física clara
@@ -81,17 +82,29 @@ export function typeCompatible(aena, adsb) {
 }
 
 const cancelled = leg => [leg.st, leg.std, leg.sta].some(f => f === 'CAN' || f === 'DES');
-const operatorIcao = (leg, legs) => (leg.op === leg.al ? leg.icao : legs.find(l => l.al === leg.op && l.icao)?.icao) ?? null;
+// Mismo vuelo físico: misma salida de Aena o, sin ella (origen extranjero), misma llegada.
+const physOf = l => l.sd ?? `L${l.sa}`;
+const samePhysical = (a, b) => a.d === b.d && a.o === b.o && a.a === b.a && physOf(a) === physOf(b);
+
+// Si Aena conoce la operadora, solo se admite su OACI. Si no, todos los OACI distintos del mismo vuelo físico
+// (códigos compartidos) se evalúan contra una única instantánea de zona. No se inventa ni se fija ninguna aerolínea.
+export function operatorIcaos(leg, legs = []) {
+  if (!leg) return [];
+  if (leg.op) {
+    const own = leg.op === leg.al ? leg.icao : null;
+    const matched = legs.find(l => l.al === leg.op && l.icao)?.icao;
+    return [...new Set([own, matched].filter(Boolean))];
+  }
+  return [...new Set([leg, ...legs.filter(l => samePhysical(l, leg))].map(l => l.icao).filter(Boolean))];
+}
 
 // ¿Se puede intentar? radarGate (js/radar-gate.js) lo permite ('identify': Aena confirma, o sin confirmar pasados
 // 15 min de la salida más reciente), Aena da la operadora (y su código OACI) y el tipo de avión, y hay una hora de
 // salida: la suya o, si el origen es extranjero, la ESTIMADA desde su llegada. tz: zonas de origen y destino.
 export function canIdentify(leg, legs = [], { origin = null, dest = null, nowMs = Date.now(), originTz, destTz } = {}) {
-  if (!leg || cancelled(leg) || !leg.op || !leg.ac || !operatorIcao(leg, legs) || estimatedDepartureMs(leg, origin, dest) === null) return false;
+  if (!leg || cancelled(leg) || !leg.ac || !operatorIcaos(leg, legs).length || estimatedDepartureMs(leg, origin, dest) === null) return false;
   return radarGateFor(leg, nowMs, { originTz, destTz, plannedMin: plannedMinFor(origin, dest) }).mode === 'identify';
 }
-// Mismo vuelo físico: misma salida de Aena o, sin ella (origen extranjero), misma llegada.
-const physOf = l => l.sd ?? `L${l.sa}`;
 
 // Ruta de un indicativo en adsbdb, con caché por indicativo (por cliente HTTP). Los fallos no se guardan.
 const routeCaches = new WeakMap();
@@ -117,19 +130,22 @@ async function fetchRoute(callsign, fetchFn) {
 
 // Identificación por zona. Devuelve { state: 'identificado', hex, callsign } | { state: 'ambiguo' | 'sin-datos' |
 // 'no-disponible' | 'no-aplica' }. Nunca elige entre varios.
-export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Date.now(), fetchFn = fetch, limiter = adsbLimiter, limits = LIMITS }) {
-  if (!origin || !dest || !canIdentify(leg, legs, { origin, dest, nowMs })) return { state: 'no-aplica' };
+export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Date.now(), fetchFn = fetch, limiter = adsbLimiter, limits = LIMITS,
+  onDiagnostic = null }) {
+  const diag = { attempted: true, blockedReason: null, operatorPrefixes: operatorIcaos(leg, legs), zoneCalls: 0,
+    candidatesBeforeRoute: 0, candidatesAfterRoute: 0, identifiedBy: null, rateLimited: false };
+  const done = result => { onDiagnostic?.({ ...diag, result: result.state }); return result; };
+  if (!origin || !dest) { diag.blockedReason = 'sin-coordenadas'; return done({ state: 'no-aplica' }); }
+  if (!canIdentify(leg, legs, { origin, dest, nowMs })) {
+    diag.blockedReason = !leg?.ac ? 'sin-tipo' : !diag.operatorPrefixes.length ? 'sin-operadora' : 'fuera-de-ventana';
+    return done({ state: 'no-aplica' });
+  }
   const depMs = estimatedDepartureMs(leg, origin, dest);
   const elapsedMin = (nowMs - depMs) / 60000;
-  if (elapsedMin <= 0) return { state: 'no-aplica' };
-  // Otro vuelo de la misma operadora y ruta en la franja (otro avión físico) → podría confundirse: no se intenta.
-  const rival = legs.some(l => l !== leg && l.o === leg.o && l.a === leg.a && (l.op ?? l.al) === leg.op
-    && physOf(l) !== physOf(leg) && estimatedDepartureMs(l, origin, dest) !== null
-    && Math.abs(estimatedDepartureMs(l, origin, dest) - depMs) <= limits.sameRouteWindowMin * 60000);
-  if (rival) return { state: 'ambiguo' };
+  if (elapsedMin <= 0) { diag.blockedReason = 'antes-de-salida'; return done({ state: 'no-aplica' }); }
 
   // Zonas a lo largo de la ruta: primero donde debería ir, después delante y detrás (sin pasar de lo físicamente posible).
-  const icao = operatorIcao(leg, legs);
+  const icaos = diag.operatorPrefixes;
   const total = distanceKm(origin, dest);
   const reach = Math.min(total, (limits.maxKmh * elapsedMin) / 60 + limits.reachSlackKm);
   const expected = Math.min(reach, (limits.cruiseKmh * elapsedMin) / 60);
@@ -139,32 +155,48 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
   const found = new Map();
   let failed = false;
   for (const km of alongs) {
+    diag.zoneCalls++;
     const [lat, lon] = pointAlong(origin, brg, km);
     const res = await adsbGet(`/point/${lat.toFixed(3)}/${lon.toFixed(3)}/${limits.zoneRadiusNm}`, { fetchFn, limiter, priority: 'identificacion' });
     // Primer 429 (o pausa activa, o cancelada por un 429): se abandona la identificación entera en el acto.
-    if (res.error === 'rate-limited') return { state: 'no-disponible', rateLimited: true };
+    if (res.error === 'rate-limited') { diag.rateLimited = true; return done({ state: 'no-disponible', rateLimited: true }); }
     if (res.error) { failed = true; continue; }
     for (const a of res.data.ac ?? []) {
       const cs = a.flight?.trim();
-      if (!cs || !cs.startsWith(icao) || !a.hex || !airborne(a) || (a.seen_pos ?? a.seen ?? Infinity) > MAX_SEEN_S) continue;
+      const operator = icaos.find(icao => cs?.startsWith(icao));
+      if (!operator || !a.hex || !airborne(a) || (a.seen_pos ?? a.seen ?? Infinity) > MAX_SEEN_S) continue;
       if (!typeCompatible(leg.ac, a.t)) continue;
       if (!corridor({ origin, dest, lat: a.lat, lon: a.lon, track: a.track, elapsedMin }, limits).ok) continue;
-      found.set(a.hex, cs);
+      found.set(a.hex, { callsign: cs, aircraft: a, operator });
     }
   }
+  diag.candidatesBeforeRoute = found.size;
   // Los candidatos salen solo de las consultas por zona; adsbdb es el filtro semántico (ruta exacta) posterior.
-  if (found.size > limits.maxCandidates) return { state: 'ambiguo' };
+  if (found.size > limits.maxCandidates) { diag.blockedReason = 'demasiados-candidatos'; return done({ state: 'ambiguo' }); }
   // Ruta exacta según adsbdb, candidato a candidato (en serie, sin prisa, con caché por indicativo).
   const matches = [];
-  for (const [hex, callsign] of found) {
+  for (const [hex, candidate] of found) {
+    const { callsign, aircraft, operator } = candidate;
     const route = await adsbdbRoute(callsign, fetchFn, limits);
     if (!route) { failed = true; continue; }
-    if (route.o === leg.o && route.a === leg.a) matches.push({ hex, callsign });
+    if (route.o !== leg.o || route.a !== leg.a) continue;
+    // Un vuelo próximo de la misma ruta ya no veta todo el intento. Solo bloquea este candidato si, con la hora de
+    // salida de ese rival, su posición también sería físicamente compatible. Los rivales futuros se descartan solos.
+    const ambiguousRival = legs.some(rival => rival !== leg && rival.o === leg.o && rival.a === leg.a
+      && !samePhysical(rival, leg) && operatorIcaos(rival, legs).includes(operator)
+      && Math.abs((estimatedDepartureMs(rival, origin, dest) ?? Infinity) - depMs) <= limits.sameRouteWindowMin * 60000
+      && (nowMs - estimatedDepartureMs(rival, origin, dest)) / 60000 > 0
+      && corridor({ origin, dest, lat: aircraft.lat, lon: aircraft.lon, track: aircraft.track,
+        elapsedMin: (nowMs - estimatedDepartureMs(rival, origin, dest)) / 60000 }, limits).ok);
+    if (!ambiguousRival) matches.push({ hex, callsign });
+    else diag.blockedReason = 'rival-compatible';
   }
-  if (matches.length > 1) return { state: 'ambiguo' };
+  diag.candidatesAfterRoute = matches.length;
+  if (matches.length > 1) return done({ state: 'ambiguo' });
   // Si algo falló, no se puede asegurar que el candidato sea el único: mejor no decir nada.
-  if (failed) return { state: 'no-disponible' };
-  return matches.length ? { state: 'identificado', ...matches[0] } : { state: 'sin-datos' };
+  if (failed) return done({ state: 'no-disponible' });
+  if (matches.length) { diag.identifiedBy = 'adsbdb'; return done({ state: 'identificado', ...matches[0] }); }
+  return done(diag.blockedReason === 'rival-compatible' ? { state: 'ambiguo' } : { state: 'sin-datos' });
 }
 
 // Seguimiento de un hex ya identificado. observation: 'compatible' (mismo indicativo y coherente), 'incompatible'
@@ -198,21 +230,22 @@ export async function trackByHex({ entry, leg, origin, dest, nowMs = Date.now(),
 // Registro en memoria vuelo físico → hex. Una sola identificación en curso por vuelo; las de vuelos distintos, una
 // detrás de otra; tras un fallo o una invalidación, cooldownMin sin reintentar.
 export function createHexRegistry(limits = LIMITS) {
-  const entries = new Map(); // phys → { hex, callsign, streak } | { until }
+  const entries = new Map(); // phys → { hex, callsign, streak, diagnostic } | { until, diagnostic }
   const pending = new Map();
   let running = false;
   const waiting = [];
   // Cola en serie que arranca la tarea en el acto si no hay otra en marcha.
   const enqueue = task => new Promise((resolve, reject) => {
+    const queuedAt = Date.now();
     const run = () => {
       running = true;
       let p;
-      try { p = Promise.resolve(task()); } catch (err) { p = Promise.reject(err); }
+      try { p = Promise.resolve(task({ queueWaitMs: Math.max(0, Date.now() - queuedAt) })); } catch (err) { p = Promise.reject(err); }
       p.then(resolve, reject).finally(() => { running = false; waiting.shift()?.(); });
     };
     if (running) waiting.push(run); else run();
   });
-  const fail = (phys, nowMs) => entries.set(phys, { until: nowMs + limits.cooldownMin * 60000 });
+  const fail = (phys, nowMs, diagnostic = null) => entries.set(phys, { until: nowMs + limits.cooldownMin * 60000, diagnostic });
 
   return {
     get(phys) {
@@ -220,6 +253,11 @@ export function createHexRegistry(limits = LIMITS) {
       return e?.hex ? { state: 'identificado', hex: e.hex, callsign: e.callsign } : null;
     },
     busy: phys => pending.has(phys),
+    status(phys, nowMs = Date.now()) {
+      const e = entries.get(phys);
+      return { busy: pending.has(phys), identified: Boolean(e?.hex), cooldownRemainingMs: e?.until && nowMs < e.until ? e.until - nowMs : 0,
+        diagnostic: e?.diagnostic ?? null };
+    },
     resolve(phys, attempt, nowMs) {
       const e = entries.get(phys);
       if (e?.hex) return Promise.resolve({ state: 'identificado', hex: e.hex, callsign: e.callsign });
@@ -227,12 +265,15 @@ export function createHexRegistry(limits = LIMITS) {
       if (pending.has(phys)) return pending.get(phys);
       const p = enqueue(attempt).then(r => {
         if (r?.state === 'identificado' && r.hex) {
-          entries.set(phys, { hex: r.hex, callsign: r.callsign, streak: 0 });
+          entries.set(phys, { hex: r.hex, callsign: r.callsign, streak: 0, diagnostic: r.diagnostic ?? null });
           return { state: 'identificado', hex: r.hex, callsign: r.callsign };
         }
-        fail(phys, nowMs);
+        // Un límite o fallo del proveedor es temporal y no dice nada sobre la identidad del vuelo: no se convierte
+        // en diez minutos de bloqueo. Una consulta nueva podrá reintentarlo cuando acabe la pausa global.
+        if (r?.state === 'no-disponible' || r?.rateLimited) entries.set(phys, { diagnostic: r?.diagnostic ?? null });
+        else fail(phys, nowMs, r?.diagnostic ?? null);
         return null;
-      }, () => { fail(phys, nowMs); return null; }).finally(() => pending.delete(phys));
+      }, () => { entries.set(phys, { diagnostic: { result: 'error-temporal' } }); return null; }).finally(() => pending.delete(phys));
       pending.set(phys, p);
       return p;
     },
