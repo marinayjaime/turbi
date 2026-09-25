@@ -94,6 +94,24 @@ describe('2) identificación asíncrona: nunca retrasa la respuesta', () => {
     expect(direct()).toBe(1);
     s.release();
   });
+  it('6) durante 3 min de sondeos y consultas normales mientras identifica: una sola identificación, ninguna llamada extra', async () => {
+    const s = server({ holdZone: true });
+    const resolve = vi.spyOn(s.state.hexes, 'resolve');
+    expect(await s.ask(now)).toMatchObject({ identifying: true });
+    const adsb = () => s.calls.filter(u => u.includes('api.adsb.lol')).length;
+    const before = adsb();
+    for (const [i, t] of [20, 40, 60, 90, 120, 150, 180].entries()) {
+      // la app sondea (?poll=1) y, a la vez, otro usuario abre el mismo vuelo sin ?poll
+      expect(await s.askPath('/radar/FR/2311.json?poll=1', now + t * 1000)).toMatchObject({ identifying: true });
+      expect(await s.ask(now + t * 1000 + 500 + i)).toMatchObject({ identifying: true });
+    }
+    expect(adsb()).toBe(before); // mientras hexes.busy(phys), ninguna consulta nueva a adsb.lol
+    expect(resolve).toHaveBeenCalledTimes(1); // y ninguna segunda identificación del mismo vuelo
+    s.release();
+    await vi.waitFor(() => expect(s.state.hexes.get('phys|2026-09-25|PMI|LBA|09:25')).toMatchObject({ hex: '4d225e' }));
+    expect(s.calls.filter(u => u.includes('/v2/point/')).length).toBeLessThanOrEqual(LIMITS.maxZoneCalls);
+    expect(await s.askPath('/radar/FR/2311.json?poll=1', now + 200000)).toMatchObject({ state: 'volando', hex: '4d225e' });
+  });
   it('debug=1 explica la puerta y el trabajo sin exponerlo en la respuesta normal', async () => {
     const s = server({ holdZone: true });
     const normal = await s.ask(now);

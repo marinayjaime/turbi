@@ -87,11 +87,44 @@ const MIN = 60000;
 //   más tarde o nunca      → el estado oficial de Aena, y «sin señal ADS-B reciente».
 // Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
 // prueba varias variantes.
-// El servidor está identificando el avión por su ruta en segundo plano. La app sondea a los 10, 25 y 45 s. Esos
-// sondeos llevan ?poll=1: mientras el trabajo siga activo solo leen su estado y no consumen nuevas llamadas ADS-B.
-// Son intervalos sucesivos (10 + 15 + 20 s), no tres búsquedas completas.
-export const RADAR_RECHECK_DELAYS_MS = [10000, 15000, 20000];
-export const RADAR_RECHECK_MS = RADAR_RECHECK_DELAYS_MS[0]; // compatibilidad para consumidores existentes
+// El servidor está identificando el avión por su ruta en segundo plano. Con el límite de adsb.lol (4 peticiones por
+// minuto) eso puede tardar 1–2 min, así que la app vuelve a preguntar a los 20, 40, 60, 90, 120, 150 y 180 s desde la
+// primera respuesta (intervalos sucesivos, encadenados; nunca setInterval). Estos sondeos llevan ?poll=1: el servidor
+// solo lee el estado del trabajo en curso y no hace ninguna consulta nueva a ADS-B.
+export const RADAR_POLL_DELAYS_MS = [20000, 20000, 20000, 30000, 30000, 30000, 30000];
+
+// ¿Hay que volver a preguntar? Solo mientras el servidor diga que sigue identificando y aún no haya un resultado
+// definitivo. Sin respuesta (red, timeout), se vuelve a intentar en el siguiente turno: el trabajo del servidor sigue.
+export function keepPolling(radar) {
+  if (!radar) return true;
+  return radar.identifying === true && !['volando', 'aterrizado'].includes(radar.state);
+}
+
+// Sondeo encadenado del radar. fetchOnce({ poll }) → respuesta del servidor (o null); onResult(radar, { attempt }) la
+// pinta; isActive() dice si la ficha que lo pidió sigue en pantalla (misma búsqueda). Devuelve { first, cancel }:
+// first se resuelve con la primera respuesta (la ficha nunca espera a los siguientes sondeos).
+export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays = RADAR_POLL_DELAYS_MS,
+  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id) }) {
+  let timer = null, cancelled = false;
+  const stopped = () => cancelled || !isActive();
+  const step = async attempt => {
+    timer = null;
+    if (stopped()) return null;
+    const radar = await fetchOnce({ poll: attempt > 0 });
+    if (stopped()) return radar;
+    // Sin respuesta en un sondeo no se pinta nada (se queda lo último que se vio).
+    if (radar || attempt === 0) onResult(radar, { attempt });
+    if (keepPolling(radar) && attempt < delays.length) {
+      timer = setTimer(() => { step(attempt + 1).catch(() => {}); }, delays[attempt]);
+    }
+    return radar;
+  };
+  return {
+    first: step(0),
+    cancel() { cancelled = true; if (timer !== null) clearTimer(timer); timer = null; },
+    get pending() { return timer !== null; },
+  };
+}
 
 export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;

@@ -6,7 +6,6 @@ import { readFileSync } from 'node:fs';
 import { LIVE_BASE } from '../js/config.js';
 import { formatLocal } from '../js/time.js';
 import { FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
-import { RADAR_RECHECK_DELAYS_MS } from '../js/radar.js';
 
 const MAD = 'Europe/Madrid';
 const dayOf = ms => new Intl.DateTimeFormat('en-CA', { timeZone: MAD }).format(ms);
@@ -152,48 +151,159 @@ describe('Actualizar con un pronóstico válido en caché', () => {
   });
 });
 
-describe('radar: el servidor está identificando el avión por su ruta (en segundo plano)', () => {
-  it('la ficha no espera; la app vuelve a mirar el radar una sola vez y entonces muestra el panel', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true });
+// La ficha completa: tarjeta del vuelo, título Turbulencias y su sección. Tiene que estar siempre.
+const shell = () => ({ flight: Boolean($('#result .flight')), turbulencias: [...document.querySelectorAll('#result h3.section')].some(h => h.textContent === 'Turbulencias'),
+  area: Boolean($('#forecast-area')), error: !$('#error').hidden });
+const SHELL_OK = { flight: true, turbulencias: true, area: true, error: false };
+const radarCalls = () => calls.filter(u => u.includes('/radar/'));
+// Avanza el reloj simulado; entre temporizador y temporizador se resuelven las promesas (cada sondeo programa el siguiente).
+async function advance(ms) { await vi.advanceTimersByTimeAsync(ms); await networkIdle(); }
+const ryanairLeg = (minAgo = 45) => {
+  const dep = Date.now() - minAgo * 60000;
+  const d = dayOf(dep), sd = formatLocal(dep, MAD);
+  return { d, leg: { d, o: 'PMI', a: 'LBA', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: '738W', op: 'FR' } };
+};
+
+describe('radar: el servidor identifica el avión por su ruta en segundo plano (1–2 min)', () => {
+  it('identificando a los 0 s y a los 20 s; termina a los 90 s → «Volando» y panel ADS-B sin recargar; la ficha sigue entera', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {
-      const dep = Date.now() - 45 * 60000;
-      const d = dayOf(dep), sd = formatLocal(dep, MAD);
-      const leg = { d, o: 'PMI', a: 'LBA', sd, ed: `${d}T${sd}`, st: 'BOR', ac: '738W', op: 'FR' };
+      const { d, leg } = ryanairLeg();
+      const IDENT = { state: 'sin-datos', identifying: true };
       await openApp(network({
         flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } },
-        radar: [{ state: 'sin-datos', identifying: true }, { ...RADAR_FLYING, callsign: 'RYR12AB', hex: 'abc123', match: 'ruta' }],
+        radar: [IDENT, IDENT, IDENT, IDENT, { ...RADAR_FLYING, callsign: 'RYR12AB', hex: 'abc123', match: 'ruta' }],
         openMeteo: () => tooMany,
       }));
       await search('FR2311', d);
-      await until(() => $('#result .flight') && calls.filter(u => u.includes('/radar/')).length === 1 && area().includes(FORECAST_UNAVAILABLE), 'ficha con la primera respuesta del radar');
+      await until(() => radarCalls().length === 1 && area().includes(FORECAST_UNAVAILABLE), 'ficha y primera respuesta');
+      expect(shell()).toEqual(SHELL_OK);
       expect($('.telemetry')).toBeNull();
-      vi.advanceTimersByTime(RADAR_RECHECK_DELAYS_MS[0]);
-      await until(() => $('.telemetry'), 'panel tras la segunda consulta');
+      await advance(20000);
+      expect(radarCalls()).toHaveLength(2); // a los 20 s sigue identificando…
+      expect($('.telemetry')).toBeNull();
+      await advance(40000);
+      expect(radarCalls()).toHaveLength(4); // …y se sigue mirando (40 s, 60 s)
+      await advance(30000); // 90 s: la identificación ha terminado
+      await until(() => $('.telemetry'), 'panel ADS-B tras la identificación');
       expect($('.telemetry').textContent).toContain('RYR12AB');
-      expect($('.tm-match')).not.toBeNull();
-      vi.advanceTimersByTime(RADAR_RECHECK_DELAYS_MS.reduce((a, b) => a + b, 0));
-      await networkIdle();
-      expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(2); // una sola nueva consulta
+      expect($('.telemetry').textContent).toContain('Volando'); // con el radar volando, «Volando» va en el panel
+      expect(shell()).toEqual(SHELL_OK); // actualizar .flight no se lleva la sección Turbulencias
+      expect(area()).toContain(FORECAST_UNAVAILABLE);
+      expect(radarCalls().slice(1).every(u => u.endsWith('?poll=1'))).toBe(true);
+      await advance(300000);
+      expect(radarCalls()).toHaveLength(5); // resultado definitivo: no hay más consultas
     } finally { vi.useRealTimers(); }
   });
-  it('si sigue identificando, hace tres sondeos baratos a los 10, 25 y 45 s', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true });
+  it('identificación ambigua o fallida: el servidor deja de decir «identificando» y la app deja de preguntar', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {
-      const dep = Date.now() - 45 * 60000;
-      const d = dayOf(dep), sd = formatLocal(dep, MAD);
-      const leg = { d, o: 'PMI', a: 'LBA', sd, ed: `${d}T${sd}`, st: 'BOR', ac: '738W', op: 'FR' };
+      const { d, leg } = ryanairLeg();
       await openApp(network({
         flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } },
+        radar: [{ state: 'sin-datos', identifying: true }, { state: 'sin-datos', identifying: true }, { state: 'sin-datos' }],
+        openMeteo: () => tooMany,
+      }));
+      await search('FR2311', d);
+      await until(() => radarCalls().length === 1, 'primera respuesta');
+      await advance(400000);
+      expect(radarCalls()).toHaveLength(3);
+      expect($('.telemetry')).toBeNull();
+      expect(shell()).toEqual(SHELL_OK);
+    } finally { vi.useRealTimers(); }
+  });
+  it('una búsqueda nueva detiene el sondeo de la anterior', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const { d, leg } = ryanairLeg();
+      const tomorrow = dayOf(Date.now() + 24 * 3600000);
+      const other = { d: tomorrow, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${tomorrow}T17:55`, sa: '19:25', ea: `${tomorrow}T19:25`, st: 'SCH', ac: 'A21N' };
+      await openApp(network({
+        flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] },
+          IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [other] } },
         radar: { state: 'sin-datos', identifying: true },
         openMeteo: () => tooMany,
       }));
       await search('FR2311', d);
-      await until(() => calls.filter(u => u.includes('/radar/')).length === 1, 'primera consulta del radar');
-      for (const delay of RADAR_RECHECK_DELAYS_MS) { vi.advanceTimersByTime(delay); await networkIdle(); }
-      const radarCalls = calls.filter(u => u.includes('/radar/'));
-      expect(radarCalls).toHaveLength(4);
-      expect(radarCalls.slice(1).every(u => u.endsWith('?poll=1'))).toBe(true);
+      await until(() => radarCalls().length === 1, 'primera respuesta');
+      await advance(20000);
+      expect(radarCalls()).toHaveLength(2);
+      await search('IB1668', tomorrow);
+      await until(() => $('#result .flight')?.textContent.includes('IB 1668'), 'ficha de la segunda búsqueda');
+      await advance(400000);
+      expect(radarCalls()).toHaveLength(2); // ni un sondeo más del primer vuelo
+      expect(shell()).toEqual(SHELL_OK);
     } finally { vi.useRealTimers(); }
+  });
+  it('«Nueva consulta» (la ficha ya no se ve) también detiene el sondeo', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const { d, leg } = ryanairLeg();
+      await openApp(network({ flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } },
+        radar: { state: 'sin-datos', identifying: true }, openMeteo: () => tooMany }));
+      await search('FR2311', d);
+      await until(() => radarCalls().length === 1, 'primera respuesta');
+      $('#back').click();
+      await advance(400000);
+      expect(radarCalls()).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('flujo DOM completo: la ficha y la sección Turbulencias están siempre', () => {
+  const tomorrowLeg = () => {
+    const t = dayOf(Date.now() + 24 * 3600000);
+    return { d: t, leg: { d: t, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${t}T17:55`, sa: '19:25', ea: `${t}T19:25`, td: 'N', ta: 'T4', st: 'SCH', ac: 'A21N' } };
+  };
+  it('ANTES de que respondan el radar y Open-Meteo ya están .flight, «Turbulencias» y #forecast-area', async () => {
+    const { d, leg } = ryanairLeg();
+    let releaseRadar, releaseMeteo;
+    const base = network({ flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
+    const stub = vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return new Promise(r => { releaseRadar = () => r(json(RADAR_FLYING)); }); }
+      if (u.startsWith('https://api.open-meteo.com/v1/forecast')) { calls.push(u); return new Promise(r => { releaseMeteo = () => r(tooMany); }); }
+      return base(url, o);
+    });
+    await openApp(stub);
+    await search('FR2311', d);
+    await until(() => $('#result .flight') && releaseRadar, 'ficha con el radar pendiente');
+    expect(shell()).toEqual(SHELL_OK);
+    expect(area()).toContain('Calculando la previsión de turbulencias');
+    releaseRadar();
+    await until(() => $('.telemetry'), 'panel del radar');
+    expect(shell()).toEqual(SHELL_OK); // tras actualizar la tarjeta con el radar
+    await until(() => releaseMeteo, 'consulta a Open-Meteo');
+    releaseMeteo();
+    await until(() => area().includes(FORECAST_UNAVAILABLE), 'aviso de Open-Meteo');
+    expect(shell()).toEqual(SHELL_OK); // tras el error de Open-Meteo
+    expect($('#forecast-retry')).not.toBeNull();
+  });
+  it('Open-Meteo correcto: previsión dentro de la sección', async () => {
+    const { d, leg } = tomorrowLeg();
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
+    await search('IB1668', d);
+    await until(() => $('#forecast-area .summary'), 'previsión');
+    expect(shell()).toEqual(SHELL_OK);
+    expect(area()).not.toContain(FORECAST_UNAVAILABLE);
+  });
+  it('Open-Meteo sin respuesta (timeout): la sección lo explica y ofrece Reintentar', async () => {
+    const { d, leg } = tomorrowLeg();
+    const timeout = () => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError'));
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: timeout }));
+    await search('IB1668', d);
+    await until(() => area().includes(FORECAST_UNAVAILABLE), 'aviso de timeout');
+    expect(area()).toContain('No se pudo conectar con el servicio del tiempo');
+    expect($('#forecast-retry')).not.toBeNull();
+    expect(shell()).toEqual(SHELL_OK);
+  });
+  it('vuelo cancelado: ficha y sección con el motivo', async () => {
+    const { d, leg } = tomorrowLeg();
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [{ ...leg, st: 'CAN', std: 'CAN' }] } }, openMeteo: openMeteoOk }));
+    await search('IB1668', d);
+    await until(() => $('#forecast-area .note'), 'motivo');
+    expect($('#forecast-area .note').textContent).toBe('Vuelo cancelado.');
+    expect(shell()).toEqual(SHELL_OK);
   });
 });
 

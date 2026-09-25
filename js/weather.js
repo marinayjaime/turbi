@@ -7,6 +7,10 @@ const retryable = message => Object.assign(new Error(message), { retryable: true
 
 const TIMEOUT_MS = 15000;
 const RETRY_DELAY_MS = 600;
+// Tras un fallo de conexión (timeout o red), las consultas que esperan en la cola fallan en el acto durante este
+// tiempo, como tras un 429. Sin esto, con Open-Meteo colgado, las consultas de ECMWF y GFS (en serie) esperaban
+// cada una su timeout y la sección tardaba ~90 s en decir que no hay previsión.
+const DOWN_MS = 10000;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Estado por cliente HTTP (en la app, un único fetch compartido): caché de respuestas y pausa tras un 429.
@@ -16,7 +20,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const CACHE_MS = 45 * 60000;
 const DEFAULT_BLOCK_MS = 60000;
 const states = new WeakMap();
-const stateOf = fetchFn => states.get(fetchFn) ?? states.set(fetchFn, { cache: new Map(), pending: new Map(), queue: Promise.resolve(), blockedUntil: 0 }).get(fetchFn);
+const stateOf = fetchFn => states.get(fetchFn) ?? states.set(fetchFn, { cache: new Map(), pending: new Map(), queue: Promise.resolve(), blockedUntil: 0,
+  downUntil: 0 }).get(fetchFn);
+const CONNECTION = 'No se pudo conectar con el servicio del tiempo (Open-Meteo). Revisa la conexión e inténtalo de nuevo.';
 const TOO_MANY = 'Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.';
 const tooMany = ms => Object.assign(retryable(TOO_MANY), { retryAfterMs: ms, rateLimited: true });
 
@@ -34,13 +40,17 @@ async function requestJson(url, fetchFn, st, tries) {
   // Se comprueba al empezar de verdad (no al entrar en la cola): un 429 de la petición anterior cancela las que
   // esperaban sin volver a tocar Open-Meteo.
   if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
+  if (Date.now() < st.downUntil) throw retryable(CONNECTION);
   for (let attempt = 1; ; attempt++) {
     let res;
     try {
       res = await fetchFn(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-    } catch {
-      if (attempt < tries) { await sleep(RETRY_DELAY_MS); continue; }
-      throw retryable('No se pudo conectar con el servicio del tiempo (Open-Meteo). Revisa la conexión e inténtalo de nuevo.');
+    } catch (err) {
+      // Un corte momentáneo (falla en el acto) se reintenta; un timeout no: ya se esperó TIMEOUT_MS.
+      const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      if (attempt < tries && !timedOut) { await sleep(RETRY_DELAY_MS); continue; }
+      st.downUntil = Date.now() + DOWN_MS;
+      throw retryable(CONNECTION);
     }
     if (res.status === 429) {
       const ms = retryAfterMs(res);
@@ -61,6 +71,7 @@ async function getJson(url, fetchFn, tries = 2) {
   const hit = st.cache.get(url);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
   if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
+  if (Date.now() < st.downUntil) throw retryable(CONNECTION);
   // La misma consulta concurrente se comparte. Las distintas se ejecutan una detrás de otra para no lanzar de golpe
   // centros, laterales, ECMWF y GFS; el resultado visual es el mismo y se reducen mucho los 429.
   if (st.pending.has(url)) return st.pending.get(url);
@@ -69,6 +80,13 @@ async function getJson(url, fetchFn, tries = 2) {
   st.pending.set(url, task);
   task.finally(() => st.pending.delete(url)).catch(() => {});
   return task;
+}
+
+// «Reintentar» del usuario: vuelve a intentarlo de verdad aunque la pausa tras un fallo de conexión no haya acabado
+// (la del 429 se respeta: Open-Meteo lo ha pedido).
+export function allowRetry(fetchFn = fetch) {
+  const st = states.get(fetchFn);
+  if (st) st.downUntil = 0;
 }
 
 export const HOURLY_VARS = [

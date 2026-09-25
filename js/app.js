@@ -1,6 +1,6 @@
 import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
-import { fetchRouteWeather } from './weather.js';
+import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
@@ -21,7 +21,7 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, RADAR_RECHECK_DELAYS_MS } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { BUILD_ID } from './config.js';
 
@@ -198,16 +198,27 @@ function turbiEta(q, ctx, radar = null) {
 }
 
 // Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga
-// (estado ADS-B y, si la llegada es una estimación Turbi, esa estimación refinada en vuelo).
-async function showRadar(q, flight, stale, ctx = null, pollIndex = 0) {
+// (estado ADS-B y, si la llegada es una estimación Turbi, esa estimación refinada en vuelo). Si el servidor sigue
+// identificando el avión por su ruta, se vuelve a mirar en segundo plano (pollRadar) hasta tener un resultado
+// definitivo, cambiar de búsqueda, desaparecer la ficha o agotar los sondeos. Solo se espera la primera respuesta.
+let radarPoll = null;
+function stopRadarPoll() { radarPoll?.cancel(); radarPoll = null; }
+
+async function showRadar(q, flight, stale, ctx = null) {
   if (!flight || flight.stale || !q.leg || q.leg.past) return;
   if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) return;
-  const radar = await fetchRadar(q.schedule.al, q.schedule.n, undefined, undefined, { poll: pollIndex > 0 });
-  // Los sondeos solo leen el trabajo compartido del servidor. Si aún continúa, esperan progresivamente hasta 45 s.
-  if (radar?.identifying && pollIndex < RADAR_RECHECK_DELAYS_MS.length) {
-    const delay = RADAR_RECHECK_DELAYS_MS[pollIndex];
-    setTimeout(() => { if (!stale()) safely(() => showRadar(q, flight, stale, ctx, pollIndex + 1)); }, delay);
-  }
+  stopRadarPoll();
+  const cardVisible = () => Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]');
+  const poll = pollRadar({
+    fetchOnce: ({ poll: isPoll }) => fetchRadar(q.schedule.al, q.schedule.n, undefined, undefined, { poll: isPoll }),
+    onResult: radar => paintRadar(q, flight, radar, ctx, stale),
+    isActive: () => !stale() && cardVisible(),
+  });
+  radarPoll = poll;
+  await poll.first;
+}
+
+function paintRadar(q, flight, radar, ctx, stale) {
   rememberSighting(etaKey(q), radar);
   rememberLanding(etaKey(q), radar);
   let card = withRadar(flight, radar, recallSighting(etaKey(q)));
@@ -225,6 +236,7 @@ async function showRadar(q, flight, stale, ctx = null, pollIndex = 0) {
   card = withLanding(card, landedAt, q.leg);
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
+  // Solo se sustituye la tarjeta .flight: la puntualidad y la sección Turbulencias (#forecast-area) no se tocan.
   el.outerHTML = flightCardHtml(card);
   // El aviso de llegada no puede contradecir al radar (en el aire) ni a un aterrizaje confirmado.
   const note = els.result.querySelector('.note');
@@ -241,6 +253,7 @@ async function loadPunctualityHistory(q, punct, stale) {
 async function run(q) {
   lastQuery = q;
   const token = ++runId;
+  stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
   const stale = () => token !== runId;
   show('loading');
   try {
@@ -490,11 +503,12 @@ for (const input of [els.origin, els.destination]) {
   });
 }
 
-els.back.addEventListener('click', () => { setNotice(); show('query'); });
+els.back.addEventListener('click', () => { stopRadarPoll(); setNotice(); show('query'); });
 els.savedLink.addEventListener('click', () => {
   const last = loadLast();
   if (!last) return;
   runId++; // una consulta en curso ya no debe pintar encima
+  stopRadarPoll();
   showForecast(last.view, null, () => true, last.savedAt).catch(() => {});
 });
 window.addEventListener('offline', offerSaved);
@@ -505,7 +519,7 @@ els.refresh.addEventListener('click', () => (lastQuery?.kind === 'schedule' ? su
 els.retry.addEventListener('click', () => (lastQuery ? run(lastQuery) : submit()));
 // Reintentar solo la sección de turbulencias (la ficha se queda como está).
 els.result.addEventListener('click', e => {
-  if (e.target.closest('#forecast-retry') && lastForecastCtx) loadForecastSection(lastForecastCtx);
+  if (e.target.closest('#forecast-retry') && lastForecastCtx) { allowRetry(); loadForecastSection(lastForecastCtx); }
 });
 
 // Valores por defecto: hoy y la próxima hora en punto.

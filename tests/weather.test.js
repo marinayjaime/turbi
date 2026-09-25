@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { HOURLY_VARS, hourKey, neighbours, fetchLocations, fetchRouteWeather } from '../js/weather.js';
+import { HOURLY_VARS, hourKey, neighbours, fetchLocations, fetchRouteWeather, allowRetry } from '../js/weather.js';
 
 const T0 = Date.parse('2026-09-25T22:00:00Z');
 const HOURS = ['2026-09-25T21:00', '2026-09-25T22:00', '2026-09-25T23:00', '2026-09-26T00:00', '2026-09-26T01:00'];
@@ -139,6 +139,43 @@ describe('fallos momentáneos de Open-Meteo', () => {
     const f = vi.fn(async () => okBody);
     await fetchLocations([{ lat: 40, lon: 3 }], T0, T0, f);
     expect(f.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('Open-Meteo colgado (no responde): la sección avisa en ~15 s, no en ~90 s', () => {
+  // Fetch que nunca responde: a los 15 s el navegador lo corta con un TimeoutError (el de AbortSignal.timeout; aquí,
+  // con el reloj simulado).
+  const hanging = () => vi.fn(() => new Promise((_, reject) => {
+    setTimeout(() => reject(new DOMException('The operation timed out.', 'TimeoutError')), 15000);
+  }));
+  it('un timeout no se reintenta y las consultas en cola fallan en el acto', async () => {
+    vi.useFakeTimers({ now: T0 });
+    try {
+      const f = hanging();
+      const t0 = Date.now();
+      // Tres consultas distintas en cola (p. ej. ECMWF, GFS y un lateral), como hace el pronóstico.
+      const all = [40, 41, 42].map(lat => fetchLocations([{ lat, lon: 3 }], T0, T0, f).catch(e => ({ e, at: Date.now() })));
+      await vi.advanceTimersByTimeAsync(16000);
+      const res = await Promise.all(all);
+      expect(res.every(r => r.e?.retryable && /No se pudo conectar/.test(r.e.message))).toBe(true);
+      expect(Math.max(...res.map(r => r.at)) - t0).toBeLessThanOrEqual(15500);
+      expect(f).toHaveBeenCalledTimes(1); // solo la primera llegó a esperar; ni reintento ni más esperas
+    } finally { vi.useRealTimers(); }
+  });
+  it('«Reintentar» vuelve a consultar de verdad aunque la pausa tras el fallo no haya acabado', async () => {
+    vi.useFakeTimers({ now: T0 });
+    try {
+      const f = hanging();
+      const first = fetchLocations([{ lat: 43, lon: 3 }], T0, T0, f).catch(e => e);
+      await vi.advanceTimersByTimeAsync(15100);
+      await first;
+      await expect(fetchLocations([{ lat: 44, lon: 3 }], T0, T0, f)).rejects.toThrow('No se pudo conectar');
+      expect(f).toHaveBeenCalledTimes(1);
+      f.mockImplementation(async () => ({ ok: true, status: 200, json: async () => [fakeLocation()] }));
+      allowRetry(f);
+      await expect(fetchLocations([{ lat: 44, lon: 3 }], T0, T0, f)).resolves.toHaveLength(1);
+      expect(f).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
   });
 });
 
