@@ -24,6 +24,18 @@ export function endedNote(leg, { estimated = false } = {}) {
   return estimated ? ENDED_ESTIMATED : 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.';
 }
 
+export const NO_ARRIVAL_NOTE = 'El vuelo ya ha salido y no hay una hora de llegada que mostrar: no se muestra la previsión de turbulencias.';
+
+// Aviso de llegada con UNA sola fuente de verdad: la llegada que la ficha muestra (la de Aena, officialMs, o la
+// estimación Turbi visible, eta). Si la ficha muestra «Llegada —», el aviso no puede basarse en ninguna estimación.
+export function arrivalNote({ leg, officialMs = null, eta = null, departureMs = null, nowMs = Date.now() }) {
+  const official = Number.isFinite(officialMs);
+  const shownMs = official ? officialMs : eta?.source === 'turbi' ? eta.ms : null;
+  if (shownMs !== null) return shownMs < nowMs ? endedNote(leg, { estimated: !official }) : null;
+  if ([leg.st, leg.std, leg.sta].includes('CAN')) return null; // lo dice «Vuelo cancelado.»
+  return Number.isFinite(departureMs) && departureMs < nowMs ? NO_ARRIVAL_NOTE : null;
+}
+
 // Si el radar ve el avión en el aire, sustituye al aviso de llegada estimada ya pasada (no puede contradecirlo).
 export function radarNote(radar) {
   return radar?.state === 'volando'

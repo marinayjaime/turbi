@@ -125,3 +125,52 @@ describe('última vez que el radar vio el avión volando (memoria y almacenamien
     expect(recallSighting('X|d', st)).toBeNull();
   });
 });
+
+import { arrivalNote, NO_ARRIVAL_NOTE } from '../js/radar.js';
+import { turbiEstimate } from '../js/eta.js';
+describe('una sola fuente de verdad para la llegada: el aviso solo usa la llegada que la ficha muestra', () => {
+  const MIN = 60000, dep = t => localToUtcMs('2026-09-24', t, 'Europe/Madrid');
+  const now = localToUtcMs('2026-09-25', '10:00', 'Europe/Madrid');
+  const ei737 = over => ({ d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, past: true, ...over });
+  const ctx = { depUtcMs: dep('21:10'), plannedMin: 155, tz: 'Europe/Dublin', nowMs: now };
+  const view = (leg, prev, officialMs = null) => {
+    const eta = turbiEstimate({ leg, ...ctx, prev });
+    return { side: etaSide(eta), note: arrivalNote({ leg, officialMs, eta, departureMs: ctx.depUtcMs, nowMs: now }) };
+  };
+  it('1. vuelo internacional pasado con última ETA Turbi en vuelo guardada: se muestra y el aviso se basa en ella', () => {
+    const prev = { ms: dep('23:35'), at: dep('23:10'), method: 'estimated-inflight', remainingKm: 60, confidence: 'medium' };
+    const v = view(ei737(), prev);
+    expect(v.side).toMatchObject({ estimated: true, time: '22:35' }); // hora de Dublín
+    expect(v.side.note).toMatch(/^Última estimación Turbi disponible · sin datos recientes/);
+    expect(v.note).toBe(ENDED_ESTIMATED);
+  });
+  it('2. vuelo pasado sin ETA en vuelo (nunca se vio en el radar): «Llegada —» y ningún aviso basado en una estimación', () => {
+    const v = view(ei737(), null);
+    expect(v.side).toBeNull();
+    expect(v.note).toBe(NO_ARRIVAL_NOTE);
+    expect(v.note).not.toMatch(/estimación/i);
+  });
+  it('3. llegada oficial de Aena: manda Aena (ni ETA Turbi ni aviso de estimación)', () => {
+    const leg = ei737({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'LND' });
+    const v = view(leg, null, localToUtcMs('2026-09-24', '20:10', 'Europe/Madrid'));
+    expect(v.side).toBeNull(); // la ficha usa la hora de Aena tal cual
+    expect(v.note).toBe('Este vuelo ya ha aterrizado.');
+    const onlySched = ei737({ a: 'MAD', sa: '19:25', sta: null });
+    expect(view(onlySched, null, localToUtcMs('2026-09-24', '19:25', 'Europe/Madrid')).note)
+      .toBe('La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.');
+  });
+  it('4. nunca «Llegada —» a la vez que un aviso basado en una ETA Turbi oculta', () => {
+    const prevs = [null, { ms: dep('23:35'), at: dep('23:10'), method: 'estimated-inflight', confidence: 'low' },
+      { ms: dep('23:35'), at: now - 25 * 3600000, method: 'estimated-inflight' }, { ms: dep('23:35'), at: dep('20:00'), method: 'estimated-preflight' }];
+    for (const past of [true, false]) for (const prev of prevs) {
+      const v = view(ei737({ past }), prev);
+      if (v.side === null) expect(v.note).not.toBe(ENDED_ESTIMATED);
+    }
+  });
+  it('cancelado sin llegada visible: este aviso no se pone (la ficha dice «Vuelo cancelado.»)', () => {
+    expect(arrivalNote({ leg: ei737({ past: false, st: 'CAN', std: 'CAN' }), eta: null, departureMs: now - 3600000, nowMs: now })).toBeNull();
+  });
+  it('vuelo que aún no ha salido, sin llegada visible: sin aviso', () => {
+    expect(arrivalNote({ leg: ei737({ past: false }), officialMs: null, eta: null, departureMs: now + 3600000, nowMs: now })).toBeNull();
+  });
+});

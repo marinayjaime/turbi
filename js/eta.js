@@ -136,6 +136,13 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
   return result(planMs, tz, 'estimated-preflight', 'low');
 }
 
+// Estimación Turbi para la ficha. En los vuelos del histórico (ya pasados) solo cuenta la última ETA calculada en
+// vuelo que siga guardada (hasta MAX_HOLD_H): nunca se fabrica una estimación nueva para un vuelo pasado.
+export function turbiEstimate({ leg, prev = null, ...rest }) {
+  if (leg.past && prev?.method !== 'estimated-inflight') return null;
+  return estimateArrival({ leg, prev, ...rest });
+}
+
 // Lado «Llegada» de la ficha cuando la hora es una estimación Turbi (con Aena, la ficha usa su hora tal cual).
 export function etaSide(eta) {
   if (eta?.source !== 'turbi') return null;
