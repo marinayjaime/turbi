@@ -39,10 +39,24 @@ Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap
 
 ## Pendiente
 
-### Radar: identificación operativa
-- Indicativos alfanuméricos o distintos del número comercial (p. ej. Aer Lingus EI737 → `EIN7LM`, Ryanair, easyJet).
+### Radar: identificación operativa (vuelo comercial → avión físico → hex ICAO)
+- **Problema** (diagnosticado con FR2311 PMI → LBA el 25/09/2026): Ryanair, easyJet, Aer Lingus… emiten indicativos operativos alfanuméricos (p. ej. `RYR19HB`) que no coinciden con OACI + número. La búsqueda por indicativo exacto no los encuentra.
+  - Ni Aena ni ninguna fuente gratuita dan matrícula o hex por número de vuelo.
+  - Los indicativos se reasignan: nunca mapeos fijos.
+- **Diseño aprobado:**
+  - identificación por zona **excepcional y conservadora**, solo si falla el indicativo exacto y Aena confirma salida, operadora y tipo;
+  - condiciones que se cumplen todas a la vez: pasillo de 120 km o menos, rumbo a 60° o menos, recorrido físicamente posible (1.100 km/h + 50 km), tipo compatible, ruta exacta en adsbdb, un único candidato (como mucho 6) y ningún otro vuelo igual en Aena en la franja;
+  - después, seguimiento solo por `/v2/hex/`;
+  - registro por vuelo físico en la memoria del servidor, compartido entre códigos compartidos y usuarios;
+  - 10 min de enfriamiento si falla, una sola identificación en curso por vuelo y búsquedas por zona una detrás de otra;
+  - como mucho 3 consultas por zona por identificación.
+- **Tests preparados** (22, con FR2311 solo como regresión) en la rama `feat/hex-identification`. Se implementará en un commit aparte, después de desacoplar Open-Meteo.
+- **Condiciones añadidas antes de implementar** (25/09/2026):
+  1. El hex **no se invalida por una sola lectura** con indicativo distinto o ausente: hacen falta varias observaciones seguidas incompatibles o una contradicción física clara.
+  2. La identificación por ruta es **asíncrona**: nunca retrasa la aparición de la ficha básica del vuelo.
+  3. Todas las llamadas a adsb.lol (indicativo, zona y hex) comparten un **único limitador de peticiones global**.
+  4. Los umbrales de pasillo, rumbo y velocidad quedan documentados como **heurísticas ajustables**.
 - Identificar qué aerolínea opera en los códigos compartidos (hoy Aena no lo indica).
-- Sin deducir qué avión es: solo con datos verificables.
 
 ### Fase de histórico: predicción frente a realidad
 
