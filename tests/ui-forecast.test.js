@@ -153,3 +153,38 @@ describe('renderForecast', () => {
     expect(el.innerHTML).not.toMatch(/no pone en peligro|no pasa nada/);
   });
 });
+
+import { flightShellHtml, forecastSectionHtml, forecastUnavailableHtml, FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
+describe('la ficha primero; el pronóstico en su propia sección', () => {
+  const flight = { al: 'IB', number: 'IB 1668', airline: 'Iberia', title: 'x', route: 'Palma de Mallorca a Madrid', status: { text: 'Volando', tone: 'info', flying: true },
+    o: 'PMI', a: 'MAD', duration: 90, dep: { date: '2026-09-25', time: '17:55', est: null, late: false, terminal: null, gate: 'D86' }, arr: null, aircraft: 'Airbus A321neo',
+    radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, kmh: 830, seenS: 2, remainingKm: 300 } };
+  const punctuality = { current: { state: 'sin-datos', text: 'x', band: null, dep: null, arr: null, basis: null }, history: undefined, flight: 'IB1668', airline: 'Iberia', route: ['PMI', 'MAD'], dow: 4, slot: 2, since: '2026-09-24' };
+  it('armazón: ficha (con el panel ADS-B), puntualidad y la sección de turbulencias «calculando»', () => {
+    const html = flightShellHtml({ flight, punctuality });
+    expect(html).toContain('class="flight"');
+    expect(html).toContain('class="telemetry"'); // el radar no depende de la meteorología
+    expect(html).toContain('id="punctuality"');
+    expect(html).toMatch(/<div id="forecast-area">\s*<p class="forecast-loading">Calculando la previsión de turbulencias…<\/p>/);
+  });
+  it('sin cupo en Open-Meteo (429): solo la sección lo dice, con Reintentar y cuándo', () => {
+    const err = Object.assign(new Error('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.'), { rateLimited: true, retryAfterMs: 30000 });
+    const html = forecastUnavailableHtml(err);
+    expect(FORECAST_UNAVAILABLE).toBe('Previsión de turbulencias no disponible temporalmente');
+    expect(html).toContain(`<strong>${FORECAST_UNAVAILABLE}</strong>`);
+    expect(html).toContain('Open-Meteo ha recibido demasiadas consultas. Puedes reintentar en unos 30 s.');
+    expect(html).toContain('<button type="button" id="forecast-retry" class="pill-btn">Reintentar</button>');
+    expect(html).not.toContain('class="flight"');
+  });
+  it('otros fallos (red, modelos): el mismo aviso con su motivo, y Reintentar', () => {
+    const html = forecastUnavailableHtml(new Error('No se pudo conectar con el servicio del tiempo (Open-Meteo).'));
+    expect(html).toContain(FORECAST_UNAVAILABLE);
+    expect(html).toContain('No se pudo conectar con el servicio del tiempo (Open-Meteo).');
+    expect(html).toContain('id="forecast-retry"');
+  });
+  it('la sección del pronóstico no incluye la ficha (se inserta sin tocarla)', () => {
+    const html = forecastSectionHtml({ ...view, flight }, NOW);
+    expect(html).not.toContain('class="flight"');
+    for (const id of ['trend', 'timeline', 'altitudes', 'aviation', 'map', 'fresh']) expect(html).toContain(`id="${id}"`);
+  });
+});

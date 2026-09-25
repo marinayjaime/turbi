@@ -197,15 +197,48 @@ export function explainHtml(current) {
       </details>`;
 }
 
-export function renderForecast(el, view, nowMs) {
+// La ficha del vuelo va primero y no depende de la meteorología: el pronóstico se pinta después en #forecast-area,
+// y si Open-Meteo falla (429, red, modelos) solo esa sección lo dice. Un error meteorológico nunca sustituye la ficha.
+export const FORECAST_UNAVAILABLE = 'Previsión de turbulencias no disponible temporalmente';
+const FORECAST_LOADING = '<p class="forecast-loading">Calculando la previsión de turbulencias…</p>';
+
+function headHtml(view, nowMs) {
   const punct = view.punctuality ? `<section id="punctuality">${punctualityHtml(view.punctuality)}</section>` : '';
   const head = view.flight
     ? `${flightCardHtml(view.flight)}${punct}<h3 class="section">Turbulencias</h3>`
     : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>`;
-  el.innerHTML = `
+  return `
     <div class="summary">
       ${view.saved ? offlineBanner(view.saved, nowMs) : ''}
       ${head}
+    </div>`;
+}
+
+// Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar), puntualidad y la
+// sección de turbulencias aún calculando.
+export function flightShellHtml({ flight, punctuality = null }) {
+  return `${headHtml({ flight, punctuality })}
+    <div id="forecast-area">
+      ${FORECAST_LOADING}
+    </div>`;
+}
+
+export function forecastUnavailableHtml(err) {
+  const why = err?.rateLimited
+    ? `Open-Meteo ha recibido demasiadas consultas.${err.retryAfterMs ? ` Puedes reintentar en unos ${Math.ceil(err.retryAfterMs / 1000)} s.` : ''}`
+    : esc(err?.message ?? 'No se ha podido obtener.');
+  return `
+      <div class="forecast-error">
+        <p><strong>${FORECAST_UNAVAILABLE}</strong></p>
+        <p class="note-small">${why}</p>
+        <button type="button" id="forecast-retry" class="pill-btn">Reintentar</button>
+      </div>`;
+}
+
+// Contenido de la sección de turbulencias (sin la ficha).
+export function forecastSectionHtml(view, nowMs) {
+  return `
+    <div class="summary">
       ${summaryHtml(view)}
       <p id="trend" class="trend"${view.trend ? '' : ' hidden'}>${esc(view.trend ?? '')}</p>
       <div class="pills">${explainHtml(view.summary.headline)}<button type="button" id="speak" class="pill-btn" hidden>🔊 Escuchar previsión</button></div>
@@ -216,6 +249,12 @@ export function renderForecast(el, view, nowMs) {
     <div id="map" class="map" hidden></div>
     <p id="fresh" class="fresh">${freshnessHtml(view, nowMs)}</p>
     <p class="disclaimer">Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.</p>`;
+}
+
+// Todo junto (pronóstico guardado sin conexión y consultas manuales).
+export function renderForecast(el, view, nowMs) {
+  el.innerHTML = `${headHtml(view, nowMs)}
+    <div id="forecast-area">${forecastSectionHtml(view, nowMs)}</div>`;
 }
 
 export { formatDuration };

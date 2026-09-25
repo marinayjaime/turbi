@@ -1,3 +1,4 @@
+import { fetchTimezone } from './weather.js';
 let cache = null;
 
 export async function loadAirports(fetchFn = fetch) {
@@ -13,8 +14,15 @@ export async function loadAirports(fetchFn = fetch) {
   return cache;
 }
 
-const toAirport = (iata, r) => ({ iata, name: r[0], city: r[1], lat: r[2], lon: r[3] });
+// r = [nombre, ciudad, lat, lon, zona IANA | null]
+const toAirport = (iata, r) => ({ iata, name: r[0], city: r[1], lat: r[2], lon: r[3], tz: r[4] ?? null });
 const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// Zona horaria IANA del aeropuerto: la de data/airports.json (0 peticiones). Solo si no la tiene (casos de
+// revisión: data/airports-tz-review.json), respaldo excepcional con Open-Meteo (que además queda en caché).
+export async function timezoneOf(airport, fetchFn = fetch) {
+  return airport.tz ?? fetchTimezone(airport, fetchFn);
+}
 
 export function findAirport(db, code) {
   const iata = String(code).trim().toUpperCase();

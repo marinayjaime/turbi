@@ -1,0 +1,146 @@
+[
+ {
+  "iata": "HQL",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "SUI",
+  "candidates": [
+   "Europe/Moscow",
+   "Asia/Tbilisi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "AKU",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "AAT",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "BPL",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "IQM",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "FYN",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "HMI",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "KRL",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "KJI",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "NLT",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "RQA",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "QSZ",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "KHG",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "TLQ",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "HTN",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "URC",
+  "candidates": [
+   "Asia/Urumqi",
+   "Asia/Shanghai"
+  ],
+  "reason": "ambiguo"
+ },
+ {
+  "iata": "YIN",
+  "candidates": [
+   "Asia/Shanghai",
+   "Asia/Urumqi"
+  ],
+  "reason": "ambiguo"
+ }
+]

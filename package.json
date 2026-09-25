@@ -9,6 +9,7 @@
     "start": "node --max-old-space-size=256 --max-semi-space-size=8 server/live.mjs"
   },
   "devDependencies": {
+    "geo-tz": "^8.1.9",
     "vitest": "^3.2.0"
   },
   "engines": {

@@ -9,8 +9,32 @@ const TIMEOUT_MS = 15000;
 const RETRY_DELAY_MS = 600;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Estado por cliente HTTP (en la app, un único fetch compartido): caché de respuestas y pausa tras un 429.
+//  - Caché por URL (la URL ya fija ruta, horario y modelo): CACHE_MS; solo respuestas correctas. Así repetir una
+//    búsqueda o pulsar «Actualizar» no vuelve a gastar consultas de Open-Meteo.
+//  - 429: no se vuelve a llamar hasta que pase Retry-After (o DEFAULT_BLOCK_MS si no viene).
+const CACHE_MS = 45 * 60000;
+const DEFAULT_BLOCK_MS = 60000;
+const states = new WeakMap();
+const stateOf = fetchFn => states.get(fetchFn) ?? states.set(fetchFn, { cache: new Map(), blockedUntil: 0 }).get(fetchFn);
+const TOO_MANY = 'Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.';
+const tooMany = ms => Object.assign(retryable(TOO_MANY), { retryAfterMs: ms, rateLimited: true });
+
+function retryAfterMs(res) {
+  const v = res.headers?.get?.('Retry-After');
+  if (!v) return DEFAULT_BLOCK_MS;
+  const s = Number(v);
+  if (Number.isFinite(s)) return Math.max(0, s * 1000);
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : DEFAULT_BLOCK_MS;
+}
+
 // En el móvil la red puede cortarse un instante: un fallo de red o un 5xx se reintenta una vez.
 async function getJson(url, fetchFn, tries = 2) {
+  const st = stateOf(fetchFn);
+  const hit = st.cache.get(url);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
+  if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
   for (let attempt = 1; ; attempt++) {
     let res;
     try {
@@ -19,10 +43,17 @@ async function getJson(url, fetchFn, tries = 2) {
       if (attempt < tries) { await sleep(RETRY_DELAY_MS); continue; }
       throw retryable('No se pudo conectar con el servicio del tiempo (Open-Meteo). Revisa la conexión e inténtalo de nuevo.');
     }
-    if (res.status === 429) throw retryable('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.');
+    if (res.status === 429) {
+      const ms = retryAfterMs(res);
+      st.blockedUntil = Date.now() + ms;
+      throw tooMany(ms);
+    }
     if (res.status >= 500 && attempt < tries) { await sleep(RETRY_DELAY_MS); continue; }
     if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
-    return res.json();
+    const body = await res.json();
+    if (st.cache.size > 200) st.cache.clear();
+    st.cache.set(url, { at: Date.now(), body });
+    return body;
   }
 }
 

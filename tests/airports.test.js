@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { findAirport, searchAirports } from '../js/airports.js';
 import { parseCSVLine, toEntry } from '../scripts/build-airports.mjs';
 
@@ -10,7 +10,7 @@ const DB = {
 
 describe('findAirport', () => {
   it('encuentra por código sin importar mayúsculas ni espacios', () => {
-    expect(findAirport(DB, ' pmi ')).toEqual({ iata: 'PMI', name: 'Palma de Mallorca Airport', city: 'Palma De Mallorca', lat: 39.5517, lon: 2.7388 });
+    expect(findAirport(DB, ' pmi ')).toEqual({ iata: 'PMI', name: 'Palma de Mallorca Airport', city: 'Palma De Mallorca', lat: 39.5517, lon: 2.7388, tz: null }); // datos de prueba sin zona (la real está en data/airports.json)
   });
   it('código desconocido → null', () => {
     expect(findAirport(DB, 'ZZZ')).toBeNull();
@@ -63,5 +63,58 @@ describe('toIcao', () => {
     expect(toIcao(['4', 'X', 'medium_airport', 'M', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', '', 'ABC', 'LEXX'], header)).toEqual(['ABC', 'LEXX']);
     expect(toIcao(['5', 'X', 'medium_airport', 'M', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', '', 'ABD', ''], header)).toBeNull();
     expect(toIcao(['6', 'X', 'heliport', 'H', '1', '2', '3', 'EU', 'ES', 'ES-PM', 'P', 'yes', 'LEZZ', 'ABE', ''], header)).toBeNull();
+  });
+});
+
+import { timezoneOf } from '../js/airports.js';
+import { localToUtcMs, formatLocal } from '../js/time.js';
+import { readFileSync } from 'node:fs';
+describe('zona horaria IANA del aeropuerto, sin Open-Meteo', () => {
+  const db = JSON.parse(readFileSync('data/airports.json', 'utf8'));
+  it('PMI, DUB y JFK con su identificador IANA en data/airports.json', () => {
+    expect(findAirport(db, 'PMI').tz).toBe('Europe/Madrid');
+    expect(findAirport(db, 'DUB').tz).toBe('Europe/Dublin');
+    expect(findAirport(db, 'JFK').tz).toBe('America/New_York');
+  });
+  it('cero llamadas a Open-Meteo si el aeropuerto trae su zona', async () => {
+    const f = vi.fn();
+    expect(await timezoneOf(findAirport(db, 'PMI'), f)).toBe('Europe/Madrid');
+    expect(f).not.toHaveBeenCalled();
+  });
+  it('sin zona (caso de revisión): respaldo excepcional con Open-Meteo', async () => {
+    const f = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ timezone: 'Asia/Urumqi' }) }));
+    expect(await timezoneOf({ iata: 'URC', lat: 43.9, lon: 87.5, tz: null }, f)).toBe('Asia/Urumqi');
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('horario de verano e invierno con los identificadores (Intl hace el cambio)', () => {
+    const tz = c => findAirport(db, c).tz;
+    // 12:00 UTC en julio y en enero
+    expect(formatLocal(Date.parse('2026-07-15T12:00:00Z'), tz('PMI'))).toBe('14:00');
+    expect(formatLocal(Date.parse('2026-01-15T12:00:00Z'), tz('PMI'))).toBe('13:00');
+    expect(formatLocal(Date.parse('2026-07-15T12:00:00Z'), tz('DUB'))).toBe('13:00');
+    expect(formatLocal(Date.parse('2026-01-15T12:00:00Z'), tz('DUB'))).toBe('12:00');
+    expect(formatLocal(Date.parse('2026-07-15T12:00:00Z'), tz('JFK'))).toBe('08:00');
+    expect(formatLocal(Date.parse('2026-01-15T12:00:00Z'), tz('JFK'))).toBe('07:00');
+    expect(localToUtcMs('2026-10-25', '12:00', tz('PMI'))).toBe(Date.parse('2026-10-25T11:00:00Z')); // ya en invierno
+  });
+  it('todos los identificadores del archivo los acepta Intl (o son null, para revisión)', () => {
+    for (const [, r] of Object.entries(db)) {
+      if (r[4] === null) continue;
+      expect(() => new Intl.DateTimeFormat('en-US', { timeZone: r[4] })).not.toThrow();
+    }
+  });
+});
+
+import { resolveTimezones } from '../scripts/airport-tz.mjs';
+describe('generación de zonas horarias (geo-tz, local)', () => {
+  it('una zona válida se guarda; ambigua, vacía o no válida → null y a revisión (nunca se elige sola)', () => {
+    const zones = { A: ['Europe/Madrid'], B: ['Asia/Shanghai', 'Asia/Urumqi'], C: [], D: ['Mars/Olympus'] };
+    const db = Object.fromEntries(Object.keys(zones).map((k, i) => [k, [k, k, i, i]]));
+    const find = (lat) => zones[Object.keys(zones)[lat]];
+    const { db: out, review } = resolveTimezones(db, find);
+    expect(out.A[4]).toBe('Europe/Madrid');
+    expect([out.B[4], out.C[4], out.D[4]]).toEqual([null, null, null]);
+    expect(review.map(r => [r.iata, r.reason])).toEqual([['B', 'ambiguo'], ['C', 'sin zona'], ['D', 'no válida para Intl']]);
+    expect(review[0].candidates).toEqual(['Asia/Shanghai', 'Asia/Urumqi']);
   });
 });

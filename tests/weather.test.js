@@ -155,3 +155,58 @@ describe('fallos momentáneos de Open-Meteo', () => {
     expect(f.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+describe('caché de Open-Meteo y Retry-After', () => {
+  const ok = body => ({ ok: true, status: 200, json: async () => body });
+  it('la misma consulta (misma URL: ruta, horario y modelo) no se repite: Actualizar reutiliza el pronóstico', async () => {
+    const f = vi.fn(async () => ok({ timezone: 'Europe/Madrid' }));
+    await fetchTimezone({ lat: 39.55, lon: 2.73 }, f);
+    await fetchTimezone({ lat: 39.55, lon: 2.73 }, f);
+    expect(f).toHaveBeenCalledTimes(1);
+    await fetchTimezone({ lat: 53.42, lon: -6.27 }, f); // otra consulta: sí se pide
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+  it('la caché caduca a los 45 min (los modelos se actualizan)', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
+    try {
+      const f = vi.fn(async () => ok({ timezone: 'Europe/Madrid' }));
+      await fetchTimezone({ lat: 39.55, lon: 2.73 }, f);
+      vi.setSystemTime(Date.parse('2026-09-25T10:44:00Z'));
+      await fetchTimezone({ lat: 39.55, lon: 2.73 }, f);
+      expect(f).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(Date.parse('2026-09-25T10:46:00Z'));
+      await fetchTimezone({ lat: 39.55, lon: 2.73 }, f);
+      expect(f).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+  it('los errores no se guardan en la caché', async () => {
+    let n = 0;
+    const f = vi.fn(async () => (++n === 1 ? { ok: false, status: 500 } : ok({ timezone: 'Europe/Madrid' })));
+    await expect(fetchTimezone({ lat: 1, lon: 1 }, f, )).resolves.toBe('Europe/Madrid'); // 500 → reintento → bien
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+  it('429 con Retry-After: no se vuelve a llamar a Open-Meteo hasta que pase ese tiempo', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
+    try {
+      let status = 429;
+      const f = vi.fn(async () => (status === 429 ? { ok: false, status: 429, headers: { get: k => (k.toLowerCase() === 'retry-after' ? '30' : null) } } : ok({ timezone: 'X' })));
+      const err = await fetchTimezone({ lat: 2, lon: 2 }, f).catch(e => e);
+      expect(err.message).toMatch(/Demasiadas consultas/);
+      expect(err.retryAfterMs).toBe(30000);
+      status = 200;
+      vi.setSystemTime(Date.parse('2026-09-25T10:00:20Z'));
+      await expect(fetchTimezone({ lat: 3, lon: 3 }, f)).rejects.toThrow(/Demasiadas consultas/); // en pausa: ni se pide
+      expect(f).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(Date.parse('2026-09-25T10:00:31Z'));
+      await expect(fetchTimezone({ lat: 3, lon: 3 }, f)).resolves.toBe('X');
+      expect(f).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+  it('429 sin Retry-After: pausa de 60 s', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
+    try {
+      const f = vi.fn(async () => ({ ok: false, status: 429 }));
+      expect((await fetchTimezone({ lat: 4, lon: 4 }, f).catch(e => e)).retryAfterMs).toBe(60000);
+    } finally { vi.useRealTimers(); }
+  });
+});

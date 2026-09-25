@@ -55,7 +55,13 @@ async function main() {
     const code = toIcao(row, header);
     if (code) icao[code[0]] = code[1];
   }
-  await writeFile(new URL('../data/airports.json', import.meta.url), JSON.stringify(db));
+  // Zona horaria IANA de cada aeropuerto, local (geo-tz), sin ninguna consulta en tiempo de ejecución.
+  const { find } = await import('geo-tz/all');
+  const { resolveTimezones } = await import('./airport-tz.mjs');
+  const tz = resolveTimezones(db, find);
+  await writeFile(new URL('../data/airports-tz-review.json', import.meta.url), `${JSON.stringify(tz.review, null, 1)}\n`);
+  console.log(`Zonas horarias: ${tz.review.length} aeropuertos para revisar (data/airports-tz-review.json)`);
+  await writeFile(new URL('../data/airports.json', import.meta.url), JSON.stringify(tz.db));
   await writeFile(new URL('../data/icao.json', import.meta.url), JSON.stringify(icao));
   console.log(`${Object.keys(db).length} aeropuertos → data/airports.json, ${Object.keys(icao).length} códigos OACI → data/icao.json`);
 }

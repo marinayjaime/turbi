@@ -1,16 +1,17 @@
 import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
-import { fetchRouteWeather, fetchTimezone } from './weather.js';
+import { fetchRouteWeather } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
-import { loadAirports, findAirport, searchAirports } from './airports.js';
+import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
 import { renderResult, esc, flightCardHtml, missingDateText } from './ui.js';
 import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
-import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner } from './ui-forecast.js';
+import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner,
+  flightShellHtml, forecastSectionHtml, forecastUnavailableHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { renderMap } from './map.js';
@@ -233,7 +234,8 @@ async function run(q) {
   const stale = () => token !== runId;
   show('loading');
   try {
-    const [oTz, dTz] = await Promise.all([fetchTimezone(q.origin), fetchTimezone(q.destination)]);
+    // Zonas horarias de data/airports.json (0 peticiones; Open-Meteo solo para los pocos aeropuertos en revisión).
+    const [oTz, dTz] = await Promise.all([timezoneOf(q.origin), timezoneOf(q.destination)]);
     if (stale()) return;
     const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
     const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
@@ -270,6 +272,23 @@ async function run(q) {
       return;
     }
 
+    // Vuelo con horario de Aena: la ficha primero (Aena, horas, foto, estado, puntualidad, radar); el pronóstico
+    // de turbulencias se carga aparte en su sección. Un fallo meteorológico nunca sustituye la ficha.
+    if (flight) {
+      currentView = null;
+      els.result.innerHTML = flightShellHtml({ flight, punctuality: punct });
+      show('result');
+      const ctx = { q, profile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
+      lastForecastCtx = ctx;
+      await Promise.all([
+        safely(() => loadPunctualityHistory(q, punct, stale)),
+        safely(() => showRadar(q, flight, stale, etaCtx)),
+        loadForecastSection(ctx),
+      ]);
+      return;
+    }
+
+    // Consulta manual (sin horario de Aena): no hay ficha; el pronóstico es todo el resultado, como antes.
     const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`;
     let view;
     try {
@@ -291,6 +310,54 @@ async function run(q) {
     const msg = network ? 'Sin conexión o el servicio no responde.' : err.message;
     showError(msg || 'Algo ha fallado. Inténtalo de nuevo.', network || err.retryable === true);
   }
+}
+
+let lastForecastCtx = null;
+const isWeatherUnavailable = err => err?.rateLimited || err instanceof TypeError || /No se pudo conectar|Demasiadas consultas/.test(err?.message ?? '');
+
+// Sección de turbulencias de la ficha: pronóstico (o cálculo simplificado si los modelos no dan datos). Si Open-Meteo
+// falla (429, red…), solo esta sección lo dice, con «Reintentar»; la ficha no se toca.
+async function loadForecastSection(ctx) {
+  const { q, profile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale } = ctx;
+  const area = () => $in('forecast-area');
+  if (!area()) return;
+  area().innerHTML = '<p class="forecast-loading">Calculando la previsión de turbulencias…</p>';
+  const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`;
+  let view;
+  try {
+    view = await forecastView({ q, profile, flight, times, nowMs: Date.now() });
+  } catch (err) {
+    if (stale() || !area()) return;
+    if (!isWeatherUnavailable(err)) {
+      // Los modelos ECMWF/GFS no dan datos: cálculo simplificado (v1), también dentro de la sección.
+      try {
+        const route = buildRoute(q.origin, q.destination, departureMs, durationMin);
+        const { segments, verdict } = analyze(route, await fetchRouteWeather(route));
+        if (stale() || !area()) return;
+        const legacy = { verdict, reliability: rel, durationMin: route.durationMin, segments, sectionOnly: true };
+        const paint = () => {
+          const tmp = { innerHTML: '' };
+          renderResult(tmp, legacy);
+          area().innerHTML = `<p class="note-small">Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.</p>${tmp.innerHTML}`;
+        };
+        paint();
+        await nameSegments(segments, q.origin.iata);
+        if (!stale() && area()) paint();
+        return;
+      } catch (err2) {
+        if (stale() || !area()) return;
+        area().innerHTML = forecastUnavailableHtml(err2 instanceof TypeError ? new Error('Sin conexión o el servicio no responde.') : err2);
+        return;
+      }
+    }
+    area().innerHTML = forecastUnavailableHtml(err instanceof TypeError ? new Error('Sin conexión o el servicio no responde.') : err);
+    return;
+  }
+  if (stale() || !area()) return;
+  Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
+  currentView = view;
+  area().innerHTML = forecastSectionHtml(view, Date.now());
+  await safely(() => forecastExtras(view, q, stale));
 }
 
 // Cálculo v1 (una capa, modelo automático de Open-Meteo): respaldo si los modelos ECMWF/GFS no dan datos.
@@ -331,7 +398,17 @@ async function showForecast(view, q, stale, saved = false) {
     speakBtn.onclick = () => speak(buildSpeech({ from: view.fromCity, to: view.toCity, summary: view.summary, confidence: view.confidence.level }));
   }
   if (saved) return; // guardado: tal cual, sin pedir nada a la red
+  await forecastExtras(view, q, stale);
+}
 
+// Lo que completa el pronóstico ya pintado: voz, tendencia, lugares, hora de los modelos, meteorología aeronáutica,
+// mapa y guardado para sin conexión. (Puntualidad y radar van con la ficha, no aquí.)
+async function forecastExtras(view, q, stale) {
+  const speakBtn = $in('speak');
+  if (speakBtn && canSpeak()) {
+    speakBtn.hidden = false;
+    speakBtn.onclick = () => speak(buildSpeech({ from: view.fromCity, to: view.toCity, summary: view.summary, confidence: view.confidence.level }));
+  }
   saveLast(view, view.queriedAt);
   await safely(async () => {
     const snaps = recordSnapshot(flightKey(q), { t: view.queriedAt, maxLevel: view.summary.maxLevel, verdict: view.summary.verdict, confidence: view.confidence.level });
@@ -340,8 +417,6 @@ async function showForecast(view, q, stale, saved = false) {
     if (view.trend && el) { el.textContent = view.trend; el.hidden = false; }
   });
   await Promise.all([
-    safely(async () => { if (view.punctuality) await loadPunctualityHistory(q, view.punctuality, stale); }),
-    safely(() => showRadar(q, view.flight, stale, view.etaCtx)),
     safely(async () => {
       await nameSegments(view.segments, view.originIata);
       if (stale()) return;
@@ -419,6 +494,10 @@ els.changeTime.addEventListener('click', () => { setTimeNeeded(true); show('quer
 // Actualizar vuelve a pedir el horario (retrasos, puerta, estado).
 els.refresh.addEventListener('click', () => (lastQuery?.kind === 'schedule' ? submit() : lastQuery && run(lastQuery)));
 els.retry.addEventListener('click', () => (lastQuery ? run(lastQuery) : submit()));
+// Reintentar solo la sección de turbulencias (la ficha se queda como está).
+els.result.addEventListener('click', e => {
+  if (e.target.closest('#forecast-retry') && lastForecastCtx) loadForecastSection(lastForecastCtx);
+});
 
 // Valores por defecto: hoy y la próxima hora en punto.
 const now = new Date();

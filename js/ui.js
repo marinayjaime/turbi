@@ -224,8 +224,12 @@ export function renderResult(el, view) {
   const head = view.flight
     ? `${flightCardHtml(view.flight)}<h3 class="section">Turbulencias</h3>`
     : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>`;
+  el.innerHTML = view.sectionOnly ? legacyBody(view, v, bar, ticks, cards, '') : legacyBody(view, v, bar, ticks, cards, head);
+}
 
-  el.innerHTML = `
+// Cálculo simplificado (v1). sectionOnly: sin la ficha, para la sección de turbulencias.
+function legacyBody(view, v, bar, ticks, cards, head) {
+  return `
     <div class="summary">
       ${head}
       <div class="verdict">
