@@ -45,6 +45,46 @@ describe('buscar el vuelo en el radar (solo su indicativo exacto)', () => {
     expect(r).toMatchObject({ state: 'volando', callsign: 'IBE5810' });
     expect(f.mock.calls.map(c => c[0].split('/').pop())).toEqual(['LAN1664', 'IBE5810']);
   });
+  describe('números de 1 o 2 cifras: variante con ceros (AEA015), solo como segundo intento', () => {
+    const asked = f => f.mock.calls.map(c => c[0].split('/').pop());
+    const only = cs => vi.fn(async url => ({ ok: true, json: async () => ({ ac: url.endsWith(`/${cs}`) ? [plane({ flight: cs })] : [] }) }));
+    const ux = n => leg({ al: 'UX', icao: 'AEA', n, a: 'SCL' });
+    it('UX15: primero AEA15 y después AEA015', async () => {
+      const f = only('AEA015');
+      expect(await findOnRadar({ leg: ux('15'), fetchFn: f, pauseMs: 0 })).toMatchObject({ state: 'volando', callsign: 'AEA015' });
+      expect(asked(f)).toEqual(['AEA15', 'AEA015']);
+    });
+    it('UX7: también la variante a 3 cifras (AEA007)', async () => {
+      const f = only('AEA007');
+      expect(await findOnRadar({ leg: ux('7'), fetchFn: f, pauseMs: 0 })).toMatchObject({ callsign: 'AEA007' });
+      expect(asked(f)).toEqual(['AEA7', 'AEA007']);
+    });
+    it('AY1676: FIN1676, sin variantes', async () => {
+      const f = only('FIN1676');
+      await findOnRadar({ leg: leg({ al: 'AY', icao: 'FIN', n: '1676', a: 'HEL' }), fetchFn: f, pauseMs: 0 });
+      expect(asked(f)).toEqual(['FIN1676']);
+    });
+    it('3 cifras (UX123): sin variante innecesaria', async () => {
+      const f = only('nada');
+      await findOnRadar({ leg: ux('123'), fetchFn: f, pauseMs: 0 });
+      expect(asked(f)).toEqual(['AEA123']);
+    });
+    it('si la primera variante encuentra el avión, no se consulta la segunda', async () => {
+      const f = only('AEA15');
+      expect(await findOnRadar({ leg: ux('15'), fetchFn: f, pauseMs: 0 })).toMatchObject({ callsign: 'AEA15' });
+      expect(asked(f)).toEqual(['AEA15']);
+    });
+    it('si ninguna funciona: sin-datos, como antes (con el indicativo original)', async () => {
+      const f = only('nada');
+      expect(await findOnRadar({ leg: ux('15'), fetchFn: f, pauseMs: 0 })).toEqual({ state: 'sin-datos', callsign: 'AEA15' });
+      expect(asked(f)).toEqual(['AEA15', 'AEA015']);
+    });
+    it('con letra final (UX15A): no se inventa ninguna variante', async () => {
+      const f = only('nada');
+      await findOnRadar({ leg: ux('15A'), fetchFn: f, pauseMs: 0 });
+      expect(asked(f)).toEqual(['AEA15A']);
+    });
+  });
   it('datos ADS-B directos: distancia que queda, velocidad vertical (baro_rate) y hora de la señal; sin ETA propia', async () => {
     // Avión a 52.95, -6.66; Dublín en 53.4213, -6.27007 → 58 km
     const r = await findOnRadar({ leg: leg(), fetchFn: radar([plane({ baro_rate: -1216 })]), pauseMs: 0, dest: [53.4213, -6.27007] });

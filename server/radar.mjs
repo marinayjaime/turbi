@@ -1,6 +1,7 @@
 // Radar (ADS-B) para vuelos cuya llegada no publica Aena (destino extranjero): ¿está el avión en el aire?
 // Fuente gratuita y sin registro: adsb.lol. Solo se busca el vuelo consultado, por su indicativo exacto
-// (código OACI de la aerolínea + número: EI737 → EIN737). Si la aerolínea emite con otro indicativo
+// (código OACI de la aerolínea + número: EI737 → EIN737; con 1–2 cifras, también rellenado: UX15 → AEA015).
+// Si la aerolínea emite con otro indicativo
 // (p. ej. Aer Lingus EIN7LM), no se encuentra y no se dice nada: nunca se deduce qué avión es.
 const ADSB = 'https://api.adsb.lol/v2';
 // adsb.lol exige un User-Agent con contacto (si no, 403).
@@ -56,7 +57,10 @@ const airborne = a => typeof a.alt_baro === 'number' && (a.seen ?? 0) <= MAX_SEE
 // siblings: el mismo vuelo con otros números (códigos compartidos); el avión emite con el de la operadora.
 // dest: [lat, lon] del destino, para calcular cuánto le queda (cálculo de Turbi, no una hora oficial).
 export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS, dest = null }) {
-  const callsigns = [...new Set([leg, ...siblings].filter(l => l.icao).map(l => `${l.icao}${l.n}`))];
+  // Indicativo = OACI + número. Si el número tiene 1 o 2 cifras, se prueba después la variante con ceros a la izquierda
+  // (Air Europa UX15 emite «AEA015»). No se cambia el número original ni se prueba ninguna otra transformación.
+  const variants = l => [`${l.icao}${l.n}`, ...(/^\d{1,2}$/.test(l.n) ? [`${l.icao}${l.n.padStart(3, '0')}`] : [])];
+  const callsigns = [...new Set([leg, ...siblings].filter(l => l.icao).flatMap(variants))];
   let failed = false, a = null, callsign = callsigns[0];
   for (const [i, cs] of callsigns.entries()) {
     if (i) await wait(pauseMs);
