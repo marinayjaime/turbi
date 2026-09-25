@@ -30,6 +30,27 @@ Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap
 - Identificar qué aerolínea opera en los códigos compartidos (hoy Aena no lo indica).
 - Sin deducir qué avión es: solo con datos verificables.
 
-### Llegada estimada: validación
-- Guardar cada ETA predicha (método, distancia, fase, confianza) y compararla con la llegada real.
-- Medir el error por fase y distancia, y solo entonces ajustar las heurísticas de `js/eta.js`.
+### Fase de histórico: predicción frente a realidad
+
+**Problema arquitectónico (identificado el 25/09/2026).** Las ETA calculadas en vuelo (`estimated-inflight`) solo se guardan en el navegador de quien consulta (`localStorage`, clave `turbi-eta`, en `js/eta.js`). No pasan a ningún histórico común. Otro dispositivo, o el mismo tras borrar sus datos, no puede saber qué estimó Turbi durante el vuelo.
+- Ejemplo: EI737 del 24/09 muestra «Llegada —» en el histórico, porque nunca se guardó una ETA en vuelo. **Es el comportamiento correcto y no se cambia.**
+
+**Requisitos:**
+- Cuando Turbi calcule una ETA `estimated-inflight`, guardar snapshots relevantes de forma persistente en el histórico de Turbi (no solo en el navegador).
+- Conservar al menos la **última ETA válida** de cada vuelo.
+- Asociarla al vuelo (número y códigos compartidos), la fecha y la ruta (origen–destino).
+- Guardar con ella la marca de tiempo de la observación ADS-B, la confianza y el método; y, para validar, también la fase, la distancia restante y la antigüedad de la señal.
+- Que después cualquier dispositivo pueda mostrar en la ficha **«Última estimación Turbi registrada durante el vuelo»**.
+- **No reconstruir retrospectivamente** la ETA de vuelos para los que nunca se guardó una: sin snapshot, «Llegada —».
+- Nunca presentarla como oficial ni como llegada real.
+
+**Validación (una vez haya histórico):**
+- Comparar cada ETA guardada con la llegada real, cuando se conozca por una fuente verificable. Hoy Aena no publica la llegada de los destinos extranjeros.
+- Medir el error por fase, distancia y antigüedad de la señal, y **solo entonces** ajustar las heurísticas de `js/eta.js`, que siguen congeladas.
+
+**Por decidir al diseñar la fase** (no decidido aún):
+- **Quién calcula y guarda los snapshots:**
+  - el servidor (`turbi-live`, que ya consulta el radar), con la misma lógica de `js/eta.js`;
+  - o la app, enviándolos al servidor.
+- **Dónde se guardan:** por ejemplo, junto al histórico de puntualidad en la rama `data`. Cuidado: el disco de Render gratis no persiste.
+- Cada cuánto se guarda un snapshot y cuánto tiempo se conserva.
