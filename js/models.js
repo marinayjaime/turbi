@@ -156,13 +156,19 @@ export async function forecastRoute(profile, fetchFn = fetch) {
 }
 
 // Hora de inicialización de la última ejecución de cada modelo (meta.json de Open-Meteo).
+// Caché de 45 min por cliente HTTP (como la del pronóstico): Actualizar no vuelve a pedirla. Los fallos no se guardan.
+const RUNS_CACHE_MS = 45 * 60000;
+const runsCaches = new WeakMap();
 export async function fetchModelRuns(labels, fetchFn = fetch) {
   const out = {};
+  const cache = runsCaches.get(fetchFn) ?? runsCaches.set(fetchFn, new Map()).get(fetchFn);
   await Promise.all(MODELS.filter(m => labels.includes(m.label)).map(async m => {
+    const hit = cache.get(m.meta);
+    if (hit && Date.now() - hit.at < RUNS_CACHE_MS) { out[m.label] = hit.t; return; }
     try {
       const res = await fetchFn(`https://api.open-meteo.com/data/${m.meta}/static/meta.json`, { signal: AbortSignal.timeout(8000) });
       const t = res.ok ? (await res.json()).last_run_initialisation_time : null;
-      if (typeof t === 'number') out[m.label] = t * 1000;
+      if (typeof t === 'number') { out[m.label] = t * 1000; cache.set(m.meta, { at: Date.now(), t: t * 1000 }); }
     } catch { /* sin dato: no se muestra */ }
   }));
   return Object.fromEntries(labels.filter(l => l in out).map(l => [l, out[l]]));

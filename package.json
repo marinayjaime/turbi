@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "geo-tz": "^8.1.9",
+    "jsdom": "^29.1.1",
     "vitest": "^3.2.0"
   },
   "engines": {

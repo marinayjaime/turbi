@@ -234,8 +234,8 @@ async function run(q) {
   const stale = () => token !== runId;
   show('loading');
   try {
-    // Zonas horarias de data/airports.json (0 peticiones; Open-Meteo solo para los pocos aeropuertos en revisión).
-    const [oTz, dTz] = await Promise.all([timezoneOf(q.origin), timezoneOf(q.destination)]);
+    // Zonas horarias de data/airports.json: todas resueltas al generarlo; nunca se piden por la red.
+    const oTz = timezoneOf(q.origin), dTz = timezoneOf(q.destination);
     if (stale()) return;
     const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
     const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);

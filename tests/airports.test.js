@@ -67,24 +67,39 @@ describe('toIcao', () => {
 });
 
 import { timezoneOf } from '../js/airports.js';
+import * as weather from '../js/weather.js';
 import { localToUtcMs, formatLocal } from '../js/time.js';
-import { readFileSync } from 'node:fs';
-describe('zona horaria IANA del aeropuerto, sin Open-Meteo', () => {
+import { readFileSync, readdirSync } from 'node:fs';
+describe('zona horaria IANA del aeropuerto: siempre estática, nunca Open-Meteo', () => {
   const db = JSON.parse(readFileSync('data/airports.json', 'utf8'));
   it('PMI, DUB y JFK con su identificador IANA en data/airports.json', () => {
     expect(findAirport(db, 'PMI').tz).toBe('Europe/Madrid');
     expect(findAirport(db, 'DUB').tz).toBe('Europe/Dublin');
     expect(findAirport(db, 'JFK').tz).toBe('America/New_York');
   });
-  it('cero llamadas a Open-Meteo si el aeropuerto trae su zona', async () => {
-    const f = vi.fn();
-    expect(await timezoneOf(findAirport(db, 'PMI'), f)).toBe('Europe/Madrid');
-    expect(f).not.toHaveBeenCalled();
+  it('todos los aeropuertos publicados tienen zona, y válida para Intl (ninguno queda en null)', () => {
+    for (const [iata, r] of Object.entries(db)) {
+      expect(r[4], iata).toEqual(expect.any(String));
+      expect(() => new Intl.DateTimeFormat('en-US', { timeZone: r[4] }), iata).not.toThrow();
+    }
   });
-  it('sin zona (caso de revisión): respaldo excepcional con Open-Meteo', async () => {
-    const f = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ timezone: 'Asia/Urumqi' }) }));
-    expect(await timezoneOf({ iata: 'URC', lat: 43.9, lon: 87.5, tz: null }, f)).toBe('Asia/Urumqi');
-    expect(f).toHaveBeenCalledTimes(1);
+  it('los casos especiales revisados: Xinjiang con hora de Pekín, Sujumi con hora de Moscú', () => {
+    for (const c of ['URC', 'KHG', 'AKU', 'HTN', 'HQL', 'AAT']) expect(findAirport(db, c).tz, c).toBe('Asia/Shanghai');
+    expect(findAirport(db, 'SUI').tz).toBe('Europe/Moscow');
+  });
+  it('cero peticiones de red para la zona horaria, en cualquier aeropuerto', () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('no debe llamarse'); });
+    try {
+      for (const iata of Object.keys(db)) expect(typeof timezoneOf(findAirport(db, iata))).toBe('string');
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+  });
+  it('sin zona (no debería pasar: la generación falla antes) → error claro, nunca consulta a Open-Meteo', () => {
+    expect(() => timezoneOf({ iata: 'ZZZ', tz: null })).toThrow('ZZZ');
+  });
+  it('la app ya no tiene ningún código que pida la zona horaria a Open-Meteo', () => {
+    expect('fetchTimezone' in weather).toBe(false);
+    for (const f of readdirSync('js')) expect(readFileSync(`js/${f}`, 'utf8'), f).not.toMatch(/timezone['"]?\s*[:,]\s*['"]auto/);
   });
   it('horario de verano e invierno con los identificadores (Intl hace el cambio)', () => {
     const tz = c => findAirport(db, c).tz;
@@ -96,25 +111,36 @@ describe('zona horaria IANA del aeropuerto, sin Open-Meteo', () => {
     expect(formatLocal(Date.parse('2026-07-15T12:00:00Z'), tz('JFK'))).toBe('08:00');
     expect(formatLocal(Date.parse('2026-01-15T12:00:00Z'), tz('JFK'))).toBe('07:00');
     expect(localToUtcMs('2026-10-25', '12:00', tz('PMI'))).toBe(Date.parse('2026-10-25T11:00:00Z')); // ya en invierno
+    expect(formatLocal(Date.parse('2026-07-15T12:00:00Z'), tz('URC'))).toBe('20:00'); // hora de Pekín, sin cambio de hora
   });
-  it('todos los identificadores del archivo los acepta Intl (o son null, para revisión)', () => {
-    for (const [, r] of Object.entries(db)) {
-      if (r[4] === null) continue;
-      expect(() => new Intl.DateTimeFormat('en-US', { timeZone: r[4] })).not.toThrow();
+  it('el registro de revisión conserva cada caso con sus candidatas, la zona elegida y la regla', () => {
+    const review = JSON.parse(readFileSync('data/airports-tz-review.json', 'utf8'));
+    expect(review).toHaveLength(18);
+    for (const r of review) {
+      expect(r.candidates.length).toBeGreaterThan(1);
+      expect(r.candidates).toContain(r.tz);
+      expect(db[r.iata][4]).toBe(r.tz);
+      expect(r.rule).toEqual(expect.any(String));
     }
   });
 });
 
-import { resolveTimezones } from '../scripts/airport-tz.mjs';
+import { resolveTimezones, TZ_RULES } from '../scripts/airport-tz.mjs';
 describe('generación de zonas horarias (geo-tz, local)', () => {
-  it('una zona válida se guarda; ambigua, vacía o no válida → null y a revisión (nunca se elige sola)', () => {
-    const zones = { A: ['Europe/Madrid'], B: ['Asia/Shanghai', 'Asia/Urumqi'], C: [], D: ['Mars/Olympus'] };
-    const db = Object.fromEntries(Object.keys(zones).map((k, i) => [k, [k, k, i, i]]));
-    const find = (lat) => zones[Object.keys(zones)[lat]];
-    const { db: out, review } = resolveTimezones(db, find);
-    expect(out.A[4]).toBe('Europe/Madrid');
-    expect([out.B[4], out.C[4], out.D[4]]).toEqual([null, null, null]);
-    expect(review.map(r => [r.iata, r.reason])).toEqual([['B', 'ambiguo'], ['C', 'sin zona'], ['D', 'no válida para Intl']]);
-    expect(review[0].candidates).toEqual(['Asia/Shanghai', 'Asia/Urumqi']);
+  const zones = { A: ['Europe/Madrid'], B: ['Asia/Urumqi', 'Asia/Shanghai'], C: [], D: ['Mars/Olympus'], E: ['Europe/Paris', 'Europe/Berlin'] };
+  const db = Object.fromEntries(Object.keys(zones).map((k, i) => [k, [k, k, i, i]]));
+  const find = (lat) => zones[Object.keys(zones)[lat]];
+  const { db: out, review, unresolved } = resolveTimezones(db, find);
+  it('una zona válida se guarda sin más', () => expect(out.A[4]).toBe('Europe/Madrid'));
+  it('ambigua con regla revisada (por el par de candidatas, no por aeropuerto) → la zona de la regla, registrada', () => {
+    expect(out.B[4]).toBe('Asia/Shanghai');
+    expect(review).toEqual([{ iata: 'B', candidates: ['Asia/Urumqi', 'Asia/Shanghai'], tz: 'Asia/Shanghai', rule: TZ_RULES[0].reason }]);
+  });
+  it('ambigua sin regla, vacía o no válida → sin resolver (la generación se detiene; nunca se elige sola)', () => {
+    expect(unresolved.map(r => [r.iata, r.reason])).toEqual([['C', 'sin zona'], ['D', 'no válida para Intl'], ['E', 'ambiguo sin regla']]);
+    expect([out.C[4], out.D[4], out.E[4]]).toEqual([null, null, null]);
+  });
+  it('cada regla indica su fuente', () => {
+    for (const r of TZ_RULES) expect(r.source).toMatch(/^https:\/\//);
   });
 });

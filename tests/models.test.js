@@ -147,6 +147,29 @@ describe('fetchModelRuns', () => {
   });
 });
 
+describe('fetchModelRuns: caché (Actualizar no vuelve a pedir meta.json a Open-Meteo)', () => {
+  const meta = t => ({ ok: true, json: async () => ({ last_run_initialisation_time: t }) });
+  it('dentro de 45 min reutiliza la hora ya obtenida; después la vuelve a pedir', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
+    try {
+      const f = vi.fn(async () => meta(1790208000));
+      await fetchModelRuns(['ECMWF', 'GFS'], f);
+      vi.setSystemTime(Date.parse('2026-09-25T10:44:00Z'));
+      expect(await fetchModelRuns(['ECMWF', 'GFS'], f)).toEqual({ ECMWF: 1790208000000, GFS: 1790208000000 });
+      expect(f).toHaveBeenCalledTimes(2);
+      vi.setSystemTime(Date.parse('2026-09-25T10:46:00Z'));
+      await fetchModelRuns(['ECMWF'], f);
+      expect(f).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+  it('un fallo no se guarda: la siguiente vez se vuelve a intentar', async () => {
+    let n = 0;
+    const f = vi.fn(async () => (++n === 1 ? { ok: false, status: 500 } : meta(1790208000)));
+    expect(await fetchModelRuns(['GFS'], f)).toEqual({});
+    expect(await fetchModelRuns(['GFS'], f)).toEqual({ GFS: 1790208000000 });
+  });
+});
+
 describe('rejilla real de GFS', () => {
   it('las coordenadas de GFS se ajustan a 0,25° (sus datos en altura vienen de esa rejilla)', async () => {
     const seen = [];

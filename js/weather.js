@@ -128,17 +128,6 @@ export async function fetchRouteWeather(route, fetchFn = fetch) {
   });
 }
 
-export async function fetchTimezone(point, fetchFn = fetch) {
-  const params = new URLSearchParams({
-    latitude: point.lat.toFixed(3),
-    longitude: point.lon.toFixed(3),
-    hourly: 'cape',
-    timezone: 'auto',
-    forecast_days: '1',
-  });
-  return (await getJson(`${BASE}?${params}`, fetchFn)).timezone;
-}
-
 // --- v2: petición por modelo y variables a elección (ver js/models.js) ---
 
 export function modelForecastUrl(locs, vars, model, startMs, endMs) {
