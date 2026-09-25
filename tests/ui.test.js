@@ -134,12 +134,36 @@ describe('en vuelo', () => {
 describe('radar', () => {
   const c = { al: 'EI', title: 'x', route: 'y', tabs: [], status: { text: 'Volando', tone: 'info', flying: true }, o: 'PMI', a: 'DUB', duration: 160,
     dep: { date: '2026-09-24', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 3 min', stale: false };
-  it('volando: dato complementario del radar (altura, velocidad, lo que queda), sin repetir la hora de llegada', () => {
-    const r = { state: 'volando', callsign: 'EIN737', altM: 10912, altFt: 35800, kmh: 845, seenS: 4, remainingKm: 412 };
+  const r = { state: 'volando', callsign: 'AEA039', altM: 10668, altFt: 35000, kmh: 851, seenS: 0, remainingKm: 8411, source: 'adsb.lol' };
+  it('volando: un único panel de telemetría (estado, velocidad, altitud, distancia) con fuente y señal debajo', () => {
     const html = flightCardHtml({ ...c, radar: r });
-    expect(html).toContain('Según el radar (adsb.lol): 10.900 m · 845 km/h · quedan 412 km. Última señal hace 4 s, con el indicativo EIN737.');
-    expect(html).not.toMatch(/Aterrizar|pies/);
-    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: undefined, kmh: null } })).toContain('Según el radar (adsb.lol): 10.900 m. Última señal');
+    expect(html).toContain('class="telemetry"');
+    expect(html.match(/class="tm-cell/g)).toHaveLength(4);
+    expect(html).toMatch(/<span class="tm-label">Estado<\/span>\s*<span class="tm-value tm-flying">Volando<span class="fly"/);
+    expect(html).toMatch(/<span class="tm-label">Velocidad<\/span>\s*<span class="tm-value">851<small>km\/h<\/small><\/span>/);
+    expect(html).toMatch(/<span class="tm-label">Altitud<\/span>\s*<span class="tm-value">10\.700<small>m<\/small><\/span>/);
+    expect(html).toMatch(/<span class="tm-label">Distancia restante<\/span>\s*<span class="tm-value">8\.411<small>km<\/small><\/span>/);
+    expect(html).toMatch(/<span class="tm-source" title="Datos ADS-B de adsb\.lol">Radar ADS-B<\/span>/); // proveedor solo como title
+    expect(html).toContain('<span class="tm-signal">Última señal hace 0 s · AEA039</span>');
+    expect(html).not.toContain('Según el radar');
+    expect(html).not.toMatch(/>[^<]*adsb\.lol/); // el proveedor no se muestra como texto
+  });
+  it('con el panel, la etiqueta exterior «Volando» no se repite', () => {
+    const html = flightCardHtml({ ...c, radar: r });
+    expect(html).not.toContain('class="status');
+    expect(html.match(/Volando/g)).toHaveLength(1);
+  });
+  it('valores dinámicos; si falta un dato, «—» (no se inventa)', () => {
+    const html = flightCardHtml({ ...c, radar: { ...r, kmh: null, remainingKm: undefined, altM: 3048, seenS: 42, callsign: 'FIN1676' } });
+    expect(html).toMatch(/Velocidad<\/span>\s*<span class="tm-value">—<\/span>/);
+    expect(html).toMatch(/Distancia restante<\/span>\s*<span class="tm-value">—<\/span>/);
+    expect(html).toContain('3.000<small>m</small>');
+    expect(html).toContain('Última señal hace 42 s · FIN1676');
+  });
+  it('«Volando» de Aena sin radar (vuelo a España): sigue la etiqueta de siempre, sin panel', () => {
+    const html = flightCardHtml(c);
+    expect(html).toContain('class="status tone-info flying"');
+    expect(html).not.toContain('telemetry');
   });
   it('sin datos: se dice sin deducir nada', () => {
     const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-datos', callsign: 'EIN737' } });

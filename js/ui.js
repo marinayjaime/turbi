@@ -38,13 +38,26 @@ export function missingDateText(flight, requested, dates, today) {
 // Miles con punto (4.800), también con 4 cifras (Intl en español no lo pone).
 const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
-// Radar: información complementaria (la hora de llegada estimada va en la ficha, en «Llegada estimada»).
+// Radar: panel de telemetría (estado, velocidad, altitud y distancia; fuente y última señal debajo).
+// La hora de llegada estimada va en la ficha, en «Llegada estimada». Proveedor (adsb.lol) solo en el title.
 function radarHtml(r) {
   if (!r) return '';
   if (r.state === 'volando') {
-    const parts = [`${thousands(Math.round(r.altM / 100) * 100)} m`, r.kmh && `${r.kmh} km/h`, Number.isFinite(r.remainingKm) && `quedan ${thousands(r.remainingKm)} km`]
-      .filter(Boolean).join(' · ');
-    return `<p class="radar">Según el radar (adsb.lol): ${esc(parts)}. Última señal hace ${esc(r.seenS)} s, con el indicativo ${esc(r.callsign)}.</p>`;
+    const cell = (label, value, unit, extra = '') => `
+        <div class="tm-cell"><span class="tm-label">${label}</span>
+          <span class="tm-value${extra}">${value === null ? '—' : `${esc(value)}${unit ? `<small>${unit}</small>` : ''}`}</span></div>`;
+    return `
+      <div class="telemetry">
+        <div class="tm-grid">
+        <div class="tm-cell"><span class="tm-label">Estado</span>
+          <span class="tm-value tm-flying">Volando<span class="fly" aria-hidden="true"><span class="fly-plane">✈</span></span></span></div>${
+  cell('Velocidad', r.kmh ? r.kmh : null, 'km/h')}${
+  cell('Altitud', Number.isFinite(r.altM) ? thousands(Math.round(r.altM / 100) * 100) : null, 'm')}${
+  cell('Distancia restante', Number.isFinite(r.remainingKm) ? thousands(r.remainingKm) : null, 'km')}
+        </div>
+        <div class="tm-foot"><span class="tm-source" title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}">Radar ADS-B</span>${''
+  }<span class="tm-signal">Última señal hace ${esc(r.seenS)} s · ${esc(r.callsign)}</span></div>
+      </div>`;
   }
   if (r.state === 'sin-datos') {
     return `<p class="radar muted">El radar no lo encuentra con el indicativo ${esc(r.callsign)}: puede haber aterrizado o emitir con otro indicativo.</p>`;
@@ -94,7 +107,8 @@ ${photoHtml(c)}
         ${c.aircraft ? `<p class="aircraft">${esc(c.aircraft)}</p>` : ''}
         <p>${c.number && c.airline ? `${esc(c.airline)} · ` : ''}${esc(c.route)}${c.operator ? ` · Operado por ${esc(c.operator)}` : ''}</p>
       </div>
-      ${c.stale
+      ${!c.stale && c.radar?.state === 'volando' ? '' // el panel del radar ya dice «Volando», justo debajo
+        : c.stale
         // Un estado viejo («Embarcando» de hace 2 h) no se presenta como actual: se dice de cuándo es.
         ? `<span class="status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>
       <p class="stale">Los datos de Aena son de ${esc(c.updatedAgo)}: pueden haber cambiado desde entonces.</p>`
