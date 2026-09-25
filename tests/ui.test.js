@@ -134,17 +134,12 @@ describe('en vuelo', () => {
 describe('radar', () => {
   const c = { al: 'EI', title: 'x', route: 'y', tabs: [], status: { text: 'Volando', tone: 'info', flying: true }, o: 'PMI', a: 'DUB', duration: 160,
     dep: { date: '2026-09-24', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 3 min', stale: false };
-  it('volando: altura, velocidad, señal y con qué indicativo, en lenguaje llano', () => {
-    const html = flightCardHtml({ ...c, radar: { state: 'volando', callsign: 'EIN737', altM: 4808, altFt: 15775, kmh: 669, seenS: 12 } });
-    expect(html).toContain('Según el radar (adsb.lol): a 4.800 m (15.800 pies), a 669 km/h. Última señal hace 12 s, con el indicativo EIN737.');
-  });
-  it('cuánto le queda: destacado, y dicho que es un cálculo de Turbi y no una hora oficial', () => {
-    const r = { state: 'volando', callsign: 'EIN737', altM: 10363, altFt: 34000, kmh: 812, seenS: 4 };
-    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: 320, etaMin: 24 } })).toContain(
-      '<strong>Aterrizaría en aprox. 24 min</strong> · cálculo de Turbi con el radar: quedan 320 km a 812 km/h. No es una hora oficial.');
-    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: 1300, etaMin: 96 } })).toContain('<strong>Aterrizaría en aprox. 1 h 36 min</strong>');
-    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: 20, etaMin: 2 } })).toContain('<strong>Está a punto de aterrizar</strong>');
-    expect(flightCardHtml({ ...c, radar: r })).not.toContain('Aterrizaría');
+  it('volando: dato complementario del radar (altura, velocidad, lo que queda), sin repetir la hora de llegada', () => {
+    const r = { state: 'volando', callsign: 'EIN737', altM: 10912, altFt: 35800, kmh: 845, seenS: 4, remainingKm: 412 };
+    const html = flightCardHtml({ ...c, radar: r });
+    expect(html).toContain('Según el radar (adsb.lol): 10.900 m · 845 km/h · quedan 412 km. Última señal hace 4 s, con el indicativo EIN737.');
+    expect(html).not.toMatch(/Aterrizar|pies/);
+    expect(flightCardHtml({ ...c, radar: { ...r, remainingKm: undefined, kmh: null } })).toContain('Según el radar (adsb.lol): 10.900 m. Última señal');
   });
   it('sin datos: se dice sin deducir nada', () => {
     const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-datos', callsign: 'EIN737' } });
@@ -225,6 +220,29 @@ describe('vuelo pasado (del histórico)', () => {
     const html = flightCardHtml(c);
     expect(html).not.toContain('Puerta de embarque');
     expect(html).toContain('<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>');
+  });
+});
+
+describe('llegada estimada por Turbi (Aena no publica la llegada)', () => {
+  const c = { al: 'FR', title: 'x', route: 'Palma a Londres', status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'LHR', duration: 150, durationEstimated: true,
+    dep: { date: '2026-09-25', time: '17:00', est: null, late: false, terminal: null, gate: null }, aircraft: null };
+  it('antes del despegue: «Llegada estimada» y «Estimación Turbi», nunca «prevista»', () => {
+    const html = flightCardHtml({ ...c, arr: { date: '2026-09-25', time: '18:30', estimated: true, note: 'Estimación Turbi' } });
+    expect(html).toContain('<p class="lbl">Llegada estimada</p>');
+    expect(html).toContain('<p class="big">18:30</p>');
+    expect(html).toContain('<p class="est-note">Estimación Turbi</p>');
+    expect(html).not.toContain('prevista');
+  });
+  it('en vuelo: «Estimación Turbi actualizada en vuelo»', () => {
+    expect(flightCardHtml({ ...c, arr: { date: '2026-09-25', time: '18:15', estimated: true, note: 'Estimación Turbi actualizada en vuelo' } }))
+      .toContain('<p class="est-note">Estimación Turbi actualizada en vuelo</p>');
+  });
+  it('llegada al día siguiente (hora local del destino)', () => {
+    expect(flightCardHtml({ ...c, arr: { date: '2026-09-26', time: '01:00', estimated: true, note: 'Estimación Turbi' } })).toContain('Llegada estimada · +1 día');
+  });
+  it('duración estimada: marcada con «≈», discreta', () => {
+    expect(flightCardHtml({ ...c, arr: null })).toContain('<em>≈ 2h 30min</em>');
+    expect(flightCardHtml({ ...c, arr: null, durationEstimated: false })).toContain('<em>2h 30min</em>');
   });
 });
 

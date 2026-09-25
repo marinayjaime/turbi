@@ -83,3 +83,27 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Servidor en tiempo real (Render, server/live.mjs): se redespliega solo si cambió su código.
+  # Necesita el secreto RENDER_DEPLOY_HOOK (Render → turbi-live → Settings → Deploy Hook). Sin él, avisa y no hace nada.
+  render:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Redesplegar Render si cambió el servidor
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" 2>/dev/null || git ls-files)
+          if ! echo "$changed" | grep -qE '^(server/|scripts/aena|package(-lock)?\.json|render\.yaml|data/airports\.json)'; then
+            echo "El servidor no ha cambiado: no hace falta redesplegar Render"; exit 0
+          fi
+          if [ -z "$HOOK" ]; then
+            echo "::warning::El servidor ha cambiado, pero falta el secreto RENDER_DEPLOY_HOOK: hay que desplegar Render a mano"; exit 0
+          fi
+          curl -fsS -X POST "$HOOK" > /dev/null && echo "Render redesplegándose"

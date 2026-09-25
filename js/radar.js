@@ -14,10 +14,19 @@ export function departedText(leg, city) {
   return `Ha salido · Aena no informa de la llegada a ${city}`;
 }
 
-// Aviso cuando ya pasó la llegada: «ha aterrizado» solo si lo confirma Aena.
-export function endedNote(leg) {
-  return ARR_FINAL.has(leg?.sta) ? 'Este vuelo ya ha aterrizado.'
-    : 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.';
+export const ENDED_ESTIMATED = 'Según la estimación de Turbi, el vuelo ya habría aterrizado: no se muestra la previsión de turbulencias.';
+
+// Aviso cuando ya pasó la llegada: «ha aterrizado» solo si lo confirma Aena; «prevista» solo si la hora es de Aena;
+// si es una estimación Turbi, se dice.
+export function endedNote(leg, { estimated = false } = {}) {
+  if (ARR_FINAL.has(leg?.sta)) return 'Este vuelo ya ha aterrizado.';
+  return estimated ? ENDED_ESTIMATED : 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.';
+}
+
+// Si el radar ve el avión en el aire, sustituye al aviso de llegada estimada ya pasada (no puede contradecirlo).
+export function radarNote(radar) {
+  return radar?.state === 'volando'
+    ? 'El radar indica que el avión sigue en el aire: la previsión de turbulencias no se muestra con el vuelo en curso.' : null;
 }
 
 export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE) {

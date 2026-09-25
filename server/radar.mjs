@@ -31,8 +31,6 @@ export function needsRadar(leg, nowMs) {
   return dep !== null && nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;
 }
 
-const MIN_ETA_KMH = 150; // por debajo (rodando, despegando) no tiene sentido calcular cuánto le queda
-
 function distanceKm([la1, lo1], [la2, lo2]) {
   const rad = x => (x * Math.PI) / 180;
   const a = Math.sin(rad(la2 - la1) / 2) ** 2 + Math.cos(rad(la1)) * Math.cos(rad(la2)) * Math.sin(rad(lo2 - lo1) / 2) ** 2;
@@ -69,10 +67,12 @@ export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs
   }
   if (!a) return failed ? { state: 'no-disponible' } : { state: 'sin-datos', callsign };
   const kmh = Number.isFinite(a.gs) ? Math.round(a.gs * 1.852) : null;
-  const out = { state: 'volando', callsign, altFt: a.alt_baro, altM: Math.round(a.alt_baro * 0.3048), kmh, seenS: Math.round(a.seen ?? 0), source: 'adsb.lol' };
-  if (dest && Number.isFinite(a.lat) && Number.isFinite(a.lon) && kmh >= MIN_ETA_KMH) {
-    out.remainingKm = Math.round(distanceKm([a.lat, a.lon], dest));
-    out.etaMin = Math.round((out.remainingKm / kmh) * 60);
-  }
+  // Velocidad vertical directa de ADS-B (pies/min): barométrica y, si falta, geométrica.
+  const vRate = Number.isFinite(a.baro_rate) ? a.baro_rate : Number.isFinite(a.geom_rate) ? a.geom_rate : null;
+  const out = { state: 'volando', callsign, altFt: a.alt_baro, altM: Math.round(a.alt_baro * 0.3048), kmh, vRateFpm: vRate,
+    seenS: Math.round(a.seen ?? 0), source: 'adsb.lol' };
+  // Solo datos medidos: la llegada estimada la calcula la app (js/eta.js), con suavizado y sin tomar la velocidad
+  // instantánea como velocidad media hasta el destino.
+  if (dest && Number.isFinite(a.lat) && Number.isFinite(a.lon)) out.remainingKm = Math.round(distanceKm([a.lat, a.lon], dest));
   return out;
 }

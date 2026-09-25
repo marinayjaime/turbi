@@ -45,15 +45,17 @@ describe('buscar el vuelo en el radar (solo su indicativo exacto)', () => {
     expect(r).toMatchObject({ state: 'volando', callsign: 'IBE5810' });
     expect(f.mock.calls.map(c => c[0].split('/').pop())).toEqual(['LAN1664', 'IBE5810']);
   });
-  it('cuánto le queda: distancia hasta el destino y minutos a la velocidad actual (cálculo, no hora oficial)', async () => {
-    // Avión a 52.95, -6.66 a 669 km/h; Dublín en 53.4213, -6.27007 → 58 km → 5 min
-    const r = await findOnRadar({ leg: leg(), fetchFn: radar([plane()]), pauseMs: 0, dest: [53.4213, -6.27007] });
-    expect(r.remainingKm).toBe(58);
-    expect(r.etaMin).toBe(5);
+  it('datos ADS-B directos: distancia que queda, velocidad vertical (baro_rate) y hora de la señal; sin ETA propia', async () => {
+    // Avión a 52.95, -6.66; Dublín en 53.4213, -6.27007 → 58 km
+    const r = await findOnRadar({ leg: leg(), fetchFn: radar([plane({ baro_rate: -1216 })]), pauseMs: 0, dest: [53.4213, -6.27007] });
+    expect(r).toMatchObject({ remainingKm: 58, vRateFpm: -1216 });
+    expect(r.etaMin).toBeUndefined(); // la llegada estimada la calcula la app (js/eta.js), con suavizado
   });
-  it('sin coordenadas del destino o a poca velocidad: no se calcula', async () => {
-    expect((await findOnRadar({ leg: leg(), fetchFn: radar([plane()]), pauseMs: 0 })).etaMin).toBeUndefined();
-    expect((await findOnRadar({ leg: leg(), fetchFn: radar([plane({ gs: 60 })]), pauseMs: 0, dest: [53.42, -6.27] })).etaMin).toBeUndefined();
+  it('sin baro_rate usa geom_rate; sin ninguno, null; sin destino, sin distancia', async () => {
+    expect((await findOnRadar({ leg: leg(), fetchFn: radar([plane({ geom_rate: 832 })]), pauseMs: 0 })).vRateFpm).toBe(832);
+    const r = await findOnRadar({ leg: leg(), fetchFn: radar([plane()]), pauseMs: 0 });
+    expect(r.vRateFpm).toBeNull();
+    expect(r.remainingKm).toBeUndefined();
   });
   it('lleva un User-Agent con contacto (adsb.lol rechaza los genéricos con 403)', async () => {
     const f = radar([plane()]);

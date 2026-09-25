@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { wantsRadar, fetchRadar, withRadar, departedText, endedNote } from '../js/radar.js';
+import { wantsRadar, fetchRadar, withRadar, departedText, endedNote, radarNote, ENDED_ESTIMATED } from '../js/radar.js';
 
 const leg = over => ({ d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
 const card = { status: { text: 'Ha salido · Aena no informa de la llegada a Dublín', tone: 'info' }, stale: false };
@@ -24,6 +24,18 @@ describe('aviso de vuelo terminado', () => {
   it('solo dice «ha aterrizado» si lo confirma Aena; si no, habla de la hora prevista', () => {
     expect(endedNote(leg({ sa: '19:25', sta: 'LND' }))).toBe('Este vuelo ya ha aterrizado.');
     expect(endedNote(leg())).toBe('La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.');
+  });
+});
+
+describe('llegada pasada según una estimación Turbi', () => {
+  it('no se redacta como hora prevista oficial', () => {
+    expect(endedNote(leg(), { estimated: true })).toBe('Según la estimación de Turbi, el vuelo ya habría aterrizado: no se muestra la previsión de turbulencias.');
+    expect(ENDED_ESTIMATED).toBe(endedNote(leg(), { estimated: true }));
+  });
+  it('si el radar confirma que sigue volando, el aviso se sustituye (sin contradicción)', () => {
+    expect(radarNote({ state: 'volando' })).toBe('El radar indica que el avión sigue en el aire: la previsión de turbulencias no se muestra con el vuelo en curso.');
+    expect(radarNote({ state: 'sin-datos' })).toBeNull();
+    expect(radarNote(null)).toBeNull();
   });
 });
 

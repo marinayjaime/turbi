@@ -38,17 +38,13 @@ export function missingDateText(flight, requested, dates, today) {
 // Miles con punto (4.800), también con 4 cifras (Intl en español no lo pone).
 const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
+// Radar: información complementaria (la hora de llegada estimada va en la ficha, en «Llegada estimada»).
 function radarHtml(r) {
   if (!r) return '';
   if (r.state === 'volando') {
-    const alt = `a ${thousands(Math.round(r.altM / 100) * 100)} m (${thousands(Math.round(r.altFt / 100) * 100)} pies)`;
-    const speed = r.kmh ? `, a ${r.kmh} km/h` : '';
-    const eta = Number.isFinite(r.etaMin)
-      ? `<strong>${r.etaMin <= 2 ? 'Está a punto de aterrizar'
-        : `Aterrizaría en aprox. ${r.etaMin >= 60 ? `${Math.floor(r.etaMin / 60)} h ${r.etaMin % 60} min` : `${r.etaMin} min`}`}</strong>`
-        + ` · cálculo de Turbi con el radar: quedan ${esc(thousands(r.remainingKm))} km a ${esc(r.kmh)} km/h. No es una hora oficial.<br>`
-      : '';
-    return `<p class="radar">${eta}Según el radar (adsb.lol): ${esc(alt)}${esc(speed)}. Última señal hace ${esc(r.seenS)} s, con el indicativo ${esc(r.callsign)}.</p>`;
+    const parts = [`${thousands(Math.round(r.altM / 100) * 100)} m`, r.kmh && `${r.kmh} km/h`, Number.isFinite(r.remainingKm) && `quedan ${thousands(r.remainingKm)} km`]
+      .filter(Boolean).join(' · ');
+    return `<p class="radar">Según el radar (adsb.lol): ${esc(parts)}. Última señal hace ${esc(r.seenS)} s, con el indicativo ${esc(r.callsign)}.</p>`;
   }
   if (r.state === 'sin-datos') {
     return `<p class="radar muted">El radar no lo encuentra con el indicativo ${esc(r.callsign)}: puede haber aterrizado o emitir con otro indicativo.</p>`;
@@ -73,7 +69,12 @@ function photoHtml(c) {
 export function flightCardHtml(c) {
   const meta = (t, g) => [t && `Terminal ${esc(t)}`, g && `Puerta ${esc(g)}`].filter(Boolean).join(' · ') || '&nbsp;';
   const nextDay = x => (c.dep && x.date > c.dep.date ? ' · +1 día' : '');
-  const side = (label, x) => x ? `
+  const side = (label, x) => x?.estimated ? `
+      <div class="side">
+        <p class="lbl">${label} estimada${nextDay(x)}</p>
+        <p class="big">${esc(x.time)}</p>
+        <p class="est-note">${esc(x.note)}</p>
+      </div>` : x ? `
       <div class="side">
         <p class="lbl">${label}${label === 'Llegada' ? nextDay(x) : ''}</p>
         <p class="big${x.late ? ' late' : ''}">${esc(x.est ?? x.time)}</p>
@@ -102,7 +103,7 @@ ${photoHtml(c)}
       ${c.stale ? '' : radarHtml(c.radar)}
       <div class="route-line">
         <strong>${esc(c.o)}</strong>
-        <span class="line"><em>${esc(formatDuration(c.duration))}</em><span class="plane">✈</span></span>
+        <span class="line"><em>${c.durationEstimated ? '≈ ' : ''}${esc(formatDuration(c.duration))}</em><span class="plane">✈</span></span>
         <strong>${esc(c.a)}</strong>
       </div>
       <div class="sides">${side('Salida', c.dep)}${side('Llegada', c.arr)}</div>

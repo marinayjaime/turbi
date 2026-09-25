@@ -19,7 +19,8 @@ import { currentPunctuality, fetchPunctuality, fetchPastFlight, dowOf, slotOf } 
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
-import { wantsRadar, fetchRadar, withRadar, departedText, endedNote } from './radar.js';
+import { wantsRadar, fetchRadar, withRadar, departedText, endedNote, radarNote, ENDED_ESTIMATED } from './radar.js';
+import { estimateArrival, etaSide, recallEta, rememberEta } from './eta.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
@@ -148,7 +149,8 @@ function flightTimes(q, oTz, dTz) {
   return { departureMs, durationMin: dur > 0 && dur < 20 * 60 ? dur : null };
 }
 
-function flightCard(q, durationMin, photos = null) {
+// eta: llegada estimada por Turbi (solo si Aena no publica la llegada); durationEstimated: la duración es un cálculo.
+function flightCard(q, durationMin, photos = null, eta = null) {
   const { leg, schedule, origin, destination } = q;
   const dep = legDeparture(leg), arr = legArrival(leg);
   return {
@@ -157,9 +159,9 @@ function flightCard(q, durationMin, photos = null) {
     number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg, schedule.al), operator: operatorName(photos, leg),
     route: `${origin.city} a ${destination.city}`,
     status: departedText(leg, destination.city) ? { text: departedText(leg, destination.city), tone: 'info' } : flightStatus(leg),
-    o: leg.o, a: leg.a, duration: durationMin,
+    o: leg.o, a: leg.a, duration: durationMin, durationEstimated: !arr,
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
-    arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : null,
+    arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : etaSide(eta),
     aircraft: aircraftName(leg.ac),
     gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
     updatedAgo: !leg.past && schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
@@ -177,13 +179,31 @@ function punctualityState(q) {
   };
 }
 
-// Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga.
-async function showRadar(q, flight, stale) {
+const etaKey = q => `${q.schedule.al}${q.schedule.n}|${q.leg.d}`;
+
+// Llegada estimada por Turbi (Aena no publica la llegada), con la última ETA en vuelo de este vuelo para suavizar.
+function turbiEta(q, ctx, radar = null) {
+  if (q.kind !== 'schedule' || q.leg.past || !ctx) return null;
+  return estimateArrival({ leg: q.leg, ...ctx, radar, prev: recallEta(etaKey(q)) });
+}
+
+// Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga
+// (estado ADS-B y, si la llegada es una estimación Turbi, esa estimación refinada en vuelo).
+async function showRadar(q, flight, stale, ctx = null) {
   if (!flight || flight.stale || !q.leg || q.leg.past || !wantsRadar(q.leg)) return;
-  const card = withRadar(flight, await fetchRadar(q.schedule.al, q.schedule.n));
+  const radar = await fetchRadar(q.schedule.al, q.schedule.n);
+  let card = withRadar(flight, radar);
+  if (flight.arr?.estimated) {
+    const eta = turbiEta(q, ctx, radar);
+    rememberEta(etaKey(q), eta);
+    if (etaSide(eta)) card = { ...card, arr: etaSide(eta) };
+  }
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
   el.outerHTML = flightCardHtml(card);
+  // El radar ve el avión en el aire: no puede quedar el aviso de que, según la estimación, ya habría aterrizado.
+  const note = els.result.querySelector('.note');
+  if (radarNote(radar) && note?.textContent === ENDED_ESTIMATED) note.textContent = radarNote(radar);
 }
 
 async function loadPunctualityHistory(q, punct, stale) {
@@ -202,11 +222,16 @@ async function run(q) {
     if (stale()) return;
     const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
     const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
-    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos()) : null;
+    // Llegada: la de Aena si la publica; si no, estimación Turbi (salida + duración estimada, en la hora del destino).
+    const etaCtx = { depUtcMs: departureMs, plannedMin: profile.durationMin, tz: dTz };
+    const eta = turbiEta(q, etaCtx);
+    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta) : null;
+    const estimatedArrival = eta?.source === 'turbi';
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
-    const note = profile.arrivalMs < Date.now() ? (q.leg ? endedNote(q.leg) : 'Este vuelo ya ha aterrizado.')
+    const arrivalMs = estimatedArrival ? eta.ms : profile.arrivalMs;
+    const note = arrivalMs < Date.now() ? (q.leg ? endedNote(q.leg, { estimated: estimatedArrival }) : 'Este vuelo ya ha aterrizado.')
       : rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'
       : null;
@@ -216,7 +241,7 @@ async function run(q) {
       renderResult(els.result, { flight, note });
       els.result.querySelector('.flight')?.insertAdjacentHTML('afterend', `<section id="punctuality">${punctualityHtml(punct)}</section>`);
       show('result');
-      await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale))]);
+      await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale, etaCtx))]);
       return;
     }
 
@@ -232,7 +257,7 @@ async function run(q) {
       return await runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale);
     }
     if (stale()) return;
-    Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz });
+    Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
     showForecast(view, q, stale).catch(() => { if (!stale()) showError('Algo ha fallado al mostrar el pronóstico.', true); });
   } catch (err) {
     if (stale()) return;
@@ -291,7 +316,7 @@ async function showForecast(view, q, stale, saved = false) {
   });
   await Promise.all([
     safely(async () => { if (view.punctuality) await loadPunctualityHistory(q, view.punctuality, stale); }),
-    safely(() => showRadar(q, view.flight, stale)),
+    safely(() => showRadar(q, view.flight, stale, view.etaCtx)),
     safely(async () => {
       await nameSegments(view.segments, view.originIata);
       if (stale()) return;
