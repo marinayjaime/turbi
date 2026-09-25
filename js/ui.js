@@ -71,7 +71,8 @@ function photoHtml(c) {
   return `
       <figure class="plane-photo">
         <img src="${esc(p.thumb)}" alt="${esc(c.aircraft ?? '')}" onerror="this.closest('figure').remove()">
-        ${p.artist || p.shared ? `<figcaption>${p.shared ? 'Vuelo con código compartido: Aena no indica qué aerolínea lo opera. ' : ''}${p.artist
+        ${p.artist || p.shared || p.representative ? `<figcaption>${p.representative ? 'Imagen representativa de la aerolínea · '
+          : p.shared ? 'Vuelo con código compartido: Aena no indica qué aerolínea lo opera. ' : ''}${p.artist
           ? `Foto: <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.artist)}</a>, ${esc(p.license)}` : ''}</figcaption>` : ''}
       </figure>`;
 }

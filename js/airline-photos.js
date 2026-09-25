@@ -14,14 +14,20 @@ export async function loadAirlinePhotos(fetchFn = fetch) {
   }
 }
 
-// leg.op = aerolínea que opera según Aena (solo si es segura). Si no lo es (código compartido), foto de la aerolínea
-// del número buscado (al), marcada con shared para que la ficha diga que Aena no indica quién lo opera.
+// Prioridad:
+//  1. operadora segura según Aena (leg.op) + modelo exacto;
+//  2. aerolínea del número buscado (al) + modelo exacto, marcada shared (Aena no dice quién opera);
+//  3. si no hay modelo (p. ej. vuelo del histórico) o no hay foto de ese modelo: una foto verificada de esa misma
+//     aerolínea, marcada representative («Imagen representativa de la aerolínea»: ni el avión ni el modelo del vuelo).
 export function photoFor(db, leg, al = null) {
-  const model = aircraftName(leg.ac);
-  if (!db || !model) return null;
-  if (leg.op) return db.photos?.[`${leg.op}|${model}`] ?? null;
-  const p = al ? db.photos?.[`${al}|${model}`] : null;
-  return p ? { ...p, shared: true } : null;
+  if (!db?.photos) return null;
+  const model = leg.ac ? aircraftName(leg.ac) : null;
+  const airline = leg.op ?? al;
+  const shared = leg.op ? {} : { shared: true };
+  const exact = model && airline ? db.photos[`${airline}|${model}`] : null;
+  if (exact) return { ...exact, ...shared };
+  const generic = airline && Object.keys(db.photos).find(k => k.startsWith(`${airline}|`) && db.photos[k]);
+  return generic ? { ...db.photos[generic], representative: true, ...shared } : null;
 }
 
 // al: código de la aerolínea buscada (los tramos publicados no lo llevan).

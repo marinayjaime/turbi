@@ -178,12 +178,24 @@ describe('última ETA en vuelo (memoria de la sesión y almacenamiento)', () => 
 import { etaSide } from '../js/eta.js';
 describe('lado «Llegada» de la ficha con la estimación', () => {
   it('Turbi antes y en vuelo; Aena no pasa por aquí; sin estimación, nada', () => {
-    expect(etaSide({ date: '2026-09-25', time: '18:30', source: 'turbi', method: 'estimated-preflight' })).toEqual({ date: '2026-09-25', time: '18:30', estimated: true, note: 'Estimación Turbi' });
+    expect(etaSide({ date: '2026-09-25', time: '18:30', source: 'turbi', method: 'estimated-preflight' })).toEqual({ date: '2026-09-25', time: '18:30', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' });
     expect(etaSide({ date: '2026-09-25', time: '18:15', source: 'turbi', method: 'estimated-inflight' }).note).toBe('Estimación Turbi actualizada en vuelo');
     expect(etaSide({ date: '2026-09-25', time: '18:15', source: 'turbi', method: 'estimated-inflight', held: true, ageMin: 8 }).note).toBe('Estimación Turbi actualizada en vuelo');
     expect(etaSide({ date: '2026-09-25', time: '18:15', source: 'turbi', method: 'estimated-inflight', held: true, ageMin: 25 }).note)
       .toBe('Última estimación Turbi disponible (hace 25 min, sin señal de radar desde entonces)');
     expect(etaSide({ date: '2026-09-25', time: '20:10', source: 'aena', method: 'official' })).toBeNull();
     expect(etaSide(null)).toBeNull();
+  });
+});
+
+import { estimatedSide } from '../js/eta.js';
+describe('salida estimada cuando solo se conoce la llegada (origen extranjero)', () => {
+  it('llegada − duración estimada, en la hora local del origen, rotulada', () => {
+    // Llega a Palma a las 12:00 (10:00 UTC); 150 min antes = 07:30 UTC = 08:30 en Londres
+    const ms = localToUtcMs('2026-09-25', '12:00', 'Europe/Madrid') - 150 * 60000;
+    expect(estimatedSide(ms, 'Europe/London')).toEqual({ date: '2026-09-25', time: '08:30', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' });
+  });
+  it('redondeada a 5 min y con cambio de día', () => {
+    expect(estimatedSide(Date.parse('2026-09-24T23:58:00Z'), 'Europe/London')).toMatchObject({ date: '2026-09-25', time: '01:00' });
   });
 });

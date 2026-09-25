@@ -21,7 +21,7 @@ import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
   rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding } from './radar.js';
-import { turbiEstimate, etaSide, recallEta, rememberEta } from './eta.js';
+import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
@@ -145,13 +145,14 @@ function flightTimes(q, oTz, dTz) {
     const est = buildRoute(q.origin, q.destination, 0).durationMin;
     return { departureMs: arrMs - est * 60000, durationMin: est };
   }
-  const departureMs = localToUtcMs(dep.date, dep.time, oTz);
+  const departureMs = departureUtcMs(q.leg, oTz); // final de Aena antes que la programada
   const dur = arrMs ? Math.round((arrMs - departureMs) / 60000) : null;
   return { departureMs, durationMin: dur > 0 && dur < 20 * 60 ? dur : null };
 }
 
 // eta: llegada estimada por Turbi (solo si Aena no publica la llegada); durationEstimated: la duración es un cálculo.
-function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs = null) {
+// depEstimate: lado «Salida estimada» cuando Aena solo da la llegada (departureEstimate).
+function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs = null, depEstimate = null) {
   const { leg, schedule, origin, destination } = q;
   const dep = legDeparture(leg), arr = legArrival(leg);
   return {
@@ -162,7 +163,8 @@ function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs 
     // Estado mostrado: con la misma llegada visible que la ficha (Aena o estimación Turbi); ver presentStatus.
     status: presentStatus({ leg, city: destination.city, visibleArrivalMs }),
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: !arr,
-    dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g } : null,
+    dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g }
+      : depEstimate,
     arr: arr ? { date: arr.date, time: leg.sa, est: arr.time !== leg.sa ? arr.time : null, late: isLate(leg, 'arr'), terminal: leg.ta } : etaSide(eta),
     aircraft: aircraftName(leg.ac),
     gateChanged: ['NPT', 'NPR'].includes(leg.std ?? leg.st),
@@ -244,7 +246,8 @@ async function run(q) {
     const visibleArrivalMs = officialMs ?? (eta?.source === 'turbi' ? eta.ms : null);
     const landedAt = q.kind === 'schedule' ? recallLanding(etaKey(q)) : null; // aterrizaje ADS-B ya confirmado
     const flight = q.kind === 'schedule'
-      ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs), landedAt, q.leg) : null;
+      ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
+        departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg) : null;
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());

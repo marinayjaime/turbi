@@ -144,11 +144,15 @@ describe('una sola fuente de verdad para la llegada: el aviso solo usa la llegad
     expect(v.side.note).toMatch(/^Última estimación Turbi disponible · sin datos recientes/);
     expect(v.note).toBe(ENDED_ESTIMATED);
   });
-  it('2. vuelo pasado sin ETA en vuelo (nunca se vio en el radar): «Llegada —» y ningún aviso basado en una estimación', () => {
+  it('2. vuelo pasado sin ETA en vuelo: estimación retrospectiva visible (salida final de Aena + duración), y el aviso se basa en ella', () => {
     const v = view(ei737(), null);
-    expect(v.side).toBeNull();
-    expect(v.note).toBe(NO_ARRIVAL_NOTE);
-    expect(v.note).not.toMatch(/estimación/i);
+    // Salida final 21:10 Palma (19:10 UTC) + 155 min = 21:45 UTC = 22:45 en Dublín
+    expect(v.side).toEqual({ date: '2026-09-24', time: '22:45', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' });
+    expect(v.note).toBe(ENDED_ESTIMATED);
+  });
+  it('2b. última ETA en vuelo caducada (> 24 h): estimación por la duración de la ruta, rotulada (no «Llegada —»)', () => {
+    const v = view(ei737(), { ms: dep('23:35'), at: now - 25 * 3600000, method: 'estimated-inflight' });
+    expect(v.side).toMatchObject({ time: '22:45', note: 'Estimación Turbi basada en la duración de la ruta' });
   });
   it('3. llegada oficial de Aena: manda Aena (ni ETA Turbi ni aviso de estimación)', () => {
     const leg = ei737({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'LND' });

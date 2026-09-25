@@ -5,7 +5,8 @@
 //   estimated-inflight        → Turbi: la anterior, corregida con el radar ADS-B, suavizada.
 //   (estado ADS-B)            → lo que dice el radar; va aparte, en js/radar.js.
 // Prioridad: estabilidad y prudencia; se muestra redondeada a 5 min (sin precisión falsa).
-import { legArrival } from './schedule.js';
+import { legArrival, legDeparture } from './schedule.js';
+import { localToUtcMs } from './time.js';
 
 const MIN = 60000;
 
@@ -136,18 +137,42 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
   return result(planMs, tz, 'estimated-preflight', 'low');
 }
 
-// Estimación Turbi para la ficha. En los vuelos del histórico (ya pasados) solo cuenta la última ETA calculada en
-// vuelo que siga guardada (hasta MAX_HOLD_H): nunca se fabrica una estimación nueva para un vuelo pasado.
+// Estimación Turbi para la ficha (orden: Aena > última ETA en vuelo guardada > duración de la ruta):
+//  - también en vuelos del histórico: si no hay ETA en vuelo guardada, estimación retrospectiva con la salida (final si
+//    Aena la dio) + la duración estimada de la ruta, rotulada como tal (no depende del navegador);
+//  - si la última ETA en vuelo caducó (> MAX_HOLD_H), lo mismo, rotulado: nunca «Llegada —» si hay base para estimar.
+// No confirma ninguna llegada: el estado (Aterrizado, Volando…) va por su lado.
 export function turbiEstimate({ leg, prev = null, ...rest }) {
-  if (leg.past && prev?.method !== 'estimated-inflight') return null;
-  return estimateArrival({ leg, prev, ...rest });
+  const hadInflight = prev?.method === 'estimated-inflight';
+  return estimateArrival({ leg, prev: hadInflight ? prev : null, ...rest })
+    ?? (hadInflight ? estimateArrival({ leg, prev: null, ...rest }) : null);
+}
+
+export const ROUTE_NOTE = 'Estimación Turbi basada en la duración de la ruta';
+
+// Salida en UTC según Aena: la final/estimada (ed) antes que la programada (sd). null si Aena no da la salida.
+export function departureUtcMs(leg, tz) {
+  const dep = legDeparture(leg);
+  return dep ? localToUtcMs(dep.date, dep.time, tz) : null;
+}
+
+// Salida estimada por Turbi cuando Aena solo da la llegada (origen extranjero): llegada − duración estimada, en la
+// hora local del origen. Si Aena da la salida, null (la ficha usa la de Aena).
+export function departureEstimate({ leg, arrivalUtcMs, plannedMin, tz }) {
+  if (legDeparture(leg) || !Number.isFinite(arrivalUtcMs) || !(plannedMin > 0) || !tz) return null;
+  return estimatedSide(arrivalUtcMs - plannedMin * MIN, tz);
+}
+
+// Lado de la ficha con una hora estimada por Turbi (p. ej. la salida, cuando solo se conoce la llegada).
+export function estimatedSide(ms, tz, note = ROUTE_NOTE) {
+  return { ...localParts(round5(ms), tz), estimated: true, note };
 }
 
 // Lado «Llegada» de la ficha cuando la hora es una estimación Turbi (con Aena, la ficha usa su hora tal cual).
 export function etaSide(eta) {
   if (eta?.source !== 'turbi') return null;
   const age = m => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
-  const note = eta.method !== 'estimated-inflight' ? 'Estimación Turbi'
+  const note = eta.method !== 'estimated-inflight' ? ROUTE_NOTE
     : eta.held && eta.ageMin > HOLD_MIN ? `Última estimación Turbi disponible · sin datos recientes (hace ${age(eta.ageMin)})`
     : eta.held && eta.ageMin >= STALE_MIN ? `Última estimación Turbi disponible (hace ${eta.ageMin} min, sin señal de radar desde entonces)`
     : 'Estimación Turbi actualizada en vuelo';
