@@ -104,6 +104,45 @@ describe('FR8297 (regresión): 429 en la segunda zona → pausa, reanudación au
   });
 });
 
+describe('pausa larga (Retry-After: 300 s) sin sondeos intermedios', () => {
+  it('la app solo pregunta al acabar la pausa: la reanudación ya ocurrió sola, poll=1 no llamó a adsb.lol y hubo una sola identificación', async () => {
+    const state = createState();
+    state.legs = [leg];
+    const calls = [];
+    let zones = 0;
+    const retry300 = { ok: false, status: 429, headers: { get: k => (k.toLowerCase() === 'retry-after' ? '300' : null) }, json: async () => ({}) };
+    const fetchFn = vi.fn(async url => {
+      calls.push({ t: Date.now(), url });
+      if (url.includes('/v2/callsign/')) return ok({ ac: [] });
+      if (url.includes('/v2/point/')) return ++zones === 2 ? retry300 : ok({ ac: [plane()] });
+      if (url.includes('/v2/hex/abc123')) return ok({ ac: [plane()] });
+      if (url.includes('adsbdb')) return ok({ response: { flightroute: { origin: { iata_code: 'ALC' }, destination: { iata_code: 'BRS' } } } });
+      return { ok: false, status: 404, headers: { get: () => null }, json: async () => null };
+    });
+    const resolve = vi.spyOn(state.hexes, 'resolve');
+    const ask = path => settled(radarResponse(state, path, { fetchFn, nowMs: Date.now(), pauseMs: 0, airports }).then(r => JSON.parse(r.body)));
+    await ask('/radar/FR/8297.json');
+    for (let i = 0; i < 120 && zones < 2; i++) await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+    const pauseStart = Date.now();
+    const paused = await ask('/radar/FR/8297.json?poll=1'); // un sondeo al empezar la pausa
+    expect(paused).toMatchObject({ identifying: true, temporary: true });
+    expect(paused.retryAfterSec).toBeGreaterThanOrEqual(300);
+    const adsbBefore = calls.filter(c => c.url.includes('adsb.lol')).length;
+    // Ni un sondeo más hasta que acabe la pausa (la app espera retryAfterSec + 3 s).
+    await vi.advanceTimersByTimeAsync(299000);
+    expect(calls.filter(c => c.url.includes('adsb.lol'))).toHaveLength(adsbBefore); // cero llamadas durante la pausa
+    await vi.advanceTimersByTimeAsync(200000); // el servidor reanuda solo y termina (3 zonas con el tope de 2/min)
+    expect(calls.filter(c => c.url.includes('/v2/point/')).slice(2)[0].t - pauseStart).toBeGreaterThanOrEqual(300000);
+    expect(state.hexes.get(PHYS)).toMatchObject({ hex: 'abc123' });
+    expect(resolve).toHaveBeenCalledTimes(1);
+    // poll=1 nunca llama a adsb.lol por sí mismo (el seguimiento por hex, una vez identificado, es radar normal).
+    const n = calls.length;
+    expect(await ask('/radar/FR/8297.json?poll=1')).toMatchObject({ state: 'volando', hex: 'abc123' });
+    expect(calls.slice(n).every(c => c.url.includes('/v2/hex/'))).toBe(true);
+  });
+});
+
 describe('pausa adaptativa tras 429 repetidos', () => {
   const at = () => Date.now();
   it('60 s → 120 s → 180 s … (máx. 5 min); Retry-After se respeta; una racha de aciertos vuelve a 60 s', async () => {

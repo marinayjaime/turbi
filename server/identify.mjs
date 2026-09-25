@@ -41,7 +41,7 @@ export const LIMITS = {
   cooldownMin: 10, // tras un fallo o una invalidación, sin reintentar durante este tiempo
   maxResumes: 6, // reanudaciones automáticas de una identificación cortada por un fallo temporal (429, red…)
   resumeMinSec: 30, // espera mínima antes de reanudar (si adsb.lol está en pausa, hasta que acabe la pausa)
-  resumeIdleMin: 5, // sin nadie mirando el vuelo en este tiempo, no se reanuda (no se gasta cupo para nadie)
+  resumeIdleMin: 5, // sin nadie mirando el vuelo en este tiempo ANTES de programar la pausa, no se reanuda (no se gasta cupo para nadie)
   invalidateAfter: 3, // lecturas seguidas con indicativo distinto para invalidar el hex
   contradictionCrossKm: 400, // lejos de la ruta más que esto → contradicción física clara
   groundAirportKm: 30, // en tierra a más de esto del origen y del destino → contradicción física clara
@@ -363,8 +363,12 @@ export async function trackByHex({ entry, leg, origin, dest, nowMs = Date.now(),
 // detrás de otra; tras un fallo o una invalidación, cooldownMin sin reintentar.
 // Un fallo TEMPORAL (429 de adsb.lol, zona o traza sin respuesta: resultado 'no-disponible') no es definitivo: el
 // vuelo queda «interrumpido» y el propio registro reanuda la identificación cuando acaba la pausa (resumeAt), como
-// mucho maxResumes veces y solo si alguien ha mirado el vuelo hace poco (touch). Mientras, busy() sigue siendo true:
-// ninguna consulta, sondeo ni usuario arranca otra identificación del mismo vuelo.
+// mucho maxResumes veces. Mientras, busy() sigue siendo true: ninguna consulta, sondeo ni usuario arranca otra
+// identificación del mismo vuelo.
+// Interés del usuario (touch): se mide AL PROGRAMAR la pausa, no al vencer. Si alguien miró el vuelo en los
+// resumeIdleMin anteriores (o después), la reanudación ya programada se ejecuta al acabar su pausa, dure lo que dure
+// (hasta 5 min de pausa adaptativa): la pausa nunca cuenta como inactividad y no hacen falta sondeos para mantenerla.
+// Para programar la SIGUIENTE, se vuelve a exigir actividad reciente.
 // opts.resumeAt(result) → ms (reloj real) en que se puede reanudar; opts.setTimer/clearTimer: para las pruebas.
 export function createHexRegistry(limits = LIMITS, {
   // Nunca antes de que acabe la pausa global de adsb.lol (+2 s de margen) ni antes de resumeMinSec.
@@ -388,7 +392,8 @@ export function createHexRegistry(limits = LIMITS, {
   });
   const clearResume = phys => { const e = entries.get(phys); if (e?.timer) clearTimer(e.timer); };
   const fail = (phys, nowMs, diagnostic = null) => { clearResume(phys); entries.set(phys, { until: nowMs + limits.cooldownMin * 60000, diagnostic }); };
-  const watched = phys => Date.now() - (interest.get(phys) ?? -Infinity) <= limits.resumeIdleMin * 60000;
+  // ¿Alguien lo miraba cuando se decidió la pausa (o lo ha mirado después)?
+  const watchedSince = (phys, scheduledAt) => (interest.get(phys) ?? -Infinity) >= scheduledAt - limits.resumeIdleMin * 60000;
 
   // attempt({ queueWaitMs, sinceMs }): sinceMs = tiempo real desde la primera petición (para su reloj en las reanudaciones).
   function start(phys, attempt, nowMs, firstAt, resumes) {
@@ -400,14 +405,14 @@ export function createHexRegistry(limits = LIMITS, {
       if (r?.state === 'no-disponible' || r?.rateLimited) {
         // Temporal: se reanuda sola tras la pausa. Agotadas las reanudaciones, queda como antes (sin cooldown: una
         // consulta normal posterior puede volver a intentarlo).
-        if (resumes < limits.maxResumes) {
-          const at = Math.max(resumeAt(r), Date.now() + 1000);
+        const scheduledAt = Date.now();
+        if (resumes < limits.maxResumes && watchedSince(phys, scheduledAt)) {
+          const at = Math.max(resumeAt(r), scheduledAt + 1000);
           const timer = setTimer(() => {
             const e = entries.get(phys);
             if (!e?.interrupted || e.timer !== timer) return;
-            if (!watched(phys)) { entries.set(phys, { diagnostic: e.diagnostic }); return; }
-            start(phys, attempt, nowMs, firstAt, resumes + 1);
-          }, at - Date.now());
+            start(phys, attempt, nowMs, firstAt, resumes + 1); // programada con alguien mirando: se ejecuta
+          }, at - scheduledAt);
           entries.set(phys, { interrupted: true, resumeAt: at, resumes: resumes + 1, timer, rateLimited: Boolean(r?.rateLimited),
             diagnostic: r?.diagnostic ?? null });
         } else entries.set(phys, { diagnostic: r?.diagnostic ?? null });

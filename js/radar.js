@@ -88,12 +88,22 @@ const MIN = 60000;
 // Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
 // prueba varias variantes.
 // El servidor está identificando el avión por su ruta en segundo plano. Con el límite de adsb.lol (3 peticiones por
-// minuto) eso puede tardar 1–2 min, y si adsb.lol impone una pausa (429) el servidor la espera y reanuda solo. La app
-// vuelve a preguntar a los 20, 40, 60, 90, 120, 150 y 180 s y después cada minuto hasta los 8 min (intervalos
-// encadenados; nunca setInterval). Si el servidor dice cuándo reanudará (retryAfterSec), el siguiente sondeo no llega
-// antes. Estos sondeos llevan ?poll=1: el servidor solo lee el estado y no hace ninguna consulta nueva a ADS-B.
-export const RADAR_POLL_DELAYS_MS = [20000, 20000, 20000, 30000, 30000, 30000, 30000, 60000, 60000, 60000, 60000, 60000];
-const MAX_POLL_WAIT_MS = 120000;
+// minuto) eso puede tardar 1–2 min, y si adsb.lol impone una pausa (429, hasta 5 min y repetible) el servidor la
+// espera y reanuda solo. El sondeo depende del ESTADO que devuelve el servidor:
+//  - identificando: calendario normal, a los 20, 40, 60, 90, 120, 150 y 180 s y después cada minuto;
+//  - en pausa (temporary + retryAfterSec): el siguiente sondeo, justo cuando acaba la pausa (+3 s), nunca antes, y
+//    esa espera no gasta turnos del calendario.
+// Como mucho RADAR_POLL_MAX_MS desde la primera respuesta (cubre dos pausas de 5 min y la identificación). Siempre
+// intervalos encadenados (nunca setInterval) y con ?poll=1: el servidor solo lee el estado, sin llamar a ADS-B.
+export const RADAR_POLL_DELAYS_MS = [20000, 20000, 20000, 30000, 30000, 30000, 30000, 60000]; // el último se repite
+export const RADAR_POLL_MAX_MS = 15 * 60000;
+export const RADAR_PAUSE_MARGIN_MS = 3000;
+
+// Espera hasta el siguiente sondeo según la respuesta (normalTurn: turnos del calendario ya usados).
+export function nextPollDelay(radar, normalTurn, delays = RADAR_POLL_DELAYS_MS) {
+  if (radar?.temporary && Number.isFinite(radar.retryAfterSec)) return { ms: radar.retryAfterSec * 1000 + RADAR_PAUSE_MARGIN_MS, normal: false };
+  return { ms: delays[Math.min(normalTurn, delays.length - 1)], normal: true };
+}
 
 // ¿Hay que volver a preguntar? Solo mientras el servidor diga que sigue identificando y aún no haya un resultado
 // definitivo. Sin respuesta (red, timeout), se vuelve a intentar en el siguiente turno: el trabajo del servidor sigue.
@@ -105,20 +115,25 @@ export function keepPolling(radar) {
 // Sondeo encadenado del radar. fetchOnce({ poll }) → respuesta del servidor (o null); onResult(radar, { attempt }) la
 // pinta; isActive() dice si la ficha que lo pidió sigue en pantalla (misma búsqueda). Devuelve { first, cancel }:
 // first se resuelve con la primera respuesta (la ficha nunca espera a los siguientes sondeos).
-export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays = RADAR_POLL_DELAYS_MS,
-  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id) }) {
-  let timer = null, cancelled = false;
+export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays = RADAR_POLL_DELAYS_MS, maxMs = RADAR_POLL_MAX_MS,
+  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now() }) {
+  let timer = null, cancelled = false, startedAt = null, normalTurn = 0;
   const stopped = () => cancelled || !isActive();
   const step = async attempt => {
     timer = null;
     if (stopped()) return null;
     const radar = await fetchOnce({ poll: attempt > 0 });
+    startedAt ??= now();
     if (stopped()) return radar;
     // Sin respuesta en un sondeo no se pinta nada (se queda lo último que se vio).
     if (radar || attempt === 0) onResult(radar, { attempt });
-    if (keepPolling(radar) && attempt < delays.length) {
-      const serverWait = Number.isFinite(radar?.retryAfterSec) ? radar.retryAfterSec * 1000 + 3000 : 0;
-      timer = setTimer(() => { step(attempt + 1).catch(() => {}); }, Math.min(Math.max(delays[attempt], serverWait), MAX_POLL_WAIT_MS));
+    if (keepPolling(radar)) {
+      const next = nextPollDelay(radar, normalTurn, delays);
+      // Límite total: si el siguiente sondeo caería después, se para (nunca se adelanta para caber).
+      if (now() + next.ms - startedAt <= maxMs) {
+        if (next.normal) normalTurn++;
+        timer = setTimer(() => { step(attempt + 1).catch(() => {}); }, next.ms);
+      }
     }
     return radar;
   };

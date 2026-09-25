@@ -398,6 +398,37 @@ describe('registro vuelo → hex: seguimiento, reutilización, invalidación y e
       expect(reg2.status('p2', now).cooldownRemainingMs).toBe(0); // una consulta normal posterior podrá reintentarlo
     } finally { vi.useRealTimers(); }
   });
+  it('pausa de 300 s + margen: la reanudación programada con alguien mirando se ejecuta aunque no haya sondeos en medio', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T09:00:00Z') });
+    try {
+      const reg = createHexRegistry(LIMITS, { resumeAt: () => Date.now() + 302000 });
+      const attempt = vi.fn()
+        .mockResolvedValueOnce({ state: 'no-disponible', rateLimited: true })
+        .mockResolvedValueOnce({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
+      reg.touch(phys); // la única actividad: al abrir la ficha
+      await reg.resolve(phys, attempt, now);
+      expect(reg.status(phys, now)).toMatchObject({ interrupted: true, retryAfterSec: 302 });
+      await vi.advanceTimersByTimeAsync(301000);
+      expect(attempt).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2000); // t ≈ 303 s: más de resumeIdleMin (5 min) desde el último touch
+      expect(attempt).toHaveBeenCalledTimes(2);
+      expect(reg.get(phys)).toMatchObject({ hex: '4d225e' });
+    } finally { vi.useRealTimers(); }
+  });
+  it('tras esa reanudación, otra pausa solo se programa si ha habido actividad reciente', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T09:00:00Z') });
+    try {
+      const reg = createHexRegistry(LIMITS, { resumeAt: () => Date.now() + 302000 });
+      const attempt = vi.fn(async () => ({ state: 'no-disponible', rateLimited: true }));
+      reg.touch(phys);
+      await reg.resolve(phys, attempt, now);
+      await vi.advanceTimersByTimeAsync(303000); // se reanuda (programada con actividad) y vuelve a fallar
+      expect(attempt).toHaveBeenCalledTimes(2);
+      expect(reg.busy(phys)).toBe(false); // nadie ha mirado en los últimos 5 min: no se programa otra
+      await vi.advanceTimersByTimeAsync(3600000);
+      expect(attempt).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
   it('dos usuarios a la vez → una sola identificación', async () => {
     const reg = createHexRegistry();
     let release;

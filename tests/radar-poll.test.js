@@ -2,7 +2,7 @@
 // reintentos encadenados (nunca setInterval), que paran con un resultado definitivo, al cambiar de búsqueda o al
 // agotar los sondeos. La ficha solo espera la primera respuesta.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { pollRadar, keepPolling, RADAR_POLL_DELAYS_MS } from '../js/radar.js';
+import { pollRadar, keepPolling, nextPollDelay, RADAR_POLL_DELAYS_MS, RADAR_POLL_MAX_MS } from '../js/radar.js';
 
 beforeEach(() => vi.useFakeTimers({ now: Date.parse('2026-09-25T16:00:00Z') }));
 afterEach(() => vi.useRealTimers());
@@ -17,10 +17,17 @@ function server(responses) {
 }
 
 describe('calendario de sondeos', () => {
-  it('cubre una identificación de 1–2 min y las pausas de adsb.lol: 20…180 s y después cada minuto hasta 8 min', () => {
-    const at = RADAR_POLL_DELAYS_MS.reduce((acc, d) => [...acc, (acc.at(-1) ?? 0) + d], []).map(ms => ms / 1000);
-    expect(at).toEqual([20, 40, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480]);
+  it('calendario normal: 20, 40, 60, 90, 120, 150, 180 s y después cada minuto; como mucho 15 min en total', () => {
+    const at = [];
+    let t = 0;
+    for (let turn = 0; turn < 10; turn++) { t += nextPollDelay({ identifying: true }, turn).ms; at.push(t / 1000); }
+    expect(at).toEqual([20, 40, 60, 90, 120, 150, 180, 240, 300, 360]);
+    expect(RADAR_POLL_MAX_MS).toBe(15 * 60000); // dos pausas de 5 min + identificación, con holgura
     expect(Math.min(...RADAR_POLL_DELAYS_MS)).toBeGreaterThanOrEqual(20000); // nunca en bucle rápido
+  });
+  it('en pausa (temporary + retryAfterSec) manda el servidor: retryAfterSec + 3 s, sin tope y sin gastar turno', () => {
+    expect(nextPollDelay({ identifying: true, temporary: true, retryAfterSec: 300 }, 0)).toEqual({ ms: 303000, normal: false });
+    expect(nextPollDelay({ identifying: true, temporary: true, retryAfterSec: 5 }, 6)).toEqual({ ms: 8000, normal: false });
   });
   it('keepPolling: solo mientras identifica y sin resultado definitivo', () => {
     expect(keepPolling(IDENT)).toBe(true);
@@ -60,11 +67,11 @@ describe('pollRadar', () => {
       expect(seen.map(x => x.s), final.state).toEqual([0, 20]);
     }
   });
-  it('si nunca termina, se detiene al agotar los sondeos (8 min)', async () => {
+  it('si nunca termina, se detiene al llegar a los 15 min (sin consultas frecuentes)', async () => {
     const { fetchOnce, seen } = server([IDENT]);
     const p = pollRadar({ fetchOnce, onResult: () => {} });
     await vi.advanceTimersByTimeAsync(3600000);
-    expect(seen.map(x => x.s)).toEqual([0, 20, 40, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480]);
+    expect(seen.map(x => x.s)).toEqual([0, 20, 40, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900]);
     expect(p.pending).toBe(false);
   });
   it('un sondeo sin respuesta (red) no pinta ni detiene: se vuelve a mirar en el siguiente turno', async () => {
@@ -121,10 +128,45 @@ describe('pollRadar', () => {
     const painted = [];
     pollRadar({ fetchOnce, onResult: r => painted.push(r.state) });
     await vi.advanceTimersByTimeAsync(600000);
-    // 0 s identificando; 20 s: el servidor reanudará en 118 s → el siguiente sondeo no llega antes (20 + 120 s, el
-    // máximo de una espera); después, el calendario normal (20 s).
-    expect(seen.map(x => x.s)).toEqual([0, 20, 140, 160]);
-    expect(seen[2].s - seen[1].s).toBeGreaterThanOrEqual(118);
+    // 0 s identificando; 20 s: reanudará en 118 s → 20 + 121 = 141 s; la pausa no gastó turno: después, +20 s.
+    expect(seen.map(x => x.s)).toEqual([0, 20, 141, 161]);
     expect(painted.at(-1)).toBe('volando');
+  });
+  it('retryAfterSec = 300: ningún sondeo a los 120 s; el siguiente, solo pasados los 300 s', async () => {
+    const LONG = { state: 'sin-datos', identifying: true, temporary: true, retryAfterSec: 300 };
+    const { fetchOnce, seen } = server([LONG, IDENT, FLYING]);
+    pollRadar({ fetchOnce, onResult: () => {} });
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(seen).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(180000); // 300 s: aún no (margen de 3 s)
+    expect(seen).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(seen.map(x => x.s)).toEqual([0, 303]);
+  });
+  it('dos pausas largas seguidas (300 s + 300 s) no agotan los sondeos: se llega a ver el avión', async () => {
+    const LONG = { state: 'sin-datos', identifying: true, temporary: true, retryAfterSec: 300 };
+    const { fetchOnce, seen } = server([IDENT, LONG, LONG, IDENT, FLYING]);
+    const painted = [];
+    pollRadar({ fetchOnce, onResult: r => painted.push(r.state) });
+    await vi.advanceTimersByTimeAsync(3600000);
+    expect(seen.map(x => x.s)).toEqual([0, 20, 323, 626, 646]);
+    expect(painted.at(-1)).toBe('volando');
+  });
+  it('una pausa que acabaría después de los 15 min no adelanta el sondeo: se para', async () => {
+    const LONG = { state: 'sin-datos', identifying: true, temporary: true, retryAfterSec: 300 };
+    const { fetchOnce, seen } = server([IDENT, LONG, LONG, LONG]);
+    pollRadar({ fetchOnce, onResult: () => {} });
+    await vi.advanceTimersByTimeAsync(3600000);
+    expect(seen.map(x => x.s)).toEqual([0, 20, 323, 626]); // 626 + 303 > 900
+    for (let i = 1; i < seen.length; i++) if (i > 1) expect(seen[i].s - seen[i - 1].s).toBeGreaterThanOrEqual(303);
+  });
+  it('en plena pausa larga, una búsqueda nueva lo cancela todo', async () => {
+    const LONG = { state: 'sin-datos', identifying: true, temporary: true, retryAfterSec: 300 };
+    const { fetchOnce, seen } = server([LONG, FLYING]);
+    const p = pollRadar({ fetchOnce, onResult: () => {} });
+    await vi.advanceTimersByTimeAsync(100000);
+    p.cancel();
+    await vi.advanceTimersByTimeAsync(3600000);
+    expect(seen).toHaveLength(1);
   });
 });
