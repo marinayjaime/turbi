@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { fetchAena, madridDate, AIRPORTS } from '../scripts/aena-fetch.mjs';
 import { needsRadar, findOnRadar } from './radar.mjs';
 import { canIdentify, identifyByZone, trackByHex, createHexRegistry } from './identify.mjs';
+import { adsbHealth } from './adsb.mjs';
 import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
@@ -58,7 +59,8 @@ const HEADERS = {
 export function handle(state, path) {
   if (path === '/health') {
     return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' },
-      body: JSON.stringify({ updated: state.updated, runs: state.runs, audit: state.audit, lastError: state.lastError, flights: state.flights.size }) };
+      body: JSON.stringify({ updated: state.updated, runs: state.runs, audit: state.audit, lastError: state.lastError, flights: state.flights.size,
+        adsb: adsbHealth() }) }; // estado de adsb.lol sin consultarlo
   }
   const m = path.match(SAFE_PATH);
   const body = m && state.flights.get(`${m[1]}/${m[2]}.json`);

@@ -18,6 +18,10 @@ export const ADSB_DEFAULT_COOLDOWN_MS = 60000; // pausa global tras un 429 sin R
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const CANCELLED = Symbol('cancelada por un 429');
 
+// Telemetría para /health (solo contadores y fechas: nada de IP, cabeceras ni URLs).
+const freshStats = () => ({ last429At: null, lastSuccessAt: null, lastErrorAt: null, lastError: null, lastStatus: null,
+  rateLimitedCount: 0, successCount: 0, failedCount: 0 });
+
 export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIntervalMs = ADSB_IDENTIFY_INTERVAL_MS } = {}) {
   const queues = { radar: [], identificacion: [] };
   let busy = false, last = -Infinity, timer = null;
@@ -25,6 +29,8 @@ export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIn
     minIntervalMs,
     identifyIntervalMs,
     blockedUntil: 0,
+    stats: freshStats(),
+    pendingOf: priority => queues[priority].length,
     // Tarea en cola; devuelve su resultado (o CANCELLED si se cancela por un 429).
     schedule(task, { priority = 'radar' } = {}) {
       return new Promise((resolve, reject) => { queues[priority].push({ task, resolve, reject }); pump(); });
@@ -37,7 +43,7 @@ export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIn
     },
     isBlocked: () => Date.now() < limiter.blockedUntil,
     reset({ minIntervalMs: m = ADSB_MIN_INTERVAL_MS, identifyIntervalMs: i = ADSB_IDENTIFY_INTERVAL_MS } = {}) {
-      Object.assign(limiter, { minIntervalMs: m, identifyIntervalMs: i, blockedUntil: 0 });
+      Object.assign(limiter, { minIntervalMs: m, identifyIntervalMs: i, blockedUntil: 0, stats: freshStats() });
       last = -Infinity;
       if (timer) { clearTimeout(timer); timer = null; }
       for (const q of Object.values(queues)) for (const job of q.splice(0)) job.resolve(CANCELLED);
@@ -71,6 +77,29 @@ function retryAfterMs(res) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : ADSB_DEFAULT_COOLDOWN_MS;
 }
 
+// Tipo simple de fallo: '429' | '403' | '4xx' | '5xx' | 'timeout' | 'network' | 'invalid-json'.
+const statusKind = s => (s === 429 ? '429' : s === 403 ? '403' : s >= 500 ? '5xx' : '4xx');
+const errorKind = err => (err?.name === 'TimeoutError' || err?.name === 'AbortError' ? 'timeout' : err instanceof SyntaxError ? 'invalid-json' : 'network');
+function recordError(limiter, kind) {
+  const st = limiter.stats;
+  st.lastError = kind;
+  st.lastErrorAt = new Date().toISOString();
+  if (kind === '429') { st.rateLimitedCount++; st.last429At = st.lastErrorAt; } else st.failedCount++;
+}
+
+// Diagnóstico de adsb.lol para /health: solo lee el estado; nunca consulta adsb.lol.
+export function adsbHealth(limiter = adsbLimiter, nowMs = Date.now()) {
+  const blocked = nowMs < limiter.blockedUntil;
+  return {
+    blocked,
+    blockedUntil: blocked ? new Date(limiter.blockedUntil).toISOString() : null,
+    retryInSec: blocked ? Math.ceil((limiter.blockedUntil - nowMs) / 1000) : 0,
+    ...limiter.stats,
+    pendingRadar: limiter.pendingOf('radar'),
+    pendingIdentification: limiter.pendingOf('identificacion'),
+  };
+}
+
 // GET a adsb.lol a través del limitador. Resultado: { data } | { error: 'rate-limited' } (429 o pausa activa: no se
 // reintenta) | { error: 'failed' } (red, 5xx…: no se sabe nada).
 export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, priority = 'radar' } = {}) {
@@ -79,9 +108,15 @@ export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, pr
     if (limiter.isBlocked()) return { error: 'rate-limited' };
     try {
       const res = await fetchFn(`${ADSB}${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { Accept: 'application/json', 'User-Agent': UA } });
-      if (res.status === 429) { limiter.block(retryAfterMs(res)); return { error: 'rate-limited' }; }
-      return res.ok ? { data: await res.json() } : { error: 'failed' };
-    } catch {
+      limiter.stats.lastStatus = res.status;
+      if (res.status === 429) { recordError(limiter, '429'); limiter.block(retryAfterMs(res)); return { error: 'rate-limited' }; }
+      if (!res.ok) { recordError(limiter, statusKind(res.status)); return { error: 'failed' }; }
+      const data = await res.json();
+      limiter.stats.successCount++;
+      limiter.stats.lastSuccessAt = new Date().toISOString();
+      return { data };
+    } catch (err) {
+      recordError(limiter, errorKind(err));
       return { error: 'failed' };
     }
   }, { priority });
