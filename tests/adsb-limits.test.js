@@ -114,15 +114,17 @@ describe('la identificación nunca empeora el radar que ya funciona', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
   it('las consultas de identificación dejan más hueco que las del radar (heurística ajustable)', async () => {
-    vi.useRealTimers();
+    vi.useFakeTimers({ now: T0 }); // reloj simulado: medidas exactas, sin depender de la velocidad de la máquina
     const limiter = createLimiter(0, { identifyIntervalMs: 60 });
     const starts = [];
     const task = () => async () => { starts.push(Date.now()); };
     await limiter.schedule(task());
-    await limiter.schedule(task(), { priority: 'identificacion' });
+    const ident = limiter.schedule(task(), { priority: 'identificacion' });
+    await vi.advanceTimersByTimeAsync(60);
+    await ident;
     await limiter.schedule(task());
-    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(55);
-    expect(starts[2] - starts[1]).toBeLessThan(55);
+    expect(starts[1] - starts[0]).toBe(60);
+    expect(starts[2] - starts[1]).toBe(0);
   });
   it('un vuelo que funciona por su indicativo (Iberia) no dispara ninguna identificación', async () => {
     const a = apis();

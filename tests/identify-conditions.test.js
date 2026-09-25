@@ -93,24 +93,33 @@ describe('2) identificación asíncrona: nunca retrasa la respuesta', () => {
 
 describe('3) un único limitador global para todas las consultas a adsb.lol', () => {
   it('indicativo, zona y hex, pedidos a la vez desde sitios distintos, salen de uno en uno y separados', async () => {
-    const limiter = createLimiter(40, { identifyIntervalMs: 40 });
-    const starts = [];
-    let open = 0, maxOpen = 0;
-    const fetchFn = vi.fn(async url => {
-      starts.push(Date.now()); open++; maxOpen = Math.max(maxOpen, open);
-      await new Promise(r => setTimeout(r, 5));
-      open--;
-      return { ok: true, json: async () => ({ ac: url.includes('/hex/') ? [plane()] : [] }) };
-    });
-    await Promise.all([
-      findOnRadar({ leg, fetchFn, pauseMs: 0, limiter }),
-      identifyByZone({ leg, legs: [leg], origin: PMI, dest: LBA, nowMs: now, fetchFn, limiter }),
-      trackByHex({ entry, leg, origin: PMI, dest: LBA, nowMs: now, fetchFn, limiter }),
-    ]);
-    const adsb = fetchFn.mock.calls.filter(c => c[0].startsWith('https://api.adsb.lol/'));
-    expect(new Set(adsb.map(c => c[0].split('/')[4]))).toEqual(new Set(['callsign', 'point', 'hex']));
-    expect(maxOpen).toBe(1);
-    for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(39);
+    // Reloj simulado: con el reloj real, el momento anotado dentro de fetch lleva un retraso variable y la medida
+    // fallaba a veces en la CI (35 ms en vez de ≥ 40) aunque el limitador respetaba la separación.
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T10:00:00Z') });
+    try {
+      const limiter = createLimiter(40, { identifyIntervalMs: 40 });
+      const starts = [];
+      let open = 0, maxOpen = 0;
+      const fetchFn = vi.fn(async url => {
+        if (url.startsWith('https://api.adsb.lol/')) starts.push(Date.now());
+        open++; maxOpen = Math.max(maxOpen, open);
+        await new Promise(r => setTimeout(r, 5));
+        open--;
+        return { ok: true, json: async () => ({ ac: url.includes('/hex/') ? [plane()] : [] }) };
+      });
+      let done = false;
+      const all = Promise.all([
+        findOnRadar({ leg, fetchFn, pauseMs: 0, limiter }),
+        identifyByZone({ leg, legs: [leg], origin: PMI, dest: LBA, nowMs: now, fetchFn, limiter }),
+        trackByHex({ entry, leg, origin: PMI, dest: LBA, nowMs: now, fetchFn, limiter }),
+      ]).then(() => { done = true; });
+      for (let t = 0; t < 5000 && !done; t += 5) await vi.advanceTimersByTimeAsync(5);
+      await all;
+      const adsb = fetchFn.mock.calls.filter(c => c[0].startsWith('https://api.adsb.lol/'));
+      expect(new Set(adsb.map(c => c[0].split('/')[4]))).toEqual(new Set(['callsign', 'point', 'hex']));
+      expect(maxOpen).toBe(1);
+      for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(40);
+    } finally { vi.useRealTimers(); }
   });
   it('el limitador por defecto es el mismo objeto para el radar y la identificación', async () => {
     const spy = vi.spyOn(adsbLimiter, 'schedule');
