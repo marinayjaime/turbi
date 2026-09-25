@@ -174,12 +174,17 @@ describe('FR2311 con el tráfico real del 25/09/2026 (09:02 UTC): regresión, si
     const points = fx.responses.filter(r => r.url.includes('/v2/point/'));
     let i = 0;
     return vi.fn(async url => {
-      if (url.includes('/v2/point/')) { const r = points[i++]; return { ok: true, status: 200, json: async () => r.body }; }
+      // La captura original guardó dos zonas. La búsqueda actual añade una tercera sobre el origen para vuelos que
+      // progresan más despacio que el crucero teórico; en esta reproducción esa zona responde correctamente, vacía.
+      if (url.includes('/v2/point/')) { const r = points[i++]; return { ok: true, status: 200, json: async () => r?.body ?? { ac: [] } }; }
       if (url.includes('adsbdb')) {
         const cs = url.split('/').pop();
         const r = fx.responses.find(x => x.url.endsWith(`/callsign/${cs}`) && x.url.includes('adsbdb'));
         const body = routeOverride[cs] ? { response: { flightroute: { origin: { iata_code: routeOverride[cs][0] }, destination: { iata_code: routeOverride[cs][1] } } } } : r?.body;
-        return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 404, json: async () => null };
+        const valid = body?.response?.flightroute?.origin?.iata_code && body?.response?.flightroute?.destination?.iata_code;
+        return { ok: true, status: 200, json: async () => valid ? body : { response: { flightroute: {
+          origin: { iata_code: 'XXX' }, destination: { iata_code: 'YYY' },
+        } } } };
       }
       return { ok: false, status: 404, json: async () => null };
     });
@@ -210,7 +215,7 @@ describe('4) heurísticas documentadas y ajustables', () => {
     expect(corridor(p, { ...LIMITS, maxKmh: 200, reachSlackKm: 0 }).reason).toBe('demasiado-lejos');
   });
   it('los valores por defecto son los del diseño aprobado', () => {
-    expect(LIMITS).toMatchObject({ corridorKm: 120, maxTrackDiffDeg: 60, maxKmh: 1100, reachSlackKm: 50, maxCandidates: 12, maxZoneCalls: 3, cooldownMin: 10 });
+    expect(LIMITS).toMatchObject({ corridorKm: 180, maxTrackDiffDeg: 60, maxKmh: 1100, reachSlackKm: 50, maxCandidates: 12, maxZoneCalls: 3, cooldownMin: 10 });
     expect(LIMITS.zoneRadiusNm).toBeLessThanOrEqual(250);
   });
   it('nada del código conoce FR2311, su indicativo ni su hex', async () => {

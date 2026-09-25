@@ -25,8 +25,8 @@ const seen = [
 ];
 const ac = ([flight, hex, t, lat, lon, track, alt]) => ({ flight: `${flight} `, hex, t, lat, lon, track, alt_baro: alt, gs: 450, seen: 1, seen_pos: 1 });
 // Falso adsb.lol + adsbdb que cuenta las llamadas.
-function apis({ aircraft = seen, routes = Object.fromEntries(seen.map(s => [s[0], [s[7], s[8]]])), failRoute = [] } = {}) {
-  const calls = { point: 0, hex: 0, callsign: 0, adsbdb: 0 };
+function apis({ aircraft = seen, routes = Object.fromEntries(seen.map(s => [s[0], [s[7], s[8]]])), failRoute = [], traces = {}, vrs = {} } = {}) {
+  const calls = { point: 0, hex: 0, callsign: 0, adsbdb: 0, trace: 0, vrs: 0 };
   const fetchFn = vi.fn(async url => {
     let body;
     if (url.includes('/v2/point/')) { calls.point++; body = { ac: aircraft.map(ac) }; }
@@ -38,6 +38,18 @@ function apis({ aircraft = seen, routes = Object.fromEntries(seen.map(s => [s[0]
       if (failRoute.includes(cs)) return { ok: false, status: 500 };
       const r = routes[cs];
       body = { response: r ? { flightroute: { origin: { iata_code: r[0] }, destination: { iata_code: r[1] } } } : 'unknown callsign' };
+    }
+    else if (url.includes('/data/traces/')) {
+      calls.trace++;
+      const hex = url.match(/trace_full_([0-9a-f]+)\.json$/)?.[1];
+      body = traces[hex] ?? { timestamp: dep / 1000, trace: [] };
+    }
+    else if (url.includes('vrs-standing-data')) {
+      calls.vrs++;
+      const cs = url.match(/\/([^/]+)\.json$/)?.[1];
+      const route = vrs[cs];
+      if (!route) return { ok: false, status: 404, json: async () => null };
+      body = { _airport_codes_iata: `${route[0]}-${route[1]}` };
     }
     return { ok: true, json: async () => body };
   });
@@ -51,8 +63,8 @@ describe('pasillo de la ruta y coherencia física', () => {
     expect(c.ok).toBe(true);
     expect(Math.round(c.crossKm)).toBe(-93);
   });
-  it('fuera del pasillo lateral (> 120 km) → fuera', () => {
-    expect(corridor({ origin: PMI, dest: LBA, lat: 41.0, lon: 4.9, track: 340, elapsedMin: 30 }).reason).toBe('lateral');
+  it('fuera del pasillo lateral (> 180 km) → fuera', () => {
+    expect(corridor({ origin: PMI, dest: LBA, lat: 41.0, lon: 5.9, track: 340, elapsedMin: 30 }).reason).toBe('lateral');
   });
   it('más lejos de lo que permite volar en ese tiempo (> 1.100 km/h + 50 km) → imposible', () => {
     expect(corridor({ origin: PMI, dest: LBA, lat: 47.5, lon: 0.9, track: 340, elapsedMin: 30 }).reason).toBe('demasiado-lejos');
@@ -96,6 +108,64 @@ describe('identificación por zona (excepcional y conservadora)', () => {
     expect((await identifyByZone({ ...ctx(), fetchFn: apis({ routes: { RYR19HB: ['PMI', 'EMA'] } }).fetchFn })).state).toBe('sin-datos');
     expect((await identifyByZone({ ...ctx(), fetchFn: apis({ failRoute: ['RYR19HB'] }).fetchFn })).state).toBe('no-disponible');
   });
+  it('si adsbdb conserva una ruta antigua, una única traza que salió del origen identifica el avión', async () => {
+    const candidate = ['RYR76YY', '4ca6fc', 'B738', 40.30, 1.91, 350, 26000, 'WRO', 'BGY'];
+    const distractor = ['RYR92SN', '4d2222', 'B738', 41.24, 2.02, 45, 36000, 'FAO', 'MRS'];
+    const traces = {
+      '4ca6fc': { timestamp: dep / 1000, trace: [[10 * 60, 39.52, 2.65, 2375, 200, 350, 0, null, { flight: 'RYR76YY ' }]] },
+      '4d2222': { timestamp: dep / 1000, trace: [[5 * 60, 37.01, -7.96, 2000, 200, 45, 0, null, { flight: 'RYR92SN ' }]] },
+    };
+    const { fetchFn, calls } = apis({ aircraft: [candidate, distractor], traces });
+    expect(await identifyByZone({ ...ctx(), fetchFn })).toEqual({ state: 'identificado', hex: '4ca6fc', callsign: 'RYR76YY' });
+    expect(calls.trace).toBe(2);
+  });
+  it('si adsbdb está obsoleto, la segunda base de rutas distingue dos salidas cercanas', async () => {
+    const candidates = [
+      ['RYR76YY', '4ca6fc', 'B738', 41.48, 1.66, 353, 36000, 'WRO', 'BGY'],
+      ['RYR9915', '4ca7b3', 'B738', 40.90, 1.50, 338, 36000, 'TLS', 'RBA'],
+    ];
+    const { fetchFn, calls } = apis({ aircraft: candidates, vrs: { RYR76YY: ['PMI', 'LBA'], RYR9915: ['PMI', 'LBC'] } });
+    expect(await identifyByZone({ ...ctx(), fetchFn })).toEqual({ state: 'identificado', hex: '4ca6fc', callsign: 'RYR76YY' });
+    expect(calls.vrs).toBe(2);
+    expect(calls.trace).toBe(0);
+  });
+  it('una ruta coincidente no identifica por descarte si alguna zona no respondió', async () => {
+    const candidate = ['RYR76YY', '4ca6fc', 'B738', 41.48, 1.66, 353, 36000, 'WRO', 'BGY'];
+    let point = 0;
+    const fetchFn = vi.fn(async url => {
+      if (url.includes('/v2/point/')) {
+        point++;
+        if (point === 2) return { ok: false, status: 503, json: async () => null };
+        return { ok: true, status: 200, json: async () => ({ ac: point === 1 ? [ac(candidate)] : [] }) };
+      }
+      if (url.includes('adsbdb')) return { ok: true, json: async () => ({ response: { flightroute: {
+        origin: { iata_code: 'WRO' }, destination: { iata_code: 'BGY' },
+      } } }) };
+      if (url.includes('vrs-standing-data')) return { ok: true, json: async () => ({ _airport_codes_iata: 'PMI-LBA' }) };
+      if (url.includes('/data/traces/')) return { ok: true, json: async () => ({ timestamp: dep / 1000,
+        trace: [[10 * 60, 39.52, 2.65, 2375, 200, 350, 0, null, { flight: 'RYR76YY ' }]] }) };
+      throw new Error(`URL inesperada: ${url}`);
+    });
+    expect((await identifyByZone({ ...ctx(), fetchFn })).state).toBe('no-disponible');
+  });
+  it('dos trazas que parecen salir del mismo origen siguen siendo ambiguas', async () => {
+    const candidates = [
+      ['RYR76YY', '4ca6fc', 'B738', 40.30, 1.91, 350, 26000, 'WRO', 'BGY'],
+      ['RYR92SN', '4d2222', 'B738', 41.24, 2.02, 45, 36000, 'FAO', 'MRS'],
+    ];
+    const near = flight => ({ timestamp: dep / 1000, trace: [[10 * 60, 39.52, 2.65, 2500, 200, 350, 0, null, { flight }]] });
+    const { fetchFn } = apis({ aircraft: candidates, traces: { '4ca6fc': near('RYR76YY '), '4d2222': near('RYR92SN ') } });
+    expect((await identifyByZone({ ...ctx(), fetchFn })).state).toBe('ambiguo');
+  });
+  it('un avión que llega al origen no se confunde con uno que salió de allí', async () => {
+    const candidate = ['RYR8ZE', '4ca9cf', 'B738', 39.71, 2.91, 65, 4650, 'MAD', 'PMI'];
+    const trace = { timestamp: (dep - 70 * MIN) / 1000, trace: [
+      [0, 40.47, -3.56, 'ground', 0, 0, 0, null, { flight: 'RYR8ZE ' }],
+      [80 * 60, 39.60, 2.75, 4000, 200, 65, 0, null, { flight: 'RYR8ZE ' }],
+    ] };
+    const { fetchFn } = apis({ aircraft: [candidate], traces: { '4ca9cf': trace } });
+    expect((await identifyByZone({ ...ctx(), fetchFn })).state).toBe('sin-datos');
+  });
   it('un rival futuro que aún no puede estar volando no bloquea; uno activo compatible sí', async () => {
     const other = { ...fr2311, n: '2313', sd: '10:10', ed: '2026-09-25T10:12' };
     const { fetchFn, calls } = apis();
@@ -131,6 +201,26 @@ describe('identificación por zona (excepcional y conservadora)', () => {
     const { fetchFn, calls } = apis({ aircraft: [] });
     await identifyByZone({ ...ctx({ nowMs: dep + 300 * MIN }), fetchFn });
     expect(calls.point).toBeLessThanOrEqual(LIMITS.maxZoneCalls);
+  });
+  it('también mira hacia el origen si el avión va retrasado respecto al crucero teórico', async () => {
+    const candidate = ['RYR76YY', '4ca6fc', 'B738', 40.30, 1.91, 350, 26000, 'WRO', 'BGY'];
+    const calls = [];
+    const fetchFn = vi.fn(async url => {
+      if (url.includes('/v2/point/')) {
+        calls.push(url);
+        const [, lat, lon] = url.match(/\/point\/([^/]+)\/([^/]+)\//) ?? [];
+        const nearOrigin = Math.hypot(Number(lat) - PMI[0], Number(lon) - PMI[1]) < 0.1;
+        return { ok: true, json: async () => ({ ac: nearOrigin ? [ac(candidate)] : [] }) };
+      }
+      if (url.includes('adsbdb')) return { ok: true, json: async () => ({ response: { flightroute: {
+        origin: { iata_code: 'WRO' }, destination: { iata_code: 'BGY' },
+      } } }) };
+      if (url.includes('/data/traces/')) return { ok: true, json: async () => ({ timestamp: dep / 1000,
+        trace: [[10 * 60, 39.52, 2.65, 2375, 200, 350, 0, null, { flight: 'RYR76YY ' }]] }) };
+      throw new Error(`URL inesperada: ${url}`);
+    });
+    expect(await identifyByZone({ ...ctx(), fetchFn })).toEqual({ state: 'identificado', hex: '4ca6fc', callsign: 'RYR76YY' });
+    expect(calls.length).toBe(LIMITS.maxZoneCalls);
   });
 });
 
