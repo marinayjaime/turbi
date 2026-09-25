@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { needsRadar, findOnRadar } from '../server/radar.mjs';
 import { adsbLimiter } from '../server/adsb.mjs';
 // El limitador global de adsb.lol sin espera en las pruebas (su separación se prueba aparte, en tests/adsb.test.js).
-beforeEach(() => { adsbLimiter.minIntervalMs = 0; });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
 
 const leg = over => ({ al: 'EI', icao: 'EIN', n: '737', d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
 const now = Date.parse('2026-09-24T21:00:00Z'); // 23:00 en Palma
@@ -40,10 +40,21 @@ describe('buscar el vuelo en el radar (solo su indicativo exacto)', () => {
   it('señal de hace más de 3 min: no cuenta', async () => {
     expect((await find(radar([plane({ seen: 200 })]))).state).toBe('sin-datos');
   });
-  it('ante un 429 reintenta; si sigue fallando: no disponible (nunca un error hacia la app)', async () => {
+  it('un 429 no se reintenta: no disponible en el acto, y adsb.lol queda en pausa (nunca un error hacia la app)', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 429, headers: { get: () => null } }));
+    expect((await find(f)).state).toBe('no-disponible');
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(adsbLimiter.isBlocked()).toBe(true);
+  });
+  it('ni siquiera con una pausa de 0 s (Retry-After: 0) se reintenta el 429 en la misma operación', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 429, headers: { get: k => (k.toLowerCase() === 'retry-after' ? '0' : null) } }));
+    expect((await find(f)).state).toBe('no-disponible');
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('un fallo de red sí se reintenta; si sigue fallando: no disponible', async () => {
     let n = 0;
     const ok = radar([plane()]);
-    expect((await find(vi.fn(async (u, o) => (++n === 1 ? { ok: false, status: 429 } : ok(u, o))))).state).toBe('volando');
+    expect((await find(vi.fn(async (u, o) => (++n === 1 ? { ok: false, status: 503 } : ok(u, o))))).state).toBe('volando');
     expect((await find(vi.fn(async () => { throw new TypeError('fetch failed'); }))).state).toBe('no-disponible');
   });
   it('código compartido: prueba también los números del mismo vuelo (el avión emite con el de la operadora)', async () => {

@@ -25,7 +25,8 @@ export const LIMITS = {
   cruiseKmh: 780, // velocidad media prevista para situar la zona de búsqueda a lo largo de la ruta
   zoneRadiusNm: 150, // radio de cada consulta por zona (adsb.lol admite hasta 250 NM)
   maxZoneCalls: 3, // consultas por zona por identificación, como mucho
-  maxCandidates: 6, // candidatos locales como mucho; más → ambiguo (sin consultar adsbdb)
+  maxCandidates: 12, // candidatos que pasan los filtros gratuitos, como mucho; más → ambiguo (sin consultar adsbdb)
+  adsbdbCacheMin: 360, // la ruta de un indicativo en adsbdb se guarda este tiempo (no se vuelve a pedir)
   sameRouteWindowMin: 120, // otro vuelo de la misma operadora y ruta en ± esta franja → no se intenta
   cooldownMin: 10, // tras un fallo o una invalidación, sin reintentar durante este tiempo
   invalidateAfter: 3, // lecturas seguidas con indicativo distinto para invalidar el hex
@@ -88,7 +89,18 @@ export function canIdentify(leg, legs = []) {
   return Boolean(leg && departed(leg) && !cancelled(leg) && leg.op && leg.ac && operatorIcao(leg, legs) && departureMs(leg) !== null);
 }
 
-async function adsbdbRoute(callsign, fetchFn) {
+// Ruta de un indicativo en adsbdb, con caché por indicativo (por cliente HTTP). Los fallos no se guardan.
+const routeCaches = new WeakMap();
+async function adsbdbRoute(callsign, fetchFn, limits) {
+  const cache = routeCaches.get(fetchFn) ?? routeCaches.set(fetchFn, new Map()).get(fetchFn);
+  const hit = cache.get(callsign);
+  if (hit && Date.now() - hit.at < limits.adsbdbCacheMin * 60000) return hit.route;
+  const route = await fetchRoute(callsign, fetchFn);
+  if (route) { if (cache.size > 2000) cache.clear(); cache.set(callsign, { at: Date.now(), route }); }
+  return route;
+}
+
+async function fetchRoute(callsign, fetchFn) {
   try {
     const res = await fetchFn(`${ADSBDB}${callsign}`, { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json', 'User-Agent': UA } });
     if (!res.ok) return null;
@@ -123,9 +135,11 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
   let failed = false;
   for (const km of alongs) {
     const [lat, lon] = pointAlong(origin, brg, km);
-    const r = await adsbGet(`/point/${lat.toFixed(3)}/${lon.toFixed(3)}/${limits.zoneRadiusNm}`, { fetchFn, limiter });
-    if (!r) { failed = true; continue; }
-    for (const a of r.ac ?? []) {
+    const res = await adsbGet(`/point/${lat.toFixed(3)}/${lon.toFixed(3)}/${limits.zoneRadiusNm}`, { fetchFn, limiter, priority: 'identificacion' });
+    // Primer 429 (o pausa activa, o cancelada por un 429): se abandona la identificación entera en el acto.
+    if (res.error === 'rate-limited') return { state: 'no-disponible', rateLimited: true };
+    if (res.error) { failed = true; continue; }
+    for (const a of res.data.ac ?? []) {
       const cs = a.flight?.trim();
       if (!cs || !cs.startsWith(icao) || !a.hex || !airborne(a) || (a.seen_pos ?? a.seen ?? Infinity) > MAX_SEEN_S) continue;
       if (!typeCompatible(leg.ac, a.t)) continue;
@@ -133,11 +147,12 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
       found.set(a.hex, cs);
     }
   }
+  // Los candidatos salen solo de las consultas por zona; adsbdb es el filtro semántico (ruta exacta) posterior.
   if (found.size > limits.maxCandidates) return { state: 'ambiguo' };
-  // Ruta exacta según adsbdb, candidato a candidato (en serie, sin prisa).
+  // Ruta exacta según adsbdb, candidato a candidato (en serie, sin prisa, con caché por indicativo).
   const matches = [];
   for (const [hex, callsign] of found) {
-    const route = await adsbdbRoute(callsign, fetchFn);
+    const route = await adsbdbRoute(callsign, fetchFn, limits);
     if (!route) { failed = true; continue; }
     if (route.o === leg.o && route.a === leg.a) matches.push({ hex, callsign });
   }
@@ -151,8 +166,10 @@ export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Dat
 // (indicativo distinto), 'incompleta' (sin indicativo, sin señal o consulta fallida: no cuenta ni a favor ni en contra)
 // o 'contradiccion' (físicamente imposible para este vuelo). result: lo que se muestra, o null.
 export async function trackByHex({ entry, leg, origin, dest, nowMs = Date.now(), fetchFn = fetch, limiter = adsbLimiter, limits = LIMITS }) {
-  const r = await adsbGet(`/hex/${entry.hex}`, { fetchFn, limiter });
-  const a = (r?.ac ?? []).find(x => x.hex === entry.hex) ?? (r?.ac ?? [])[0];
+  const res = await adsbGet(`/hex/${entry.hex}`, { fetchFn, limiter }); // prioridad de radar: es el seguimiento normal
+  if (res.error === 'rate-limited') return { observation: 'incompleta', result: { state: 'no-disponible' } };
+  const ac = res.data?.ac ?? [];
+  const a = ac.find(x => x.hex === entry.hex) ?? ac[0];
   if (!a) return { observation: 'incompleta', result: null };
   const depMs = departureMs(leg);
   const cs = a.flight?.trim();

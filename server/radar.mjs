@@ -46,14 +46,16 @@ export function distanceKm([la1, lo1], [la2, lo2]) {
 
 const wait = ms => (ms ? new Promise(r => setTimeout(r, ms)) : null);
 
-// null = la consulta ha fallado (red, 429…): no se sabe nada, que no es lo mismo que «no está en el aire».
+// { data } o { error }: 'failed' = la consulta ha fallado (red, 5xx…): no se sabe nada, que no es lo mismo que «no
+// está en el aire»; se reintenta. 'rate-limited' (429 o pausa global): nunca se reintenta dentro de la operación.
 async function lookup(fetchFn, callsign, pauseMs, limiter) {
+  let r;
   for (let i = 0; i <= RETRIES; i++) {
     if (i) await wait(pauseMs);
-    const r = await adsbGet(`/callsign/${callsign}`, { fetchFn, limiter });
-    if (r) return r;
+    r = await adsbGet(`/callsign/${callsign}`, { fetchFn, limiter });
+    if (r.data || r.error === 'rate-limited') return r;
   }
-  return null;
+  return r;
 }
 
 export const airborne = a => typeof a.alt_baro === 'number' && (a.seen ?? 0) <= MAX_SEEN_S;
@@ -94,8 +96,10 @@ export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs
   const ctx = { dest, origin, depMs: departureMs(leg), nowMs };
   for (const [i, cs] of callsigns.entries()) {
     if (i) await wait(pauseMs);
-    const r = await lookup(fetchFn, cs, pauseMs, limiter);
-    if (!r) { failed = true; continue; }
+    const res = await lookup(fetchFn, cs, pauseMs, limiter);
+    if (res.error === 'rate-limited') return { state: 'no-disponible' }; // adsb.lol en pausa: ni una consulta más
+    if (res.error) { failed = true; continue; }
+    const r = res.data;
     a = (r.ac ?? []).find(airborne);
     if (a) { callsign = cs; break; }
     landed ??= (r.ac ?? []).map(x => landedAt(x, cs, ctx)).find(Boolean) ?? null;

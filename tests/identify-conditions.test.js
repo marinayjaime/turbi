@@ -2,12 +2,13 @@
 // 1) el hex no se invalida por una sola lectura; 2) identificación asíncrona; 3) limitador global de adsb.lol;
 // 4) heurísticas documentadas y ajustables. FR2311 solo aparece como datos de regresión.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { corridor, identifyByZone, createHexRegistry, trackByHex, LIMITS } from '../server/identify.mjs';
 import { findOnRadar } from '../server/radar.mjs';
 import { createState, radarResponse } from '../server/live.mjs';
 import { adsbLimiter, createLimiter } from '../server/adsb.mjs';
 
-beforeEach(() => { adsbLimiter.minIntervalMs = 0; });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
 
 const PMI = [39.5517, 2.73881], LBA = [53.8659, -1.66057];
 const MIN = 60000;
@@ -92,7 +93,7 @@ describe('2) identificación asíncrona: nunca retrasa la respuesta', () => {
 
 describe('3) un único limitador global para todas las consultas a adsb.lol', () => {
   it('indicativo, zona y hex, pedidos a la vez desde sitios distintos, salen de uno en uno y separados', async () => {
-    const limiter = createLimiter(40);
+    const limiter = createLimiter(40, { identifyIntervalMs: 40 });
     const starts = [];
     let open = 0, maxOpen = 0;
     const fetchFn = vi.fn(async url => {
@@ -135,6 +136,40 @@ describe('recorrido mínimo: un avión que salió mucho después por la misma ru
   });
 });
 
+describe('FR2311 con el tráfico real del 25/09/2026 (09:02 UTC): regresión, sin ninguna excepción en el código', () => {
+  // Respuestas reales de adsb.lol (solo los aviones de Ryanair, los únicos que mira el filtro) y de adsbdb.
+  const fx = JSON.parse(readFileSync('tests/fixtures/fr2311-2026-09-25.json', 'utf8'));
+  const replay = (routeOverride = {}) => {
+    const points = fx.responses.filter(r => r.url.includes('/v2/point/'));
+    let i = 0;
+    return vi.fn(async url => {
+      if (url.includes('/v2/point/')) { const r = points[i++]; return { ok: true, status: 200, json: async () => r.body }; }
+      if (url.includes('adsbdb')) {
+        const cs = url.split('/').pop();
+        const r = fx.responses.find(x => x.url.endsWith(`/callsign/${cs}`) && x.url.includes('adsbdb'));
+        const body = routeOverride[cs] ? { response: { flightroute: { origin: { iata_code: routeOverride[cs][0] }, destination: { iata_code: routeOverride[cs][1] } } } } : r?.body;
+        return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 404, json: async () => null };
+      }
+      return { ok: false, status: 404, json: async () => null };
+    });
+  };
+  const run = fetchFn => identifyByZone({ leg: fx.leg, legs: [fx.leg], origin: PMI, dest: LBA, nowMs: fx.nowMs, fetchFn });
+  it('varios Ryanair pasan los filtros gratuitos; adsbdb deja uno solo (PMI→LBA) → ese hex', async () => {
+    const f = replay();
+    expect(await run(f)).toEqual({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
+    const asked = f.mock.calls.map(c => c[0]).filter(u => u.includes('adsbdb'));
+    expect(asked.length).toBeGreaterThan(1); // la geometría sola no bastaba
+    expect(asked.length).toBeLessThanOrEqual(LIMITS.maxCandidates);
+    expect(f.mock.calls.filter(c => c[0].includes('/v2/point/')).length).toBeLessThanOrEqual(LIMITS.maxZoneCalls);
+  });
+  it('si dos candidatos tuvieran la ruta exacta → ambiguo, ninguno', async () => {
+    expect((await run(replay({ RYR6PG: ['PMI', 'LBA'] }))).state).toBe('ambiguo');
+  });
+  it('si ninguno la tiene → no se elige ninguno', async () => {
+    expect((await run(replay({ RYR19HB: ['PMI', 'EMA'] }))).state).not.toBe('identificado');
+  });
+});
+
 describe('4) heurísticas documentadas y ajustables', () => {
   it('pasillo, rumbo y velocidad se pueden cambiar sin tocar el código', () => {
     const p = { origin: PMI, dest: LBA, lat: 40.94, lon: 1.28, track: 338, elapsedMin: 30 };
@@ -144,7 +179,7 @@ describe('4) heurísticas documentadas y ajustables', () => {
     expect(corridor(p, { ...LIMITS, maxKmh: 200, reachSlackKm: 0 }).reason).toBe('demasiado-lejos');
   });
   it('los valores por defecto son los del diseño aprobado', () => {
-    expect(LIMITS).toMatchObject({ corridorKm: 120, maxTrackDiffDeg: 60, maxKmh: 1100, reachSlackKm: 50, maxCandidates: 6, maxZoneCalls: 3, cooldownMin: 10 });
+    expect(LIMITS).toMatchObject({ corridorKm: 120, maxTrackDiffDeg: 60, maxKmh: 1100, reachSlackKm: 50, maxCandidates: 12, maxZoneCalls: 3, cooldownMin: 10 });
     expect(LIMITS.zoneRadiusNm).toBeLessThanOrEqual(250);
   });
   it('nada del código conoce FR2311, su indicativo ni su hex', async () => {

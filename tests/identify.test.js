@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { corridor, typeCompatible, identifyByZone, createHexRegistry, LIMITS } from '../server/identify.mjs';
 import { adsbLimiter } from '../server/adsb.mjs';
 // El limitador global de adsb.lol sin espera en las pruebas (su separación se prueba aparte, en tests/adsb.test.js).
-beforeEach(() => { adsbLimiter.minIntervalMs = 0; });
+beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0 }); });
 
 const PMI = [39.5517, 2.73881], LBA = [53.8659, -1.66057];
 const MIN = 60000;

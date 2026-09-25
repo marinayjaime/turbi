@@ -35,27 +35,37 @@ Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap
 - Pendiente (fase de histórico): guardar el aterrizaje confirmado en el histórico común, no solo en el navegador.
 
 ### Observado, sin resolver
-- **Límite de adsb.lol (~1 petición/s):** varias consultas seguidas desde Render devuelven `no-disponible`. La variante con ceros añade una consulta más en los números cortos. Con el uso normal (una búsqueda de vez en cuando, con 60 s de caché) no se nota. Revisarlo si crece el uso.
+- **Límite de adsb.lol:** resuelto con el limitador global y la pausa tras un 429 (ver la fase de identificación, más abajo).
+
+## Fase cerrada (25/09/2026): identificación vuelo comercial → avión físico (hex ICAO)
+
+**Problema** (diagnosticado con FR2311 PMI → LBA): Ryanair y otras emiten indicativos operativos alfanuméricos (p. ej. `RYR19HB`) que no son OACI + número. Nadie publica gratis la matrícula ni el hex por número de vuelo, y los indicativos se reasignan: nunca hay mapeos fijos.
+
+**Cómo funciona** (`server/identify.mjs`, `server/adsb.mjs`, `server/live.mjs`):
+- Solo si falla el indicativo exacto y Aena confirma salida, operadora (y su código OACI) y tipo de avión. Si Aena tiene otro vuelo de la misma operadora y ruta a ±2 h, no se intenta.
+- Candidatos: SOLO de las consultas por zona (como mucho 3, radio 150 NM) a lo largo de la ruta. Deben cumplir todo a la vez: prefijo OACI de la operadora, tipo compatible con el de Aena, pasillo de 120 km, rumbo a 60° o menos, recorrido físicamente posible (ni más de 1.100 km/h + 50 km, ni menos de 300 km/h tras 45 min de rodaje y ascenso: descarta vuelos que salieron después).
+- Más de 12 candidatos → ambiguo, sin consultar adsbdb. Con 12 o menos, adsbdb (con caché por indicativo, 6 h) debe confirmar exactamente origen y destino. Solo se acepta si queda **uno**; si quedan varios, ambiguo; si ninguno, sin datos. En los dos casos no se elige ninguno.
+- Después, seguimiento solo por `/v2/hex/`. Registro en memoria por vuelo físico, compartido por códigos compartidos y usuarios. Una identificación en curso por vuelo; las de vuelos distintos, una detrás de otra; 10 min sin reintentar tras un fallo.
+- **El hex no se invalida por una sola lectura:** hacen falta 3 seguidas con otro indicativo o una contradicción física clara (imposible por distancia, a más de 400 km de la ruta, o en tierra lejos del origen y del destino). Sin indicativo o sin señal no cuenta.
+- **Asíncrona:** la respuesta del radar nunca espera a la identificación (`identifying: true`, sin caché); la app vuelve a mirar una sola vez a los 20 s. La ficha nunca espera.
+- La app lo dice en el panel: «Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo».
+- Todos los umbrales están en `LIMITS`: **heurísticas ajustables**, no valores demostrados.
+
+**adsb.lol** (no publica su límite; medido: tras ~3 peticiones seguidas, 429 con 1,1 s y con 2 s de separación):
+- Un único limitador global para indicativo, zona y hex. El radar normal (indicativo y hex) va por delante; una consulta de identificación nunca sale si hay una de radar esperando, y deja al menos 5 s desde la anterior.
+- 429 → pausa global (Retry-After si viene; si no, 60 s), sin reintentar en la misma operación. Se cancelan en el acto las consultas de identificación pendientes. Durante la pausa: «no disponible» sin llamar a adsb.lol. Se conservan las cachés (radar 60 s por vuelo y por vuelo físico).
+
+**Verificado con datos reales (25/09/2026, 09:00–09:10 UTC, código del servidor, limitador de producción):**
+- FR2311: 6 Ryanair pasaban los filtros gratuitos; adsbdb dejó uno solo (`RYR19HB`, PMI→LBA) → hex `4d225e`, seguido después por hex. 4 consultas a adsb.lol, ningún 429. Guardado como regresión en `tests/fixtures/fr2311-2026-09-25.json` (el código no conoce FR2311).
+- FR9322 (`RYR9322`) y UX1153 (`AEA1153`): encontrados por su indicativo, como antes; ninguna identificación ni consulta por zona.
+- IB613: no aparecía como `IBE613`; identificado por ruta (emite `IBE0613`).
+- IB715 e IB659: no se intentan (otro vuelo de Iberia en la misma ruta a menos de 2 h).
+- **Pendiente de observar en producción:** frecuencia de 429 con uso real; ajustar `LIMITS` y las separaciones con casos reales.
 
 ## Pendiente
 
-### Radar: identificación operativa (vuelo comercial → avión físico → hex ICAO)
-- **Problema** (diagnosticado con FR2311 PMI → LBA el 25/09/2026): Ryanair, easyJet, Aer Lingus… emiten indicativos operativos alfanuméricos (p. ej. `RYR19HB`) que no coinciden con OACI + número. La búsqueda por indicativo exacto no los encuentra.
-  - Ni Aena ni ninguna fuente gratuita dan matrícula o hex por número de vuelo.
-  - Los indicativos se reasignan: nunca mapeos fijos.
-- **Diseño aprobado:**
-  - identificación por zona **excepcional y conservadora**, solo si falla el indicativo exacto y Aena confirma salida, operadora y tipo;
-  - condiciones que se cumplen todas a la vez: pasillo de 120 km o menos, rumbo a 60° o menos, recorrido físicamente posible (1.100 km/h + 50 km), tipo compatible, ruta exacta en adsbdb, un único candidato (como mucho 6) y ningún otro vuelo igual en Aena en la franja;
-  - después, seguimiento solo por `/v2/hex/`;
-  - registro por vuelo físico en la memoria del servidor, compartido entre códigos compartidos y usuarios;
-  - 10 min de enfriamiento si falla, una sola identificación en curso por vuelo y búsquedas por zona una detrás de otra;
-  - como mucho 3 consultas por zona por identificación.
-- **Tests preparados** (22, con FR2311 solo como regresión) en la rama `feat/hex-identification`. Se implementará en un commit aparte, después de desacoplar Open-Meteo.
-- **Condiciones añadidas antes de implementar** (25/09/2026):
-  1. El hex **no se invalida por una sola lectura** con indicativo distinto o ausente: hacen falta varias observaciones seguidas incompatibles o una contradicción física clara.
-  2. La identificación por ruta es **asíncrona**: nunca retrasa la aparición de la ficha básica del vuelo.
-  3. Todas las llamadas a adsb.lol (indicativo, zona y hex) comparten un **único limitador de peticiones global**.
-  4. Los umbrales de pasillo, rumbo y velocidad quedan documentados como **heurísticas ajustables**.
+### Radar: indicativos de 4 cifras con cero (observado, sin implementar)
+- Iberia emite los números de 3 cifras con un cero delante: IB613 → `IBE0613` (visto el 25/09/2026). La búsqueda por indicativo exacto solo rellena 1–2 cifras; hoy estos vuelos solo aparecen si la identificación por ruta los encuentra. Decidir si se prueba también la variante de 4 cifras (una consulta más a adsb.lol).
 - Identificar qué aerolínea opera en los códigos compartidos (hoy Aena no lo indica).
 
 ### Fase de histórico: predicción frente a realidad
