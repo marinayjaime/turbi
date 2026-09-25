@@ -195,6 +195,36 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       expect(radarCalls()).toHaveLength(5); // resultado definitivo: no hay más consultas
     } finally { vi.useRealTimers(); }
   });
+  it('429 en el servidor (temporal): la ficha sigue, dice «Localizando», el sondeo espera la pausa y el panel llega solo', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const { d, leg } = ryanairLeg();
+      const IDENT = { state: 'sin-datos', callsign: 'RYR2311', identifying: true };
+      const TEMP = { ...IDENT, temporary: true, retryAfterSec: 100 };
+      await openApp(network({
+        flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } },
+        radar: [IDENT, TEMP, IDENT, { ...RADAR_FLYING, callsign: 'RYR12AB', hex: 'abc123', match: 'ruta' }],
+        openMeteo: () => tooMany,
+      }));
+      await search('FR2311', d);
+      await until(() => radarCalls().length === 1 && $('.radar.muted'), 'primera respuesta');
+      expect($('.radar.muted').textContent).toBe('Localizando el avión en el radar…'); // no «Sin señal ADS-B»
+      await advance(20000);
+      expect(radarCalls()).toHaveLength(2); // el servidor dice: 429, reanudo en 100 s
+      expect(shell()).toEqual(SHELL_OK);
+      expect($('.radar.muted').textContent).toBe('Localizando el avión en el radar…');
+      await advance(90000);
+      expect(radarCalls()).toHaveLength(2); // no pregunta antes de que acabe la pausa del servidor
+      await advance(15000);
+      expect(radarCalls()).toHaveLength(3); // tras la pausa, sigue sondeando
+      await advance(20000);
+      await until(() => $('.telemetry'), 'panel ADS-B tras la reanudación');
+      expect($('.telemetry').textContent).toContain('RYR12AB');
+      expect(shell()).toEqual(SHELL_OK);
+      await advance(600000);
+      expect(radarCalls()).toHaveLength(4);
+    } finally { vi.useRealTimers(); }
+  });
   it('identificación ambigua o fallida: el servidor deja de decir «identificando» y la app deja de preguntar', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {

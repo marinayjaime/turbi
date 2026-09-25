@@ -35,7 +35,7 @@ describe('ritmo global de adsb.lol', () => {
       adsbGet('/hex/abc123', { fetchFn, limiter }),
       ...[1, 2].map(i => adsbGet(`/point/${i}/1/150`, { fetchFn, limiter, priority: 'identificacion' })),
     ];
-    await settle(calls);
+    await settle(calls, 1000, 600000); // con el tope de 3/min, 7 peticiones tardan más de 2 min
     expect(starts).toHaveLength(7);
     for (let i = 1; i < starts.length; i++) expect(starts[i].t - starts[i - 1].t).toBeGreaterThanOrEqual(5000);
   });
@@ -80,12 +80,12 @@ describe('ritmo global de adsb.lol', () => {
   });
 });
 
-describe('tope por minuto (medido el 25/09/2026: con 5–8 s de separación, 429 tras 6–7 peticiones en ~1 min)', () => {
-  it('valores: como mucho 4 inicios en cualquier minuto', () => {
-    expect(ADSB_MAX_PER_WINDOW).toBe(4);
+describe('tope por minuto (25/09/2026: con 5–8 s, 429 tras 6–7 peticiones en ~1 min; en Render, alguno con 4/min)', () => {
+  it('valores: como mucho 3 inicios en cualquier minuto (identificación, 2)', () => {
+    expect(ADSB_MAX_PER_WINDOW).toBe(3);
     expect(ADSB_WINDOW_MS).toBe(60000);
   });
-  it('nunca más de 4 inicios en ninguna ventana de 60 s, aunque la cola sea larga', async () => {
+  it('nunca más de 3 inicios en ninguna ventana de 60 s, aunque la cola sea larga', async () => {
     const limiter = createLimiter();
     const starts = [];
     const fetchFn = vi.fn(async () => { starts.push(Date.now()); return ok(); });
@@ -105,8 +105,8 @@ describe('tope por minuto (medido el 25/09/2026: con 5–8 s de separación, 429
     const log = [];
     const fetchFn = vi.fn(async url => { log.push({ t: Date.now(), kind: url.split('/')[4] }); return ok(); });
     const ident = Array.from({ length: 4 }, (_, i) => adsbGet(`/point/${i}/1/150`, { fetchFn, limiter, priority: 'identificacion' }));
-    await vi.advanceTimersByTimeAsync(30000); // tres zonas ya han salido; la cuarta tiene que esperar a la ventana
-    expect(log.filter(x => x.kind === 'point')).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(30000); // dos zonas ya han salido; la tercera tiene que esperar a la ventana
+    expect(log.filter(x => x.kind === 'point')).toHaveLength(2);
     const radar = adsbGet('/hex/abc123', { fetchFn, limiter }); // un usuario mira su vuelo: sale sin esperar al minuto
     await settle([radar]);
     expect(log.at(-1).kind).toBe('hex');

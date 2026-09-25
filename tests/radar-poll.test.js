@@ -17,9 +17,9 @@ function server(responses) {
 }
 
 describe('calendario de sondeos', () => {
-  it('cubre una identificación de unos 2 min: 20, 40, 60, 90, 120, 150 y 180 s', () => {
+  it('cubre una identificación de 1–2 min y las pausas de adsb.lol: 20…180 s y después cada minuto hasta 8 min', () => {
     const at = RADAR_POLL_DELAYS_MS.reduce((acc, d) => [...acc, (acc.at(-1) ?? 0) + d], []).map(ms => ms / 1000);
-    expect(at).toEqual([20, 40, 60, 90, 120, 150, 180]);
+    expect(at).toEqual([20, 40, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480]);
     expect(Math.min(...RADAR_POLL_DELAYS_MS)).toBeGreaterThanOrEqual(20000); // nunca en bucle rápido
   });
   it('keepPolling: solo mientras identifica y sin resultado definitivo', () => {
@@ -60,11 +60,11 @@ describe('pollRadar', () => {
       expect(seen.map(x => x.s), final.state).toEqual([0, 20]);
     }
   });
-  it('si nunca termina, se detiene al agotar los sondeos (180 s)', async () => {
+  it('si nunca termina, se detiene al agotar los sondeos (8 min)', async () => {
     const { fetchOnce, seen } = server([IDENT]);
     const p = pollRadar({ fetchOnce, onResult: () => {} });
     await vi.advanceTimersByTimeAsync(3600000);
-    expect(seen.map(x => x.s)).toEqual([0, 20, 40, 60, 90, 120, 150, 180]);
+    expect(seen.map(x => x.s)).toEqual([0, 20, 40, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480]);
     expect(p.pending).toBe(false);
   });
   it('un sondeo sin respuesta (red) no pinta ni detiene: se vuelve a mirar en el siguiente turno', async () => {
@@ -114,5 +114,17 @@ describe('pollRadar', () => {
     pollRadar({ fetchOnce, onResult: r => painted.push(r.state) });
     await vi.advanceTimersByTimeAsync(400000);
     expect(painted).toEqual(['sin-datos', 'sin-datos', 'volando']);
+  });
+  it('429 en el servidor (temporary + retryAfterSec): sigue sondeando, sin preguntar antes de que acabe la pausa', async () => {
+    const TEMP = { state: 'sin-datos', identifying: true, temporary: true, retryAfterSec: 118 };
+    const { fetchOnce, seen } = server([IDENT, TEMP, IDENT, FLYING]);
+    const painted = [];
+    pollRadar({ fetchOnce, onResult: r => painted.push(r.state) });
+    await vi.advanceTimersByTimeAsync(600000);
+    // 0 s identificando; 20 s: el servidor reanudará en 118 s → el siguiente sondeo no llega antes (20 + 120 s, el
+    // máximo de una espera); después, el calendario normal (20 s).
+    expect(seen.map(x => x.s)).toEqual([0, 20, 140, 160]);
+    expect(seen[2].s - seen[1].s).toBeGreaterThanOrEqual(118);
+    expect(painted.at(-1)).toBe('volando');
   });
 });

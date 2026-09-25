@@ -95,6 +95,7 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   // Mismo avión (códigos compartidos): una sola consulta por vuelo físico cada 60 s.
   const phys = leg && `phys|${leg.d}|${leg.o}|${leg.a}|${leg.sd ?? `L${leg.sa}`}`;
   const hexes = state.hexes ??= createHexRegistry();
+  if (phys) hexes.touch(phys); // alguien mira este vuelo: si su identificación se interrumpe, merece reanudarse
   const diagnostic = extra => ({ gate: gate?.mode ?? 'none', gateReason: gate?.reason ?? 'vuelo-no-encontrado',
     departureConfirmed: gate?.confirmed ?? false, ...(phys ? state.radarDiagnostics.get(phys) : null), ...extra,
     ...(phys ? { registry: hexes.status(phys, nowMs) } : {}) });
@@ -124,10 +125,14 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
 
   // Mientras la identificación está en cola o consultando zonas, los sondeos solo leen su estado: nunca repiten el
   // indicativo directo ni añaden otra llamada a ADS-B.
+  // Una identificación interrumpida por un fallo temporal (429…) también está «en curso»: el servidor la reanudará
+  // solo cuando acabe la pausa (temporary + retryAfterSec), y la app sigue sondeando.
   if (!known && phys && hexes.busy(phys)) {
     state.radarStats.identificationBusyPolls++;
     const miss = state.directMisses.get(phys)?.result ?? { state: 'sin-datos' };
+    const st = hexes.status(phys, nowMs);
     return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: bodyOf(miss, { identifying: true,
+      ...(st.interrupted ? { temporary: true, retryAfterSec: st.retryAfterSec } : {}),
       ...(gate && !gate.confirmed ? { departureConfirmed: false } : {}) }) };
   }
 
@@ -168,10 +173,13 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
     && !registryBefore.cooldownRemainingMs && canIdentify(leg, state.legs, { origin, dest, nowMs, ...gateOpts(leg) })) {
     state.radarStats.identificationStarted++;
     const base = state.radarDiagnostics.get(phys) ?? diagnostic();
-    hexes.resolve(phys, async ({ queueWaitMs }) => {
+    hexes.resolve(phys, async ({ queueWaitMs, sinceMs = queueWaitMs }) => {
       let idDiagnostic = null;
-      const identified = await identifyByZone({ leg, legs: state.legs, origin, dest, nowMs: nowMs + queueWaitMs, fetchFn, coordsOf: coords,
-        onDiagnostic: d => { idDiagnostic = { ...d, queueWaitMs }; } });
+      // sinceMs: tiempo real desde esta petición (cola y, si se reanuda tras una pausa, la pausa).
+      // En una reanudación, el vuelo tal como lo publica Aena AHORA (puede haber aterrizado o cambiado de estado).
+      const current = state.legs.find(l => l.al === leg.al && l.n === leg.n && l.d === leg.d && l.o === leg.o && l.a === leg.a) ?? leg;
+      const identified = await identifyByZone({ leg: current, legs: state.legs, origin, dest, nowMs: nowMs + sinceMs, fetchFn, coordsOf: coords,
+        onDiagnostic: d => { idDiagnostic = { ...d, queueWaitMs, sinceMs }; } });
       const full = { ...base, identification: idDiagnostic, identifiedBy: idDiagnostic?.identifiedBy ?? null };
       state.radarDiagnostics.set(phys, full);
       if (identified.state === 'identificado') state.radarStats.identificationSucceeded++;

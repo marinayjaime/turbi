@@ -17,7 +17,8 @@ describe('/health.adsb', () => {
     for (const k of ['updated', 'runs', 'audit', 'lastError', 'flights']) expect(h).toHaveProperty(k);
     expect(h.adsb).toEqual({
       blocked: false, blockedUntil: null, retryInSec: 0, last429At: null, lastSuccessAt: null, lastErrorAt: null,
-      lastError: null, lastStatus: null, rateLimitedCount: 0, successCount: 0, failedCount: 0, pendingRadar: 0, pendingIdentification: 0,
+      lastError: null, lastStatus: null, rateLimitedCount: 0, successCount: 0, failedCount: 0, backoffStrikes: 0, lastCooldownSec: null,
+      pendingRadar: 0, pendingIdentification: 0,
     });
     expect(h.radar).toMatchObject({ requests: 0, cacheHits: 0, directLookups: 0, directFound: 0,
       identificationStarted: 0, identificationBusyPolls: 0, identificationSucceeded: 0, blockedReasons: {} });

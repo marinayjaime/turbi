@@ -10,7 +10,10 @@
 // con menos de 5 s entre sus inicios, sean del vuelo o del usuario que sean. La separación sola no basta: con 5–8 s
 // entre peticiones (64 peticiones reales, 25/09/2026 15:04–15:24 UTC) llegaba un 429 tras 6–7 peticiones en ~1 min.
 // Por eso, además, como mucho ADSB_MAX_PER_WINDOW inicios en cualquier minuto; la identificación deja libre uno de
-// ellos para el radar normal.
+// ellos para el radar normal. En producción (Render, 25–26/09/2026) seguía llegando algún 429 con 4/min: la IP de
+// salida de Render es compartida y adsb.lol cuenta también lo que hacen otros. Por eso 3/min (identificación 2) y,
+// tras cada 429, una pausa ADAPTATIVA: 60 s, y si vuelve a pasar poco después 120 s, 180 s… (máx. 5 min). Tras una
+// racha de aciertos vuelve a la pausa base. El número de peticiones por minuto nunca se sube solo.
 const ADSB = 'https://api.adsb.lol/v2';
 // adsb.lol exige un User-Agent con contacto (si no, 403).
 const UA = 'Turbi/1.0 (+https://github.com/marinayjaime/turbi)';
@@ -20,14 +23,17 @@ export const ADSB_MIN_INTERVAL_MS = 5000; // separación mínima entre dos petic
 export const ADSB_IDENTIFY_INTERVAL_MS = 8000; // identificación: hueco mínimo desde la última petición de cualquier tipo
 export const ADSB_DEFAULT_COOLDOWN_MS = 60000; // pausa global tras un 429 sin Retry-After
 export const ADSB_WINDOW_MS = 60000; // ventana móvil del tope de peticiones
-export const ADSB_MAX_PER_WINDOW = 4; // inicios como mucho en cualquier ventana (medido: el 7.º en ~1 min ya daba 429)
+export const ADSB_MAX_PER_WINDOW = 3; // inicios como mucho en cualquier ventana (la identificación, uno menos)
+export const ADSB_MAX_COOLDOWN_MS = 300000; // techo de la pausa adaptativa tras 429 repetidos
+export const ADSB_STRIKE_MEMORY_MS = 600000; // un 429 a menos de esto del anterior cuenta como repetido
+export const ADSB_RECOVERY_SUCCESSES = 5; // aciertos seguidos para volver a la pausa base
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const CANCELLED = Symbol('cancelada por un 429');
 
 // Telemetría para /health (solo contadores y fechas: nada de IP, cabeceras ni URLs).
 const freshStats = () => ({ last429At: null, lastSuccessAt: null, lastErrorAt: null, lastError: null, lastStatus: null,
-  rateLimitedCount: 0, successCount: 0, failedCount: 0 });
+  rateLimitedCount: 0, successCount: 0, failedCount: 0, backoffStrikes: 0, lastCooldownSec: null });
 
 export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIntervalMs = ADSB_IDENTIFY_INTERVAL_MS,
   maxPerWindow = ADSB_MAX_PER_WINDOW, windowMs = ADSB_WINDOW_MS } = {}) {
@@ -40,6 +46,9 @@ export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIn
     maxPerWindow,
     windowMs,
     blockedUntil: 0,
+    strikes: 0, // 429 recientes seguidos (pausa adaptativa)
+    lastRateLimitAt: -Infinity,
+    successStreak: 0,
     stats: freshStats(),
     pendingOf: priority => queues[priority].length,
     // Tarea en cola; devuelve su resultado (o CANCELLED si se cancela por un 429).
@@ -58,10 +67,33 @@ export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIn
       limiter.blockedUntil = Math.max(limiter.blockedUntil, Date.now() + ms);
       for (const job of queues.identificacion.splice(0)) job.resolve(CANCELLED);
     },
+    // 429 de adsb.lol: pausa global adaptativa. retryAfter: la del servidor (ms) o null si no la manda. El primer
+    // 429 respeta Retry-After (o 60 s); si se repite poco después, 60 s × número de 429 seguidos (máx. 5 min), nunca
+    // menos de lo que pida Retry-After. Devuelve la pausa aplicada.
+    rateLimited(retryAfter = null) {
+      const now = Date.now();
+      limiter.strikes = now - limiter.lastRateLimitAt < ADSB_STRIKE_MEMORY_MS ? limiter.strikes + 1 : 1;
+      limiter.lastRateLimitAt = now;
+      limiter.successStreak = 0;
+      const adaptive = Math.min(ADSB_DEFAULT_COOLDOWN_MS * limiter.strikes, ADSB_MAX_COOLDOWN_MS);
+      const ms = limiter.strikes === 1 && retryAfter !== null ? retryAfter : Math.max(retryAfter ?? 0, adaptive);
+      limiter.stats.lastCooldownSec = Math.round(ms / 1000);
+      limiter.stats.backoffStrikes = limiter.strikes;
+      limiter.block(ms);
+      return ms;
+    },
+    // Acierto: tras una racha suficiente, la pausa vuelve a la base.
+    succeeded() {
+      if (++limiter.successStreak >= ADSB_RECOVERY_SUCCESSES && limiter.strikes) {
+        limiter.strikes = 0;
+        limiter.stats.backoffStrikes = 0;
+      }
+    },
     isBlocked: () => Date.now() < limiter.blockedUntil,
     reset({ minIntervalMs: m = ADSB_MIN_INTERVAL_MS, identifyIntervalMs: i = ADSB_IDENTIFY_INTERVAL_MS,
       maxPerWindow: w = ADSB_MAX_PER_WINDOW, windowMs: wm = ADSB_WINDOW_MS } = {}) {
-      Object.assign(limiter, { minIntervalMs: m, identifyIntervalMs: i, maxPerWindow: w, windowMs: wm, blockedUntil: 0, stats: freshStats() });
+      Object.assign(limiter, { minIntervalMs: m, identifyIntervalMs: i, maxPerWindow: w, windowMs: wm, blockedUntil: 0, stats: freshStats(),
+        strikes: 0, lastRateLimitAt: -Infinity, successStreak: 0 });
       last = -Infinity;
       starts = [];
       if (timer) { clearTimeout(timer); timer = null; }
@@ -93,13 +125,14 @@ export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIn
 // El limitador global del proceso (compartido por server/radar.mjs y server/identify.mjs).
 export const adsbLimiter = createLimiter();
 
+// Retry-After de la respuesta en ms, o null si no viene (o no se entiende).
 function retryAfterMs(res) {
   const v = res.headers?.get?.('Retry-After');
-  if (!v) return ADSB_DEFAULT_COOLDOWN_MS;
+  if (!v) return null;
   const s = Number(v);
   if (Number.isFinite(s)) return Math.max(0, s * 1000);
   const at = Date.parse(v);
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : ADSB_DEFAULT_COOLDOWN_MS;
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
 // Tipo simple de fallo: '429' | '403' | '4xx' | '5xx' | 'timeout' | 'network' | 'invalid-json'.
@@ -136,10 +169,11 @@ export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, pr
       const url = /^https:\/\/([a-z0-9-]+\.)*adsb\.lol\//.test(path) ? path : `${ADSB}${path}`;
       const res = await fetchFn(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { Accept: 'application/json', 'User-Agent': UA } });
       limiter.stats.lastStatus = res.status;
-      if (res.status === 429) { recordError(limiter, '429'); limiter.block(retryAfterMs(res)); return { error: 'rate-limited' }; }
+      if (res.status === 429) { recordError(limiter, '429'); limiter.rateLimited(retryAfterMs(res)); return { error: 'rate-limited' }; }
       if (!res.ok) { recordError(limiter, statusKind(res.status)); return { error: 'failed' }; }
       const data = await res.json();
       limiter.stats.successCount++;
+      limiter.succeeded();
       limiter.stats.lastSuccessAt = new Date().toISOString();
       return { data };
     } catch (err) {

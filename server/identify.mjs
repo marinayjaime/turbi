@@ -39,6 +39,9 @@ export const LIMITS = {
   adsbdbCacheMin: 360, // la ruta de un indicativo en adsbdb se guarda este tiempo (no se vuelve a pedir)
   sameRouteWindowMin: 120, // rivales de la misma ruta que se comprueban por progreso (no es un veto previo)
   cooldownMin: 10, // tras un fallo o una invalidación, sin reintentar durante este tiempo
+  maxResumes: 6, // reanudaciones automáticas de una identificación cortada por un fallo temporal (429, red…)
+  resumeMinSec: 30, // espera mínima antes de reanudar (si adsb.lol está en pausa, hasta que acabe la pausa)
+  resumeIdleMin: 5, // sin nadie mirando el vuelo en este tiempo, no se reanuda (no se gasta cupo para nadie)
   invalidateAfter: 3, // lecturas seguidas con indicativo distinto para invalidar el hex
   contradictionCrossKm: 400, // lejos de la ruta más que esto → contradicción física clara
   groundAirportKm: 30, // en tierra a más de esto del origen y del destino → contradicción física clara
@@ -358,9 +361,18 @@ export async function trackByHex({ entry, leg, origin, dest, nowMs = Date.now(),
 
 // Registro en memoria vuelo físico → hex. Una sola identificación en curso por vuelo; las de vuelos distintos, una
 // detrás de otra; tras un fallo o una invalidación, cooldownMin sin reintentar.
-export function createHexRegistry(limits = LIMITS) {
-  const entries = new Map(); // phys → { hex, callsign, streak, diagnostic } | { until, diagnostic }
+// Un fallo TEMPORAL (429 de adsb.lol, zona o traza sin respuesta: resultado 'no-disponible') no es definitivo: el
+// vuelo queda «interrumpido» y el propio registro reanuda la identificación cuando acaba la pausa (resumeAt), como
+// mucho maxResumes veces y solo si alguien ha mirado el vuelo hace poco (touch). Mientras, busy() sigue siendo true:
+// ninguna consulta, sondeo ni usuario arranca otra identificación del mismo vuelo.
+// opts.resumeAt(result) → ms (reloj real) en que se puede reanudar; opts.setTimer/clearTimer: para las pruebas.
+export function createHexRegistry(limits = LIMITS, {
+  // Nunca antes de que acabe la pausa global de adsb.lol (+2 s de margen) ni antes de resumeMinSec.
+  resumeAt = () => Math.max(adsbLimiter.blockedUntil + 2000, Date.now() + limits.resumeMinSec * 1000),
+  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id) } = {}) {
+  const entries = new Map(); // phys → { hex, callsign, streak, diagnostic } | { until, diagnostic } | { interrupted, … }
   const pending = new Map();
+  const interest = new Map(); // phys → última vez (reloj real) que alguien pidió el radar de ese vuelo
   let running = false;
   const waiting = [];
   // Cola en serie que arranca la tarea en el acto si no hay otra en marcha.
@@ -374,37 +386,64 @@ export function createHexRegistry(limits = LIMITS) {
     };
     if (running) waiting.push(run); else run();
   });
-  const fail = (phys, nowMs, diagnostic = null) => entries.set(phys, { until: nowMs + limits.cooldownMin * 60000, diagnostic });
+  const clearResume = phys => { const e = entries.get(phys); if (e?.timer) clearTimer(e.timer); };
+  const fail = (phys, nowMs, diagnostic = null) => { clearResume(phys); entries.set(phys, { until: nowMs + limits.cooldownMin * 60000, diagnostic }); };
+  const watched = phys => Date.now() - (interest.get(phys) ?? -Infinity) <= limits.resumeIdleMin * 60000;
+
+  // attempt({ queueWaitMs, sinceMs }): sinceMs = tiempo real desde la primera petición (para su reloj en las reanudaciones).
+  function start(phys, attempt, nowMs, firstAt, resumes) {
+    const p = enqueue(({ queueWaitMs }) => attempt({ queueWaitMs, sinceMs: Date.now() - firstAt })).then(r => {
+      if (r?.state === 'identificado' && r.hex) {
+        entries.set(phys, { hex: r.hex, callsign: r.callsign, streak: 0, diagnostic: r.diagnostic ?? null });
+        return { state: 'identificado', hex: r.hex, callsign: r.callsign };
+      }
+      if (r?.state === 'no-disponible' || r?.rateLimited) {
+        // Temporal: se reanuda sola tras la pausa. Agotadas las reanudaciones, queda como antes (sin cooldown: una
+        // consulta normal posterior puede volver a intentarlo).
+        if (resumes < limits.maxResumes) {
+          const at = Math.max(resumeAt(r), Date.now() + 1000);
+          const timer = setTimer(() => {
+            const e = entries.get(phys);
+            if (!e?.interrupted || e.timer !== timer) return;
+            if (!watched(phys)) { entries.set(phys, { diagnostic: e.diagnostic }); return; }
+            start(phys, attempt, nowMs, firstAt, resumes + 1);
+          }, at - Date.now());
+          entries.set(phys, { interrupted: true, resumeAt: at, resumes: resumes + 1, timer, rateLimited: Boolean(r?.rateLimited),
+            diagnostic: r?.diagnostic ?? null });
+        } else entries.set(phys, { diagnostic: r?.diagnostic ?? null });
+        return null;
+      }
+      fail(phys, nowMs, r?.diagnostic ?? null);
+      return null;
+    }, () => { entries.set(phys, { diagnostic: { result: 'error-temporal' } }); return null; }).finally(() => pending.delete(phys));
+    pending.set(phys, p);
+    return p;
+  }
 
   return {
     get(phys) {
       const e = entries.get(phys);
       return e?.hex ? { state: 'identificado', hex: e.hex, callsign: e.callsign } : null;
     },
-    busy: phys => pending.has(phys),
+    // En curso o interrumpida a la espera de reanudarse: en ambos casos, nadie arranca otra.
+    busy: phys => pending.has(phys) || Boolean(entries.get(phys)?.interrupted),
+    // Alguien ha pedido el radar de este vuelo (las reanudaciones solo siguen si alguien mira).
+    touch(phys) { interest.set(phys, Date.now()); if (interest.size > 2000) interest.clear(); },
     status(phys, nowMs = Date.now()) {
       const e = entries.get(phys);
-      return { busy: pending.has(phys), identified: Boolean(e?.hex), cooldownRemainingMs: e?.until && nowMs < e.until ? e.until - nowMs : 0,
-        diagnostic: e?.diagnostic ?? null };
+      return { busy: pending.has(phys) || Boolean(e?.interrupted), identified: Boolean(e?.hex),
+        cooldownRemainingMs: e?.until && nowMs < e.until ? e.until - nowMs : 0,
+        interrupted: Boolean(e?.interrupted) && !pending.has(phys),
+        retryAfterSec: e?.interrupted && !pending.has(phys) ? Math.max(0, Math.ceil((e.resumeAt - Date.now()) / 1000)) : 0,
+        resumes: e?.resumes ?? 0, diagnostic: e?.diagnostic ?? null };
     },
     resolve(phys, attempt, nowMs) {
       const e = entries.get(phys);
       if (e?.hex) return Promise.resolve({ state: 'identificado', hex: e.hex, callsign: e.callsign });
-      if (e && nowMs < e.until) return Promise.resolve(null);
+      if (e?.until && nowMs < e.until) return Promise.resolve(null);
       if (pending.has(phys)) return pending.get(phys);
-      const p = enqueue(attempt).then(r => {
-        if (r?.state === 'identificado' && r.hex) {
-          entries.set(phys, { hex: r.hex, callsign: r.callsign, streak: 0, diagnostic: r.diagnostic ?? null });
-          return { state: 'identificado', hex: r.hex, callsign: r.callsign };
-        }
-        // Un límite o fallo del proveedor es temporal y no dice nada sobre la identidad del vuelo: no se convierte
-        // en diez minutos de bloqueo. Una consulta nueva podrá reintentarlo cuando acabe la pausa global.
-        if (r?.state === 'no-disponible' || r?.rateLimited) entries.set(phys, { diagnostic: r?.diagnostic ?? null });
-        else fail(phys, nowMs, r?.diagnostic ?? null);
-        return null;
-      }, () => { entries.set(phys, { diagnostic: { result: 'error-temporal' } }); return null; }).finally(() => pending.delete(phys));
-      pending.set(phys, p);
-      return p;
+      if (e?.interrupted) return Promise.resolve(null); // ya hay una reanudación programada
+      return start(phys, attempt, nowMs, Date.now(), 0);
     },
     invalidate(phys, nowMs) { fail(phys, nowMs); },
     // Una sola lectura nunca invalida: hacen falta invalidateAfter seguidas con indicativo distinto, o una

@@ -61,6 +61,7 @@ function radarHtml(r) {
       </div>`;
   }
   if (r.state === 'reciente' || r.state === 'aterrizado') return ''; // lo dice el estado (y su nota)
+  if (r.state === 'localizando') return '<p class="radar muted">Localizando el avión en el radar…</p>'; // identificación en curso
   if (r.state === 'sin-senal' || r.state === 'sin-datos') return '<p class="radar muted">Sin señal ADS-B reciente para este vuelo.</p>';
   return '<p class="radar muted">El radar no responde ahora mismo.</p>';
 }

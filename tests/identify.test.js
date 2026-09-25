@@ -359,15 +359,44 @@ describe('registro vuelo → hex: seguimiento, reutilización, invalidación y e
     await reg.resolve(phys, attempt, now + LIMITS.cooldownMin * MIN + 1);
     expect(attempt).toHaveBeenCalledTimes(2);
   });
-  it('un 429 o fallo temporal del proveedor no crea cooldown del vuelo', async () => {
-    const reg = createHexRegistry();
-    const attempt = vi.fn()
-      .mockResolvedValueOnce({ state: 'no-disponible', rateLimited: true })
-      .mockResolvedValueOnce({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
-    expect(await reg.resolve(phys, attempt, now)).toBeNull();
-    expect(reg.status(phys, now + 1).cooldownRemainingMs).toBe(0);
-    expect(await reg.resolve(phys, attempt, now + 1)).toMatchObject({ hex: '4d225e' });
-    expect(attempt).toHaveBeenCalledTimes(2);
+  it('un 429 o fallo temporal no es definitivo: sin cooldown, interrumpida, y el registro la reanuda tras la pausa', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T09:00:00Z') });
+    try {
+      const reg = createHexRegistry(LIMITS, { resumeAt: () => Date.now() + 60000 });
+      const attempt = vi.fn()
+        .mockResolvedValueOnce({ state: 'no-disponible', rateLimited: true })
+        .mockResolvedValueOnce({ state: 'identificado', hex: '4d225e', callsign: 'RYR19HB' });
+      reg.touch(phys);
+      expect(await reg.resolve(phys, attempt, now)).toBeNull();
+      expect(reg.status(phys, now + 1)).toMatchObject({ cooldownRemainingMs: 0, interrupted: true, busy: true, retryAfterSec: 60 });
+      expect(await reg.resolve(phys, attempt, now + 1)).toBeNull(); // nadie arranca otra mientras espera la reanudación
+      expect(attempt).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(59000);
+      expect(attempt).toHaveBeenCalledTimes(1); // durante la pausa, nada
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(attempt).toHaveBeenCalledTimes(2);
+      expect(reg.get(phys)).toMatchObject({ hex: '4d225e' });
+      expect(attempt.mock.calls[1][0].sinceMs).toBeGreaterThanOrEqual(60000); // su reloj incluye la pausa
+    } finally { vi.useRealTimers(); }
+  });
+  it('sin nadie mirando el vuelo, la reanudación no gasta cupo; agotadas las reanudaciones, queda como fallo normal', async () => {
+    vi.useFakeTimers({ now: Date.parse('2026-09-25T09:00:00Z') });
+    try {
+      const reg = createHexRegistry(LIMITS, { resumeAt: () => Date.now() + 60000 });
+      const attempt = vi.fn(async () => ({ state: 'no-disponible', rateLimited: true }));
+      expect(await reg.resolve(phys, attempt, now)).toBeNull(); // sin touch: nadie lo mira
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(attempt).toHaveBeenCalledTimes(1);
+      expect(reg.busy(phys)).toBe(false);
+      const reg2 = createHexRegistry(LIMITS, { resumeAt: () => Date.now() + 60000 });
+      const always = vi.fn(async () => { reg2.touch('p2'); return { state: 'no-disponible', rateLimited: true }; });
+      reg2.touch('p2');
+      await reg2.resolve('p2', always, now);
+      await vi.advanceTimersByTimeAsync(3600000);
+      expect(always).toHaveBeenCalledTimes(1 + LIMITS.maxResumes);
+      expect(reg2.busy('p2')).toBe(false);
+      expect(reg2.status('p2', now).cooldownRemainingMs).toBe(0); // una consulta normal posterior podrá reintentarlo
+    } finally { vi.useRealTimers(); }
   });
   it('dos usuarios a la vez → una sola identificación', async () => {
     const reg = createHexRegistry();

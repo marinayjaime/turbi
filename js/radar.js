@@ -87,11 +87,13 @@ const MIN = 60000;
 //   más tarde o nunca      → el estado oficial de Aena, y «sin señal ADS-B reciente».
 // Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
 // prueba varias variantes.
-// El servidor está identificando el avión por su ruta en segundo plano. Con el límite de adsb.lol (4 peticiones por
-// minuto) eso puede tardar 1–2 min, así que la app vuelve a preguntar a los 20, 40, 60, 90, 120, 150 y 180 s desde la
-// primera respuesta (intervalos sucesivos, encadenados; nunca setInterval). Estos sondeos llevan ?poll=1: el servidor
-// solo lee el estado del trabajo en curso y no hace ninguna consulta nueva a ADS-B.
-export const RADAR_POLL_DELAYS_MS = [20000, 20000, 20000, 30000, 30000, 30000, 30000];
+// El servidor está identificando el avión por su ruta en segundo plano. Con el límite de adsb.lol (3 peticiones por
+// minuto) eso puede tardar 1–2 min, y si adsb.lol impone una pausa (429) el servidor la espera y reanuda solo. La app
+// vuelve a preguntar a los 20, 40, 60, 90, 120, 150 y 180 s y después cada minuto hasta los 8 min (intervalos
+// encadenados; nunca setInterval). Si el servidor dice cuándo reanudará (retryAfterSec), el siguiente sondeo no llega
+// antes. Estos sondeos llevan ?poll=1: el servidor solo lee el estado y no hace ninguna consulta nueva a ADS-B.
+export const RADAR_POLL_DELAYS_MS = [20000, 20000, 20000, 30000, 30000, 30000, 30000, 60000, 60000, 60000, 60000, 60000];
+const MAX_POLL_WAIT_MS = 120000;
 
 // ¿Hay que volver a preguntar? Solo mientras el servidor diga que sigue identificando y aún no haya un resultado
 // definitivo. Sin respuesta (red, timeout), se vuelve a intentar en el siguiente turno: el trabajo del servidor sigue.
@@ -115,7 +117,8 @@ export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays =
     // Sin respuesta en un sondeo no se pinta nada (se queda lo último que se vio).
     if (radar || attempt === 0) onResult(radar, { attempt });
     if (keepPolling(radar) && attempt < delays.length) {
-      timer = setTimer(() => { step(attempt + 1).catch(() => {}); }, delays[attempt]);
+      const serverWait = Number.isFinite(radar?.retryAfterSec) ? radar.retryAfterSec * 1000 + 3000 : 0;
+      timer = setTimer(() => { step(attempt + 1).catch(() => {}); }, Math.min(Math.max(delays[attempt], serverWait), MAX_POLL_WAIT_MS));
     }
     return radar;
   };
@@ -140,6 +143,8 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   // Aena aún no confirma la salida (p. ej. «Última llamada»): el avión puede seguir en tierra. Se queda el estado de
   // Aena, sin «Sin señal ADS-B» (no se asume que haya despegado).
   if (radar.departureConfirmed === false) return card;
+  // El servidor aún está buscando el avión (o esperando a que adsb.lol levante una pausa): no es «sin señal».
+  if (radar.identifying === true) return { ...card, radar: { state: 'localizando' } };
   return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal' } };
 }
 
