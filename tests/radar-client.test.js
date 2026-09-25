@@ -7,7 +7,7 @@ const card = { status: { text: 'Ha salido · Aena no informa de la llegada a Dub
 describe('cuándo pregunta la app al radar', () => {
   it('ha salido y Aena no informa de la llegada; con servicio en directo', () => {
     expect(wantsRadar(leg(), 'https://x')).toBe(true);
-    expect(wantsRadar(leg({ sta: 'FLY' }), 'https://x')).toBe(false);
+    expect(wantsRadar(leg({ sta: 'LND' }), 'https://x')).toBe(false); // antes FLY; ahora FLY sí consulta el radar
     expect(wantsRadar(leg({ std: 'EMB' }), 'https://x')).toBe(false);
     expect(wantsRadar(leg(), null)).toBe(false);
   });
@@ -180,49 +180,53 @@ describe('una sola fuente de verdad para la llegada: el aviso solo usa la llegad
 });
 
 import { presentStatus } from '../js/radar.js';
-describe('estado de presentación: último estado oficial frente a lo que se muestra ahora', () => {
-  const H = 3600000, now = Date.parse('2026-09-25T02:00:00Z');
+describe('estado mostrado: prioridad Aena > ADS-B tierra > ADS-B volando > Ha salido > aterrizado estimado', () => {
+  const MIN = 60000, H = 3600000, now = Date.parse('2026-09-25T02:00:00Z');
   const ei = over => ({ d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null, ...over });
-  const st = (leg, arrivalMs) => presentStatus({ leg, city: 'Dublín', visibleArrivalMs: arrivalMs, nowMs: now });
-  it('salida confirmada + llegada visible futura → «Ha salido»', () => {
-    expect(st(ei(), now + 20 * 60000)).toEqual({ text: 'Ha salido · Aena no informa de la llegada a Dublín', tone: 'info' });
+  const st = (leg, arrivalMs, arrivalSource = 'turbi') => presentStatus({ leg, city: 'Dublín', visibleArrivalMs: arrivalMs, arrivalSource, nowMs: now });
+  const HA_SALIDO = { text: 'Ha salido · Aena no informa de la llegada a Dublín', tone: 'info' };
+  const EST_LANDED = { text: 'Aterrizado', tone: 'ok', note: 'Según la llegada estimada por Turbi', landing: 'estimated-landed' };
+  it('llegada estimada futura → «Ha salido»', () => {
+    expect(st(ei(), now + 20 * MIN)).toEqual(HA_SALIDO);
   });
-  const HIST = { text: 'Histórico', tone: 'stale', note: 'Aena no publica la llegada a este destino' };
-  it('salida confirmada + llegada visible ya pasada, sin llegada oficial ni radar → «Histórico» (neutro)', () => {
-    expect(st(ei(), now - 60000)).toEqual(HIST);
+  it('llegada estimada pasada hace 10 y 44 min → aún no «Aterrizado» (sigue «Ha salido»)', () => {
+    expect(st(ei(), now - 10 * MIN)).toEqual(HA_SALIDO);
+    expect(st(ei(), now - 44 * MIN)).toEqual(HA_SALIDO);
   });
-  it('llegada pasada hace 5 h: sigue sin «Ha salido»', () => {
-    expect(st(ei(), now - 5 * H)).toEqual(HIST);
+  it('pasada 45 min o varias horas → «Aterrizado» estimado (estimated-landed, con su nota)', () => {
+    expect(st(ei(), now - 45 * MIN)).toEqual(EST_LANDED);
+    expect(st(ei(), now - 6 * H)).toEqual(EST_LANDED);
   });
-  it('sin ninguna llegada visible («Llegada —»): tampoco «Ha salido» indefinido', () => {
-    expect(st(ei({ past: true }), null)).toEqual(HIST);
+  it('sin llegada visible: nunca «Aterrizado» estimado ni «Histórico»', () => {
+    expect(st(ei(), null)).toEqual(HA_SALIDO);
   });
-  it('ADS-B activo después de la llegada estimada → «Volando» vuelve a ganar', () => {
+  it('ADS-B volando después de la llegada estimada → «Volando» gana al aterrizaje estimado', () => {
     const card = { status: st(ei(), now - 2 * H) };
     expect(withRadar(card, { state: 'volando', seenS: 0 }, null, now).status).toEqual({ text: 'Volando', tone: 'info', flying: true });
   });
-  it('llegada confirmada por Aena → su estado oficial', () => {
-    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'LND', st: 'LND' }), now - 5 * H)).toEqual({ text: 'En tierra', tone: 'ok' });
-    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'IBK', st: 'IBK' }), now - 5 * H)).toEqual({ text: 'Ha llegado', tone: 'ok' });
+  it('ADS-B en tierra en el destino → «Aterrizado» confirmado (confirmed-landed)', () => {
+    const card = { status: st(ei(), now - 2 * H) };
+    expect(withRadar(card, { state: 'aterrizado', seenS: 3 }, null, now).status)
+      .toEqual({ text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B', landing: 'confirmed-landed' });
   });
-  it('Aena publica la hora de llegada pero no la confirma y ya pasó → «Histórico» · «Aena no ha confirmado la llegada»', () => {
-    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10' }), now - 5 * H))
-      .toEqual({ text: 'Histórico', tone: 'stale', note: 'Aena no ha confirmado la llegada' });
+  it('Aena confirma la llegada → su estado oficial, siempre', () => {
+    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'LND', st: 'LND' }), now - 5 * H, 'aena')).toEqual({ text: 'En tierra', tone: 'ok' });
+    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'IBK', st: 'IBK' }), now - 5 * H, 'aena')).toEqual({ text: 'Ha llegado', tone: 'ok' });
   });
-  it('nunca infiere «aterrizado», «ha llegado», «completado» ni «llegada no confirmada» sin confirmación', () => {
-    for (const ms of [now + H, now - 60000, now - 5 * H, now - 48 * H, null]) {
-      expect(JSON.stringify(st(ei(), ms))).not.toMatch(/aterriz|llegado|en tierra|completado|no confirmada/i);
+  it('la hora de llegada es de Aena (programada/estimada) pero sin confirmar: no se estima el aterrizaje', () => {
+    expect(st(ei({ a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10' }), now - 5 * H, 'aena').landing).toBeUndefined();
+  });
+  it('cancelado o desviado: nunca aterrizado estimado', () => {
+    expect(st(ei({ st: 'CAN', std: 'CAN' }), now - 5 * H)).toEqual({ text: 'Cancelado', tone: 'bad' });
+    expect(st(ei({ st: 'DES', sta: 'DES' }), now - 5 * H)).toEqual({ text: 'Desviado', tone: 'bad' });
+  });
+  it('sin salida confirmada: el estado oficial (no se estima nada)', () => {
+    expect(st(ei({ st: 'SCH', std: 'SCH', ed: null }), now - 5 * H)).toEqual({ text: 'Programado', tone: 'ok' });
+  });
+  it('nunca «Histórico», «Llegada no confirmada» ni «Aena no publica la llegada…» como estado', () => {
+    for (const ms of [now + H, now - 10 * MIN, now - 45 * MIN, now - 48 * H, null]) {
+      expect(JSON.stringify(st(ei(), ms))).not.toMatch(/Histórico|no confirmada|no publica la llegada/);
     }
-  });
-  it('sin salida confirmada, cancelado o desviado: el estado oficial, aunque la hora haya pasado', () => {
-    expect(st(ei({ st: 'SCH', std: 'SCH', ed: null }), now - H)).toEqual({ text: 'Programado', tone: 'ok' });
-    expect(st(ei({ st: 'CAN', std: 'CAN' }), now - H)).toEqual({ text: 'Cancelado', tone: 'bad' });
-    expect(st(ei({ st: 'DES', sta: 'DES' }), now - H)).toEqual({ text: 'Desviado', tone: 'bad' });
-  });
-  it('coherencia con la hora visible: el estado cambia justo cuando pasa la llegada que muestra la ficha', () => {
-    const arrival = now;
-    expect(presentStatus({ leg: ei(), city: 'Dublín', visibleArrivalMs: arrival, nowMs: arrival - 1 }).text).toMatch(/^Ha salido/);
-    expect(presentStatus({ leg: ei(), city: 'Dublín', visibleArrivalMs: arrival, nowMs: arrival + 1 }).text).toBe('Histórico');
   });
 });
 
@@ -234,7 +238,7 @@ describe('aterrizaje confirmado por ADS-B en la ficha', () => {
   const base = { status: { text: 'Ha salido · Aena no informa de la llegada a Dublín', tone: 'info' }, arr: { time: '22:35', estimated: true } };
   it('el radar confirma tierra en el destino → «Aterrizado», sin panel de vuelo, conservando la llegada', () => {
     const c = withRadar(base, { state: 'aterrizado', callsign: 'EIN737', seenS: 4, source: 'adsb.lol' }, null, now);
-    expect(c.status).toEqual({ text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B' });
+    expect(c.status).toEqual({ text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B', landing: 'confirmed-landed' });
     expect(c.radar).toEqual({ state: 'aterrizado' });
     expect(c.arr).toBe(base.arr);
   });
@@ -269,5 +273,34 @@ describe('aterrizaje confirmado por ADS-B en la ficha', () => {
   it('el aviso de llegada con aterrizaje confirmado por radar', () => {
     expect(radarNote({ state: 'aterrizado' })).toBe(LANDED_NOTE);
     expect(LANDED_NOTE).toBe('Este vuelo ya ha aterrizado según el radar ADS-B: no se muestra la previsión de turbulencias.');
+  });
+});
+
+describe('radar también cuando Aena dice «Volando» (FLY/FNL): panel solo con telemetría ADS-B real', () => {
+  const now = Date.parse('2026-09-25T18:00:00Z');
+  const dom = over => ({ d: '2026-09-25', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-25T18:05', sa: '19:25', ea: '2026-09-25T19:30', st: 'FLY', std: 'BOR', sta: 'FLY', ...over });
+  const aenaFlying = { status: { text: 'Volando', tone: 'info', flying: true } };
+  it('se consulta con FLY o FNL de Aena, y con salida sin llegada; no con programado, llegado, cancelado o desviado', () => {
+    expect(wantsRadar(dom(), 'https://x')).toBe(true);
+    expect(wantsRadar(dom({ sta: 'FNL', st: 'FNL' }), 'https://x')).toBe(true);
+    expect(wantsRadar(dom({ sta: null, sa: null, ea: null, st: 'BOR' }), 'https://x')).toBe(true);
+    for (const over of [{ std: 'SCH', st: 'SCH', sta: null }, { std: 'EMB', st: 'EMB', sta: null }, { sta: 'LND', st: 'LND' }, { sta: 'IBK' },
+      { std: 'CAN', st: 'CAN', sta: 'CAN' }, { sta: 'DES', st: 'DES' }]) expect(wantsRadar(dom(over), 'https://x')).toBe(false);
+  });
+  it('Aena FLY/FNL + ADS-B lo encuentra → panel completo', () => {
+    const r = { state: 'volando', callsign: 'IBE1668', altM: 10668, kmh: 830, seenS: 2, remainingKm: 300, source: 'adsb.lol' };
+    expect(withRadar(aenaFlying, r, null, now)).toMatchObject({ status: { text: 'Volando', flying: true }, radar: { state: 'volando', kmh: 830 } });
+  });
+  it('Aena FLY + ADS-B sin datos (o sin respuesta) → sigue «Volando» de Aena, sin panel ni telemetría ni avisos del radar', () => {
+    for (const r of [{ state: 'sin-datos', callsign: 'IBE1668' }, { state: 'no-disponible' }]) {
+      expect(withRadar(aenaFlying, r, null, now)).toBe(aenaFlying);
+      expect(withRadar(aenaFlying, r, now - 5 * 60000, now)).toBe(aenaFlying);
+    }
+  });
+  it('Aena FLY + ADS-B en tierra en el destino → «Aterrizado» confirmado (Aena aún no lo ha confirmado)', () => {
+    expect(withLanding(aenaFlying, now, dom())).toMatchObject({ status: { text: 'Aterrizado', landing: 'confirmed-landed' }, radar: { state: 'aterrizado' } });
+  });
+  it('con la llegada confirmada por Aena, cancelado o desviado, el aterrizaje del radar no cambia nada', () => {
+    for (const over of [{ sta: 'LND', st: 'LND' }, { sta: 'DES', st: 'DES' }, { std: 'CAN', st: 'CAN' }]) expect(withLanding(aenaFlying, now, dom(over))).toBe(aenaFlying);
   });
 });

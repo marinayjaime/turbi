@@ -6,8 +6,14 @@ import { flightStatus } from './schedule.js';
 
 const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 
+// Se consulta el radar si el vuelo está en el aire según Aena: salida «Finalizado» sin estado de llegada (destino
+// extranjero) o el aeropuerto de llegada dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no ha despegado, ya
+// llegó, está cancelado o desviado.
+const IN_AIR = new Set(['FLY', 'FNL']);
 export function wantsRadar(leg, liveBase = LIVE_BASE) {
-  return Boolean(liveBase) && (leg.std ?? leg.st) === 'BOR' && !leg.sta;
+  const flags = [leg.st, leg.std, leg.sta];
+  if (!liveBase || flags.includes('CAN') || flags.includes('DES')) return false;
+  return IN_AIR.has(leg.sta) || ((leg.std ?? leg.st) === 'BOR' && !leg.sta);
 }
 
 // Aena da la salida por finalizada pero no publica la llegada (no es un aeropuerto suyo): se dice.
@@ -25,21 +31,23 @@ export function endedNote(leg, { estimated = false } = {}) {
   return estimated ? ENDED_ESTIMATED : 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.';
 }
 
-// Estado que se muestra (distinto del último estado oficial de Aena, que no se toca):
-//   Aena confirma la llegada (o da otro estado de llegada), no ha salido, cancelado o desviado → estado oficial;
-//   ha salido y la llegada VISIBLE en la ficha (Aena o estimación Turbi) aún no ha pasado → «Ha salido»;
-//   ha salido y esa llegada ya pasó, o la ficha no muestra ninguna → «Histórico», etiqueta neutra (no es un estado
-//   operativo: nunca «aterrizado», «ha llegado» ni «completado» si ninguna fuente lo confirma).
-// «Volando» (radar) lo pone withRadar encima de esto. visibleArrivalMs = la misma hora que muestra la ficha, o null.
-export function presentStatus({ leg, city, visibleArrivalMs = null, nowMs = Date.now() }) {
+// Estado que se muestra (distinto del último estado oficial de Aena, que no se toca). Prioridad:
+//   1. Aena confirma la llegada (o da otro estado de llegada), no ha salido, cancelado o desviado → estado oficial;
+//   2–3. ADS-B en tierra en el destino / volando → lo ponen withLanding y withRadar encima de esto;
+//   4. ha salido y la llegada visible aún no ha pasado (o no hay) → «Ha salido»;
+//   5. la llegada visible es una estimación Turbi y pasó hace ≥ ESTIMATED_LANDED_MIN → «Aterrizado» estimado
+//      (landing: 'estimated-landed', con nota; no es una confirmación: el radar «volando» o Aena lo desmienten).
+// visibleArrivalMs = la misma hora que muestra la ficha; arrivalSource = 'aena' | 'turbi'.
+const MIN_MS = 60000;
+const ESTIMATED_LANDED_MIN = 45; // heurística: margen tras la llegada estimada antes de darla por aterrizada
+export function presentStatus({ leg, city, visibleArrivalMs = null, arrivalSource = 'turbi', nowMs = Date.now() }) {
   const official = flightStatus(leg);
   const flags = [leg.st, leg.std, leg.sta];
   if ((leg.std ?? leg.st) !== 'BOR' || leg.sta || flags.includes('CAN') || flags.includes('DES')) return official;
-  if (Number.isFinite(visibleArrivalMs) && visibleArrivalMs > nowMs) {
-    return leg.sa ? official : { text: `Ha salido · Aena no informa de la llegada a ${city}`, tone: 'info' };
+  if (arrivalSource === 'turbi' && Number.isFinite(visibleArrivalMs) && nowMs - visibleArrivalMs >= ESTIMATED_LANDED_MIN * MIN_MS) {
+    return { text: 'Aterrizado', tone: 'ok', note: 'Según la llegada estimada por Turbi', landing: 'estimated-landed' };
   }
-  return { text: 'Histórico', tone: 'stale',
-    note: leg.sa || leg.ea ? 'Aena no ha confirmado la llegada' : 'Aena no publica la llegada a este destino' };
+  return leg.sa ? official : { text: `Ha salido · Aena no informa de la llegada a ${city}`, tone: 'info' };
 }
 
 export const NO_ARRIVAL_NOTE = 'El vuelo ya ha salido y no hay una hora de llegada que mostrar: no se muestra la previsión de turbulencias.';
@@ -82,6 +90,8 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
   if (radar.state === 'volando') return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
   if (radar.state === 'aterrizado') return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
+  // Aena ya dice «Volando» (FLY/FNL) y el radar no lo ve: se queda lo de Aena, sin panel ni avisos del radar.
+  if (card.status?.flying) return card;
   const ageMin = Number.isFinite(lastSeenMs) ? Math.round((nowMs - lastSeenMs) / MIN) : null; // igual que la ETA
   if (ageMin !== null && ageMin < STALE_MIN) {
     const ago = ageMin < 1 ? 'menos de 1 min' : `${ageMin} min`;
@@ -93,7 +103,7 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
 // Aterrizaje confirmado por ADS-B (el servidor exige tierra, en el destino, señal reciente, mismo indicativo y el
 // tiempo mínimo físico de vuelo). Se guarda para que al recargar no se vuelva a «Ha salido»; una lectura posterior
 // de «volando» no lo deshace. Aena manda si confirma la llegada; desviado o cancelado, nunca.
-const LANDED_STATUS = { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B' };
+const LANDED_STATUS = { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B', landing: 'confirmed-landed' };
 export const LANDED_NOTE = 'Este vuelo ya ha aterrizado según el radar ADS-B: no se muestra la previsión de turbulencias.';
 const LANDED_STORE = 'turbi-landed';
 const landings = new Map();
@@ -101,7 +111,7 @@ const landings = new Map();
 export function withLanding(card, landedAtMs, leg) {
   if (!Number.isFinite(landedAtMs)) return card;
   const flags = [leg.st, leg.std, leg.sta];
-  if (leg.sta || flags.includes('CAN') || flags.includes('DES')) return card;
+  if (ARR_FINAL.has(leg.sta) || flags.includes('CAN') || flags.includes('DES')) return card; // Aena manda
   return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
 }
 

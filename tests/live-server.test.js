@@ -90,3 +90,18 @@ describe('vuelo desviado (Aena) → el radar no se consulta: nunca «aterrizado�
     expect(fetchFn).not.toHaveBeenCalled();
   });
 });
+
+describe('caché por vuelo físico: los códigos compartidos del mismo avión no repiten la consulta', () => {
+  it('IB y VY del mismo vuelo → una sola consulta al radar en 60 s', async () => {
+    const mk = (al, icao, n) => ({ airport: 'PMI', type: 'S', row: row({ iataCompania: al, oaciCompania: icao, numVuelo: n, iataOtro: 'LHR', codigosCompania: 'YW,ANE,,,,', horaProgramada: '10:00:00', horaEstimada: '10:05:00', estado: 'BOR' }) });
+    const state = createState();
+    await runCycle(state, { ...deps, fetchAenaFn: async () => ({ entries: [...entries, mk('IB', 'IBE', '8001'), mk('VY', 'VLG', '9001')], failed: [] }) });
+    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => ({ ac: [] }) }));
+    const nowMs = Date.parse('2026-09-24T09:00:00Z');
+    await radarResponse(state, '/radar/IB/8001.json', { fetchFn, nowMs, pauseMs: 0 });
+    const calls = fetchFn.mock.calls.length;
+    const r2 = JSON.parse((await radarResponse(state, '/radar/VY/9001.json', { fetchFn, nowMs: nowMs + 20000, pauseMs: 0 })).body);
+    expect(fetchFn.mock.calls.length).toBe(calls);
+    expect(r2.state).toBe('sin-datos');
+  });
+});

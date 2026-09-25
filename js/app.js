@@ -161,7 +161,7 @@ function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs 
     number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg, schedule.al), operator: operatorName(photos, leg, schedule.al),
     route: `${origin.city} a ${destination.city}`,
     // Estado mostrado: con la misma llegada visible que la ficha (Aena o estimación Turbi); ver presentStatus.
-    status: presentStatus({ leg, city: destination.city, visibleArrivalMs }),
+    status: presentStatus({ leg, city: destination.city, visibleArrivalMs, arrivalSource: arr ? 'aena' : 'turbi' }),
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: !arr,
     dep: leg.sd ? { date: leg.d, time: leg.sd, est: dep.time !== leg.sd ? dep.time : null, late: isLate(leg, 'dep'), terminal: leg.td, gate: leg.g }
       : depEstimate,

@@ -72,11 +72,19 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   const cached = state.radar.get(path);
   if (cached && nowMs - cached.at < RADAR_CACHE_MS) return { status: 200, headers: HEADERS, body: cached.body };
   const leg = (state.legs ?? []).find(l => l.al === m[1] && l.n === m[2] && needsRadar(l, nowMs));
+  // Mismo avión (códigos compartidos): una sola consulta por vuelo físico cada 60 s.
+  const phys = leg && `phys|${leg.d}|${leg.o}|${leg.a}|${leg.sd ?? `L${leg.sa}`}`;
+  const shared = phys && state.radar.get(phys);
+  if (shared && nowMs - shared.at < RADAR_CACHE_MS) {
+    state.radar.set(path, shared);
+    return { status: 200, headers: HEADERS, body: shared.body };
+  }
   const result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd), fetchFn, pauseMs, nowMs,
     dest: airports[leg.a] ? [airports[leg.a][2], airports[leg.a][3]] : null, origin: airports[leg.o] ? [airports[leg.o][2], airports[leg.o][3]] : null }) : { state: 'no-aplica' };
   const body = JSON.stringify({ ...result, checked: new Date(nowMs).toISOString() });
   if (state.radar.size > 500) state.radar.clear();
   state.radar.set(path, { at: nowMs, body });
+  if (phys) state.radar.set(phys, { at: nowMs, body });
   return { status: 200, headers: HEADERS, body };
 }
 

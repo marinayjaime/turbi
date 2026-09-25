@@ -9,6 +9,7 @@ const UA = 'Turbi/1.0 (+https://github.com/marinayjaime/turbi)';
 const MAX_SEEN_S = 180; // en zonas con poca cobertura las señales llegan más espaciadas
 const PAUSE_MS = 1500; // espera antes de reintentar (adsb.lol responde 429 si se le pregunta demasiado seguido)
 const RETRIES = 2;
+const MAX_LOOKUPS = 4; // heurística: como mucho 4 indicativos por vuelo (códigos compartidos)
 const WINDOW_H = 20; // se mira el radar hasta 20 h después de la salida
 const CANARY = new Set(['LPA', 'TFN', 'TFS', 'ACE', 'FUE', 'SPC', 'VDE', 'GMZ']);
 const DEPARTED = 'BOR'; // Aena (salida): Finalizado = ha despegado
@@ -26,8 +27,13 @@ function departureMs(leg) {
 }
 
 // Solo si Aena dice que ha salido y no informa de la llegada (destino fuera de Aena).
+// En el aire según Aena: salida «Finalizado» sin estado de llegada (destino extranjero) o el aeropuerto de llegada
+// dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no despegó, ya llegó, cancelado o desviado.
 export function needsRadar(leg, nowMs) {
-  if ((leg.std ?? leg.st) !== DEPARTED || leg.sta || !leg.icao) return false;
+  const flags = [leg.st, leg.std, leg.sta];
+  if (!leg.icao || flags.includes('CAN') || flags.includes('DES')) return false;
+  const inAir = ['FLY', 'FNL'].includes(leg.sta) || ((leg.std ?? leg.st) === DEPARTED && !leg.sta);
+  if (!inAir) return false;
   const dep = departureMs(leg);
   return dep !== null && nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;
 }
@@ -81,7 +87,11 @@ export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs
   // Indicativo = OACI + número. Si el número tiene 1 o 2 cifras, se prueba después la variante con ceros a la izquierda
   // (Air Europa UX15 emite «AEA015»). No se cambia el número original ni se prueba ninguna otra transformación.
   const variants = l => [`${l.icao}${l.n}`, ...(/^\d{1,2}$/.test(l.n) ? [`${l.icao}${l.n.padStart(3, '0')}`] : [])];
-  const callsigns = [...new Set([leg, ...siblings].filter(l => l.icao).flatMap(variants))];
+  // Límite de adsb.lol (~1 petición/s): si Aena dice quién opera, solo su indicativo; si no, el número buscado primero
+  // y sus códigos compartidos, como mucho MAX_LOOKUPS consultas.
+  const group = [leg, ...siblings].filter(l => l.icao);
+  const operator = leg.op ? group.filter(l => l.al === leg.op) : [];
+  const callsigns = [...new Set((operator.length ? operator : group).flatMap(variants))].slice(0, MAX_LOOKUPS);
   let failed = false, a = null, landed = null, callsign = callsigns[0];
   const ctx = { dest, origin, depMs: departureMs(leg), nowMs };
   for (const [i, cs] of callsigns.entries()) {

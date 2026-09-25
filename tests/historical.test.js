@@ -8,6 +8,7 @@ import { photoFor } from '../js/airline-photos.js';
 import { buildRoute } from '../js/route.js';
 import { legArrival } from '../js/schedule.js';
 import { localToUtcMs } from '../js/time.js';
+import { presentStatus } from '../js/radar.js';
 
 const MAD = 'Europe/Madrid';
 const airports = JSON.parse(readFileSync('data/airports.json', 'utf8'));
@@ -40,6 +41,11 @@ describe('regresión EI737 del 24/09 (fila real del histórico; sin lógica espe
   it('llegada estimada retrospectivamente: 21:12 Palma + 157 min (PMI–DUB) = 22:49 Dublín → 22:50, rotulada', () => {
     expect(routeMin('PMI', 'DUB')).toBe(157);
     expect(c.arrival).toEqual({ date: '2026-09-24', time: '22:50', estimated: true, note: ROUTE_NOTE });
+  });
+  it('estado: «Aterrizado» estimado (estimated-landed), varias horas después de la llegada estimada visible', () => {
+    const arrivalMs = localToUtcMs(c.arrival.date, c.arrival.time, 'Europe/Dublin');
+    expect(presentStatus({ leg, city: 'Dublin', visibleArrivalMs: arrivalMs, arrivalSource: 'turbi', nowMs: now }))
+      .toEqual({ text: 'Aterrizado', tone: 'ok', note: 'Según la llegada estimada por Turbi', landing: 'estimated-landed' });
   });
   it('foto verificada de Aer Lingus, representativa (el histórico no conserva el modelo)', () => {
     expect(c.photo).toMatchObject({ representative: true, shared: true });

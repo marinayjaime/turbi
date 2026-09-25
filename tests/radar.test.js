@@ -8,9 +8,14 @@ const radar = ac => vi.fn(async () => ({ ok: true, json: async () => ({ ac }) })
 const find = (f, over) => findOnRadar({ leg: leg(over), fetchFn: f, pauseMs: 0 });
 
 describe('cuándo se mira el radar', () => {
+  it('también si el aeropuerto de llegada dice «en vuelo» o «aproximándose» (FLY/FNL); nunca llegado, cancelado o desviado', () => {
+    expect(needsRadar(leg({ a: 'MAD', sta: 'FLY', st: 'FLY' }), now)).toBe(true);
+    expect(needsRadar(leg({ a: 'MAD', sta: 'FNL', st: 'FNL' }), now)).toBe(true);
+    for (const sta of ['LND', 'IBK', 'BOR', 'DES', 'CAN']) expect(needsRadar(leg({ sta }), now)).toBe(false);
+  });
   it('solo si Aena dice que ha salido y no informa de la llegada', () => {
     expect(needsRadar(leg(), now)).toBe(true);
-    expect(needsRadar(leg({ sta: 'FLY' }), now)).toBe(false); // destino español: lo dice Aena
+    expect(needsRadar(leg({ sta: 'LND' }), now)).toBe(false); // llegada confirmada por Aena (antes: FLY; ahora FLY sí consulta)
     expect(needsRadar(leg({ std: 'EMB', st: 'EMB' }), now)).toBe(false);
     expect(needsRadar(leg({ d: '2026-09-23', ed: '2026-09-23T08:00' }), now)).toBe(false); // hace más de 20 h
     expect(needsRadar(leg({ icao: null }), now)).toBe(false);
@@ -137,5 +142,24 @@ describe('aterrizaje confirmado por ADS-B (conservador)', () => {
   });
   it('antes del tiempo mínimo físico desde la salida (p. ej. el avión de ayer aparcado en el destino) → no', async () => {
     expect((await land([onGround()], { nowMs: Date.parse('2026-09-24T19:40:00Z') })).state).toBe('sin-datos'); // 30 min tras salir
+  });
+});
+
+describe('pocas consultas a adsb.lol con códigos compartidos', () => {
+  const asked = f => f.mock.calls.map(c => c[0].split('/').pop());
+  const none = () => vi.fn(async () => ({ ok: true, json: async () => ({ ac: [] }) }));
+  const sib = (al, icao, n, op) => leg({ al, icao, n, a: 'MAD', ...(op ? { op } : {}) });
+  it('si Aena dice quién opera, solo su indicativo', async () => {
+    const f = none();
+    const group = ['IB|IBE|1243', 'VY|VLG|5554', 'QR|QTR|8085', 'LA|LAN|1730'].map(x => sib(...x.split('|'), 'YW'));
+    group.push(sib('YW', 'ANE', '1243', 'YW'));
+    await findOnRadar({ leg: group[0], siblings: group, fetchFn: f, pauseMs: 0 });
+    expect(asked(f)).toEqual(['ANE1243']);
+  });
+  it('si no se sabe quién opera: el número buscado primero y como mucho 4 consultas en total', async () => {
+    const f = none();
+    const group = ['IB|IBE|1668', 'I2|IBS|1668', 'VY|VLG|5273', 'QR|QTR|5079', 'LA|LAN|1760', 'CZ|CSN|1353'].map(x => sib(...x.split('|')));
+    await findOnRadar({ leg: group[0], siblings: group, fetchFn: f, pauseMs: 0 });
+    expect(asked(f)).toEqual(['IBE1668', 'IBS1668', 'VLG5273', 'QTR5079']);
   });
 });

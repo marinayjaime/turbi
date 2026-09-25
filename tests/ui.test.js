@@ -297,15 +297,15 @@ describe('llegada estimada por Turbi (Aena no publica la llegada)', () => {
   });
 });
 
-describe('vuelo pasado sin llegada oficial', () => {
-  it('«Histórico» neutro, con el contexto debajo, y la llegada estimada de Turbi si existe', () => {
-    const html = flightCardHtml({ al: 'EI', title: 'x', route: 'Palma a Dublín', o: 'PMI', a: 'DUB', duration: 155, durationEstimated: true,
-      status: { text: 'Histórico', tone: 'stale', note: 'Aena no publica la llegada a este destino' },
-      dep: { date: '2026-09-24', time: '20:55', est: '21:10', late: true, terminal: null, gate: null },
-      arr: { date: '2026-09-24', time: '22:35', estimated: true, note: 'Última estimación Turbi disponible · sin datos recientes (hace 5 h)' }, aircraft: null });
-    expect(html).toContain('<span class="status tone-stale">Histórico</span><p class="status-note">Aena no publica la llegada a este destino</p>');
-    expect(html).toContain('<p class="big estimated">22:35</p>');
-    expect(html).not.toMatch(/Ha salido|aterriz|no confirmada/);
+describe('aterrizado estimado', () => {
+  it('«Aterrizado» con la nota de que es según la llegada estimada, y la llegada estimada visible', () => {
+    const html = flightCardHtml({ al: 'EI', title: 'x', route: 'Palma a Dublín', o: 'PMI', a: 'DUB', duration: 157, durationEstimated: true,
+      status: { text: 'Aterrizado', tone: 'ok', note: 'Según la llegada estimada por Turbi', landing: 'estimated-landed' },
+      dep: { date: '2026-09-24', time: '20:55', est: '21:12', late: true, terminal: null, gate: null },
+      arr: { date: '2026-09-24', time: '22:50', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' }, aircraft: null, past: true });
+    expect(html).toContain('<span class="status tone-ok">Aterrizado</span><p class="status-note">Según la llegada estimada por Turbi</p>');
+    expect(html).toContain('<p class="big estimated">22:50</p>');
+    expect(html).not.toMatch(/Histórico|Ha salido|telemetry/);
   });
 });
 
