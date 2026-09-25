@@ -5,6 +5,7 @@
 // (p. ej. Aer Lingus EIN7LM), aquí no se encuentra: la identificación excepcional por ruta está en server/identify.mjs.
 // Todas las consultas a adsb.lol pasan por el limitador global de server/adsb.mjs.
 import { adsbGet, adsbLimiter } from './adsb.mjs';
+import { buildRoute } from '../js/route.js';
 
 export const MAX_SEEN_S = 180; // en zonas con poca cobertura las señales llegan más espaciadas
 const PAUSE_MS = 1500; // espera antes de reintentar (adsb.lol responde 429 si se le pregunta demasiado seguido)
@@ -14,29 +15,53 @@ const WINDOW_H = 20; // se mira el radar hasta 20 h después de la salida
 const CANARY = new Set(['LPA', 'TFN', 'TFS', 'ACE', 'FUE', 'SPC', 'VDE', 'GMZ']);
 const DEPARTED = 'BOR'; // Aena (salida): Finalizado = ha despegado
 
-// Hora local de salida (en el aeropuerto de origen, España) → milisegundos UTC.
-export function departureMs(leg) {
-  const local = leg.ed ?? (leg.sd ? `${leg.d}T${leg.sd}` : null);
+// Hora local de Aena (en un aeropuerto español, de la península o de Canarias) → milisegundos UTC.
+function aenaLocalMs(local, iata) {
   if (!local) return null;
   const guess = Date.parse(`${local}:00Z`);
-  const tz = CANARY.has(leg.o) ? 'Atlantic/Canary' : 'Europe/Madrid';
+  const tz = CANARY.has(iata) ? 'Atlantic/Canary' : 'Europe/Madrid';
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     .formatToParts(guess).map(x => [x.type, x.value]));
   const offset = Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:00Z`) - guess;
   return guess - offset;
 }
 
+// Salida según Aena (solo si Aena controla el aeropuerto de origen), en UTC.
+export function departureMs(leg) {
+  return aenaLocalMs(leg.ed ?? (leg.sd ? `${leg.d}T${leg.sd}` : null), leg.o);
+}
+
+// Llegada según Aena (estimada o, si no, programada), en UTC.
+export function arrivalMs(leg) {
+  return aenaLocalMs(leg.ea ?? (leg.sa ? `${leg.d}T${leg.sa}` : null), leg.a);
+}
+
+// Salida para la coherencia temporal de la identificación por ruta: la de Aena si existe; si no (origen extranjero),
+// ESTIMADA = llegada de Aena − duración estimada de la ruta (la misma que usa la app para «Salida estimada»).
+// Solo de uso interno: nunca se presenta como hora oficial. origin/dest: [lat, lon].
+export function estimatedDepartureMs(leg, origin, dest) {
+  const dep = departureMs(leg);
+  if (dep !== null) return dep;
+  const arr = arrivalMs(leg);
+  if (arr === null || !origin || !dest) return null;
+  return arr - buildRoute({ lat: origin[0], lon: origin[1] }, { lat: dest[0], lon: dest[1] }, 0).durationMin * 60000;
+}
+
 // Puede estar en el aire según Aena: salida confirmada («Finalizado», BOR) y llegada todavía no final (sin estado o
 // uno intermedio: INI, SCH, HOR, TMA…), o la llegada dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no despegó,
 // ya llegó (LND, IBK, OPE, OPF o BOR en la llegada), cancelado o desviado. Misma regla que la app (js/radar.js).
+// Ventana: desde la salida de Aena hasta WINDOW_H después. Si Aena no tiene la salida (origen extranjero: solo
+// controla la llegada) y dice FLY/FNL, basta con eso para el indicativo; la ventana se mide con su hora de llegada.
 const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 export function needsRadar(leg, nowMs) {
   const flags = [leg.st, leg.std, leg.sta];
   if (!leg.icao || flags.includes('CAN') || flags.includes('DES') || ARR_FINAL.has(leg.sta)) return false;
-  const inAir = ['FLY', 'FNL'].includes(leg.sta) || (leg.std ?? leg.st) === DEPARTED;
-  if (!inAir) return false;
+  const arrivingNow = ['FLY', 'FNL'].includes(leg.sta);
+  if (!arrivingNow && (leg.std ?? leg.st) !== DEPARTED) return false;
   const dep = departureMs(leg);
-  return dep !== null && nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;
+  if (dep !== null) return nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;
+  const arr = arrivingNow ? arrivalMs(leg) : null;
+  return arr !== null && Math.abs(nowMs - arr) < WINDOW_H * 3600000;
 }
 
 export function distanceKm([la1, lo1], [la2, lo2]) {

@@ -101,7 +101,7 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   // 3) No aparece con su indicativo: identificación por ruta EN SEGUNDO PLANO (nunca se espera aquí). La respuesta
   //    «identificando» no se guarda en caché, para que la app pueda volver a preguntar en unos segundos.
   let identifying = false;
-  if (result.state === 'sin-datos' && phys && !hexes.get(phys) && origin && dest && canIdentify(leg, state.legs)) {
+  if (result.state === 'sin-datos' && phys && !hexes.get(phys) && origin && dest && canIdentify(leg, state.legs, { origin, dest })) {
     hexes.resolve(phys, () => identifyByZone({ leg, legs: state.legs, origin, dest, nowMs, fetchFn }), nowMs).catch(() => {});
     identifying = hexes.busy(phys);
   }

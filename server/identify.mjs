@@ -9,7 +9,7 @@
 //  - Nunca hay mapeos fijos de indicativos ni de hex: los indicativos operativos se reasignan cada día.
 // Todas las consultas a adsb.lol pasan por el limitador global (server/adsb.mjs).
 import { adsbGet, adsbLimiter } from './adsb.mjs';
-import { departureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S } from './radar.mjs';
+import { estimatedDepartureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S } from './radar.mjs';
 import { aircraftName } from '../js/plain.js';
 
 // HEURÍSTICAS AJUSTABLES (valores razonables, no demostrados; revisar con casos reales). Todas las funciones aceptan
@@ -84,10 +84,14 @@ const departed = leg => (leg.std ?? leg.st) === 'BOR' || ['FLY', 'FNL'].includes
 const cancelled = leg => [leg.st, leg.std, leg.sta].some(f => f === 'CAN' || f === 'DES');
 const operatorIcao = (leg, legs) => (leg.op === leg.al ? leg.icao : legs.find(l => l.al === leg.op && l.icao)?.icao) ?? null;
 
-// ¿Se puede intentar? Aena confirma la salida, la operadora (y su código OACI) y el tipo de avión.
-export function canIdentify(leg, legs = []) {
-  return Boolean(leg && departed(leg) && !cancelled(leg) && leg.op && leg.ac && operatorIcao(leg, legs) && departureMs(leg) !== null);
+// ¿Se puede intentar? Aena confirma la salida (BOR) o que está en el aire (FLY/FNL), la operadora (y su código OACI),
+// el tipo de avión y una hora de salida: la suya o, si el origen es extranjero, la ESTIMADA desde su llegada.
+export function canIdentify(leg, legs = [], { origin = null, dest = null } = {}) {
+  return Boolean(leg && departed(leg) && !cancelled(leg) && leg.op && leg.ac && operatorIcao(leg, legs)
+    && estimatedDepartureMs(leg, origin, dest) !== null);
 }
+// Mismo vuelo físico: misma salida de Aena o, sin ella (origen extranjero), misma llegada.
+const physOf = l => l.sd ?? `L${l.sa}`;
 
 // Ruta de un indicativo en adsbdb, con caché por indicativo (por cliente HTTP). Los fallos no se guardan.
 const routeCaches = new WeakMap();
@@ -114,13 +118,14 @@ async function fetchRoute(callsign, fetchFn) {
 // Identificación por zona. Devuelve { state: 'identificado', hex, callsign } | { state: 'ambiguo' | 'sin-datos' |
 // 'no-disponible' | 'no-aplica' }. Nunca elige entre varios.
 export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Date.now(), fetchFn = fetch, limiter = adsbLimiter, limits = LIMITS }) {
-  if (!canIdentify(leg, legs) || !origin || !dest) return { state: 'no-aplica' };
-  const depMs = departureMs(leg);
+  if (!origin || !dest || !canIdentify(leg, legs, { origin, dest })) return { state: 'no-aplica' };
+  const depMs = estimatedDepartureMs(leg, origin, dest);
   const elapsedMin = (nowMs - depMs) / 60000;
   if (elapsedMin <= 0) return { state: 'no-aplica' };
   // Otro vuelo de la misma operadora y ruta en la franja (otro avión físico) → podría confundirse: no se intenta.
   const rival = legs.some(l => l !== leg && l.o === leg.o && l.a === leg.a && (l.op ?? l.al) === leg.op
-    && l.sd !== leg.sd && departureMs(l) !== null && Math.abs(departureMs(l) - depMs) <= limits.sameRouteWindowMin * 60000);
+    && physOf(l) !== physOf(leg) && estimatedDepartureMs(l, origin, dest) !== null
+    && Math.abs(estimatedDepartureMs(l, origin, dest) - depMs) <= limits.sameRouteWindowMin * 60000);
   if (rival) return { state: 'ambiguo' };
 
   // Zonas a lo largo de la ruta: primero donde debería ir, después delante y detrás (sin pasar de lo físicamente posible).
@@ -171,7 +176,7 @@ export async function trackByHex({ entry, leg, origin, dest, nowMs = Date.now(),
   const ac = res.data?.ac ?? [];
   const a = ac.find(x => x.hex === entry.hex) ?? ac[0];
   if (!a) return { observation: 'incompleta', result: null };
-  const depMs = departureMs(leg);
+  const depMs = estimatedDepartureMs(leg, origin, dest);
   const cs = a.flight?.trim();
   if (a.alt_baro === 'ground') {
     const pos = Number.isFinite(a.lat) && Number.isFinite(a.lon) ? [a.lat, a.lon] : null;
