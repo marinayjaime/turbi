@@ -8,14 +8,22 @@
 import { legArrival } from './schedule.js';
 
 const MIN = 60000;
-const VALID_KMH = [250, 1150]; // fuera de aquí (rodando, dato imposible) la velocidad ADS-B no se usa
-const PLAN_KMH = 800; // velocidad de crucero supuesta si la medida no sirve
-const DESCENT_KM = 150; // los últimos ~150 km son descenso y aproximación
-const DESCENT_MIN = 23; // …que llevan unos 23 min, con tráfico
-const ROUTE_FACTOR = 1.05; // la ruta real es algo más larga que la línea recta
-const HOLD_MIN = 60; // una ETA en vuelo se conserva hasta 60 min sin radar
-const JUMP_KM = 100; // la distancia restante no puede crecer más de esto entre dos lecturas
-const MAX_KMH_BETWEEN = 1300; // ni bajar más rápido que esto
+
+// ── Parámetros ─────────────────────────────────────────────────────────────────────────────────────────────
+// TODOS son HEURÍSTICAS razonables, NO valores demostrados. Se validarán con el histórico (ETA predicha frente a
+// llegada real) y se ajustarán. No presentarlos como exactos.
+const VALID_KMH = [250, 1150]; // heurística: fuera de aquí (rodando, dato imposible) la velocidad ADS-B no se usa
+const PLAN_KMH = 800; // heurística: velocidad de crucero supuesta si la medida no sirve (la misma que route.js)
+const DESCENT_KM = 150; // heurística: los últimos ~150 km son descenso y aproximación
+const DESCENT_MIN = 23; // heurística: …que llevan unos 23 min, con tráfico
+const ROUTE_FACTOR = 1.05; // heurística: la ruta real es algo más larga que la línea recta
+const APPROACH_FACTOR = 1.3, APPROACH_KMH = 400, APPROACH_MIN = 5; // heurística: < 100 km (vectores, aproximación)
+const WEIGHTS = { far: 0.4, mid: 0.7, near: 0.9 }; // heurística: peso del radar a > 500 km, 100–500 km y < 100 km
+const HOLD_MIN = 60; // heurística: una ETA en vuelo se conserva hasta 60 min sin radar…
+const STALE_MIN = 12; // heurística: …pero a partir de 12 min es «la última disponible», con confianza baja
+const JUMP_KM = 100; // heurística: la distancia restante no puede crecer más de esto entre dos lecturas
+const MAX_KMH_BETWEEN = 1300; // heurística: ni bajar más rápido que esto
+const MAX_STEP_MIN = { far: 8, near: 4 }; // heurística: cuánto puede moverse la ETA por actualización
 
 const cancelled = leg => [leg.st, leg.std, leg.sta].includes('CAN');
 const diverted = leg => [leg.st, leg.std, leg.sta].includes('DES');
@@ -42,18 +50,25 @@ export function flightPhase({ altFt, vRateFpm, remainingKm }) {
 // Minutos que le quedan según el radar. No se toma la velocidad instantánea como media hasta el destino:
 // crucero hasta el inicio del descenso y un tiempo fijo de descenso y aproximación; cerca, velocidad de aproximación.
 function radarRemainingMin({ remainingKm, kmh }, phase) {
-  if (remainingKm < 100) return (remainingKm * 1.3) / 400 * 60 + 5; // vectores y aproximación
+  if (remainingKm < 100) return (remainingKm * APPROACH_FACTOR) / APPROACH_KMH * 60 + APPROACH_MIN; // vectores y aproximación
   const speedOk = kmh >= VALID_KMH[0] && kmh <= VALID_KMH[1];
   const v = phase === 'cruise' && speedOk ? kmh : PLAN_KMH;
   return Math.max(0, remainingKm * ROUTE_FACTOR - DESCENT_KM) / v * 60 + DESCENT_MIN;
 }
 
-// Peso del radar frente al plan: más cuanto más cerca; menos en la subida o con velocidad no válida.
-function radarWeight(remainingKm, phase, speedOk) {
-  let w = remainingKm > 500 ? 0.4 : remainingKm >= 100 ? 0.7 : 0.9;
+// Antigüedad de la señal ADS-B (s): una posición de hace 2–3 min no vale lo mismo que una de hace 5 s.
+// Cerca del destino (donde el avión cambia rápido de rumbo y velocidad) la penalización es mayor. Heurística.
+function freshness(seenS = 0, remainingKm) {
+  const f = seenS <= 15 ? 1 : seenS <= 60 ? 0.8 : seenS <= 120 ? 0.6 : 0.4;
+  return remainingKm < 100 ? f * f : f;
+}
+
+// Peso del radar frente al plan: más cuanto más cerca; menos en la subida, con velocidad no válida o señal vieja.
+function radarWeight({ remainingKm, seenS }, phase, speedOk) {
+  let w = remainingKm > 500 ? WEIGHTS.far : remainingKm >= 100 ? WEIGHTS.mid : WEIGHTS.near;
   if (phase === 'climb') w *= 0.5;
   if (!speedOk && remainingKm >= 100) w *= 0.5;
-  return w;
+  return w * freshness(seenS, remainingKm);
 }
 
 const radarUsable = r => r?.state === 'volando' && Number.isFinite(r.remainingKm);
@@ -69,13 +84,19 @@ function jumped(radar, prev, nowMs) {
 // Suavizado: la ETA se mueve como mucho la mitad de la diferencia y nunca más de 8 min (4 min cerca del destino).
 function smooth(rawMs, prev, nowMs, remainingKm) {
   if (!prev || prev.method !== 'estimated-inflight' || nowMs - prev.at > HOLD_MIN * MIN) return rawMs;
-  const maxStep = (remainingKm < 100 ? 4 : 8) * MIN;
+  const maxStep = (remainingKm < 100 ? MAX_STEP_MIN.near : MAX_STEP_MIN.far) * MIN;
   const step = Math.max(-maxStep, Math.min(maxStep, (rawMs - prev.ms) * 0.5));
   return prev.ms + step;
 }
 
 const result = (ms, tz, method, confidence, extra = {}) =>
   ({ ...localParts(round5(ms), tz), source: 'turbi', method, confidence, ms, ...extra });
+
+// Última ETA en vuelo, conservada sin radar: con su antigüedad; pasado STALE_MIN, confianza baja.
+function held(prev, nowMs, tz) {
+  const ageMin = Math.round((nowMs - prev.at) / MIN);
+  return result(prev.ms, tz, 'estimated-inflight', ageMin < STALE_MIN ? prev.confidence ?? 'low' : 'low', { held: true, ageMin });
+}
 
 // leg: tramo de Aena · depUtcMs: salida (real/estimada/programada) en UTC · plannedMin: duración estimada ·
 // tz: zona horaria del destino · radar: respuesta de /radar (o null) · prev: última ETA en vuelo de este vuelo.
@@ -91,10 +112,10 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
   const holdPrev = prev?.method === 'estimated-inflight' && nowMs - prev.at <= HOLD_MIN * MIN;
 
   if (radarUsable(radar)) {
-    if (holdPrev && jumped(radar, prev, nowMs)) return result(prev.ms, tz, 'estimated-inflight', 'low', { held: true });
+    if (holdPrev && jumped(radar, prev, nowMs)) return held(prev, nowMs, tz);
     const phase = flightPhase(radar);
     const speedOk = radar.kmh >= VALID_KMH[0] && radar.kmh <= VALID_KMH[1];
-    const w = radarWeight(radar.remainingKm, phase, speedOk);
+    const w = radarWeight(radar, phase, speedOk);
     const radarMs = nowMs + radarRemainingMin(radar, phase) * MIN;
     const floor = nowMs + (radar.remainingKm < 30 ? 3 : 5) * MIN; // en el aire: nunca «ya ha llegado» por cálculo
     const raw = Math.max(floor, w * radarMs + (1 - w) * planMs);
@@ -103,15 +124,17 @@ export function estimateArrival({ leg, depUtcMs, plannedMin, tz, nowMs = Date.no
     return result(ms, tz, 'estimated-inflight', confidence, { remainingKm: radar.remainingKm, phase });
   }
   // Sin radar ahora (lo perdió un momento): la última ETA en vuelo sigue valiendo un rato.
-  if (holdPrev) return result(prev.ms, tz, 'estimated-inflight', 'low', { held: true });
+  if (holdPrev) return held(prev, nowMs, tz);
   return result(planMs, tz, 'estimated-preflight', 'low');
 }
 
 // Lado «Llegada» de la ficha cuando la hora es una estimación Turbi (con Aena, la ficha usa su hora tal cual).
 export function etaSide(eta) {
   if (eta?.source !== 'turbi') return null;
-  return { date: eta.date, time: eta.time, estimated: true,
-    note: eta.method === 'estimated-inflight' ? 'Estimación Turbi actualizada en vuelo' : 'Estimación Turbi' };
+  const note = eta.method !== 'estimated-inflight' ? 'Estimación Turbi'
+    : eta.held && eta.ageMin >= STALE_MIN ? `Última estimación Turbi disponible (hace ${eta.ageMin} min, sin señal de radar desde entonces)`
+    : 'Estimación Turbi actualizada en vuelo';
+  return { date: eta.date, time: eta.time, estimated: true, note };
 }
 
 // Última ETA en vuelo de cada vuelo: en memoria durante la sesión y, para que sobreviva a reabrir la app
@@ -132,7 +155,7 @@ export function recallEta(key, storage = globalThis.localStorage) {
 
 export function rememberEta(key, eta, nowMs = Date.now(), storage = globalThis.localStorage) {
   if (eta?.method !== 'estimated-inflight' || eta.held) return;
-  const v = { ms: eta.ms, at: nowMs, method: eta.method, remainingKm: eta.remainingKm };
+  const v = { ms: eta.ms, at: nowMs, method: eta.method, remainingKm: eta.remainingKm, confidence: eta.confidence };
   memory.set(key, v);
   try {
     const all = JSON.parse(storage?.getItem(STORE) ?? '{}');

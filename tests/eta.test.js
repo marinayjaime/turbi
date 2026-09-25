@@ -32,13 +32,18 @@ describe('estimación Turbi', () => {
     // Plan: 17:30 UTC. Radar: 600 km en crucero → antes. Mezcla prudente (a más de 500 km, 40 % radar): ~17:17 UTC → 18:15 Londres.
     expect(r.time).toBe('18:15');
   });
-  it('4. el radar desaparece un rato: se conserva la última ETA válida', () => {
+  it('4. el radar desaparece un rato: se conserva la última ETA válida, con la confianza que tenía', () => {
     const now = dep('2026-09-25', '18:10');
-    const prev = { ms: dep('2026-09-25', '19:17'), at: now - 10 * MIN, method: 'estimated-inflight', remainingKm: 500 };
+    const prev = { ms: dep('2026-09-25', '19:17'), at: now - 10 * MIN, method: 'estimated-inflight', remainingKm: 500, confidence: 'medium' };
     for (const radar of [{ state: 'sin-datos' }, { state: 'no-disponible' }, null]) {
       const r = estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: now, radar, prev }));
-      expect(r).toMatchObject({ time: '18:15', method: 'estimated-inflight', confidence: 'low', held: true });
+      expect(r).toMatchObject({ time: '18:15', method: 'estimated-inflight', confidence: 'medium', held: true, ageMin: 10 });
     }
+  });
+  it('4b. sin radar más de 12 min: sigue la última ETA, pero con confianza baja (la ficha dice que es la última disponible)', () => {
+    const now = dep('2026-09-25', '18:30');
+    const prev = { ms: dep('2026-09-25', '19:17'), at: now - 30 * MIN, method: 'estimated-inflight', remainingKm: 500, confidence: 'medium' };
+    expect(estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: now, radar: null, prev }))).toMatchObject({ confidence: 'low', held: true, ageMin: 30 });
   });
   it('5. cancelado: sin ETA', () => {
     expect(estimateArrival(base({ leg: intl({ st: 'CAN', std: 'CAN' }) }))).toBeNull();
@@ -73,6 +78,19 @@ describe('estimación Turbi', () => {
       shown.push(r.time);
     });
     expect(new Set(shown).size).toBeLessThanOrEqual(2);
+  });
+  it('señal ADS-B vieja: pesa menos que una reciente, sobre todo cerca del destino', () => {
+    const at = (seenS, km) => estimateArrival(base({ leg: intl({ std: 'BOR', st: 'BOR' }), nowMs: dep('2026-09-25', '19:00'), radar: cruise({ seenS, remainingKm: km }) }));
+    const planMs = dep('2026-09-25', '19:30');
+    for (const km of [600, 80]) {
+      const fresh = at(5, km), old = at(150, km);
+      // Con la señal vieja, la mezcla queda más cerca del plan (el radar pesa menos)
+      expect(Math.abs(old.ms - planMs)).toBeLessThan(Math.abs(fresh.ms - planMs));
+      expect(old.confidence).toBe('low');
+    }
+    // Cerca del destino la penalización es mayor: la señal vieja se aleja más de la fresca que lejos del destino
+    const gap = km => Math.abs(at(150, km).ms - at(5, km).ms) / Math.abs(at(5, km).ms - planMs);
+    expect(gap(80)).toBeGreaterThan(gap(600));
   });
   it('salto de posición imposible respecto a la última lectura: se conserva la ETA anterior', () => {
     const now = dep('2026-09-25', '18:10');
@@ -110,8 +128,8 @@ describe('última ETA en vuelo (memoria de la sesión y almacenamiento)', () => 
     const st = fake();
     rememberEta('FR1|2026-09-25', { method: 'estimated-preflight', ms: 1 }, 0, st);
     expect(recallEta('FR1|2026-09-25', st)).toBeNull();
-    rememberEta('FR1|2026-09-25', { method: 'estimated-inflight', ms: 5, remainingKm: 400 }, 100, st);
-    expect(recallEta('FR1|2026-09-25', st)).toEqual({ ms: 5, at: 100, method: 'estimated-inflight', remainingKm: 400 });
+    rememberEta('FR1|2026-09-25', { method: 'estimated-inflight', ms: 5, remainingKm: 400, confidence: 'medium' }, 100, st);
+    expect(recallEta('FR1|2026-09-25', st)).toEqual({ ms: 5, at: 100, method: 'estimated-inflight', remainingKm: 400, confidence: 'medium' });
   });
   it('sobrevive a reabrir la app (se lee del almacenamiento si no está en memoria)', () => {
     const st = fake();
@@ -125,6 +143,9 @@ describe('lado «Llegada» de la ficha con la estimación', () => {
   it('Turbi antes y en vuelo; Aena no pasa por aquí; sin estimación, nada', () => {
     expect(etaSide({ date: '2026-09-25', time: '18:30', source: 'turbi', method: 'estimated-preflight' })).toEqual({ date: '2026-09-25', time: '18:30', estimated: true, note: 'Estimación Turbi' });
     expect(etaSide({ date: '2026-09-25', time: '18:15', source: 'turbi', method: 'estimated-inflight' }).note).toBe('Estimación Turbi actualizada en vuelo');
+    expect(etaSide({ date: '2026-09-25', time: '18:15', source: 'turbi', method: 'estimated-inflight', held: true, ageMin: 8 }).note).toBe('Estimación Turbi actualizada en vuelo');
+    expect(etaSide({ date: '2026-09-25', time: '18:15', source: 'turbi', method: 'estimated-inflight', held: true, ageMin: 25 }).note)
+      .toBe('Última estimación Turbi disponible (hace 25 min, sin señal de radar desde entonces)');
     expect(etaSide({ date: '2026-09-25', time: '20:10', source: 'aena', method: 'official' })).toBeNull();
     expect(etaSide(null)).toBeNull();
   });
