@@ -5,14 +5,16 @@
 //    en segundo plano). Una consulta de identificación nunca sale si hay una de radar esperando, y deja más hueco;
 //  - 429: pausa global (Retry-After si viene; si no, 60 s). Al primer 429 se cancelan las consultas de identificación
 //    pendientes. Durante la pausa no se llama a adsb.lol: la respuesta es «rate-limited» en el acto.
-// adsb.lol no publica su límite (medido el 25/09/2026: tras ~3 peticiones seguidas, 429 con 1,1 s y con 2 s).
+// adsb.lol no publica su límite (medido el 25/09/2026: tras ~3 peticiones seguidas, 429 con 1,1 s y con 2 s; en
+// producción, /health mostró 3 aciertos y un 429 a los 1,5 s). Por eso el ritmo es conservador: nunca dos peticiones
+// con menos de 5 s entre sus inicios, sean del vuelo o del usuario que sean.
 const ADSB = 'https://api.adsb.lol/v2';
 // adsb.lol exige un User-Agent con contacto (si no, 403).
 const UA = 'Turbi/1.0 (+https://github.com/marinayjaime/turbi)';
 const TIMEOUT_MS = 8000;
 // Heurísticas ajustables.
-export const ADSB_MIN_INTERVAL_MS = 1100; // radar: separación mínima entre dos peticiones (inicio a inicio)
-export const ADSB_IDENTIFY_INTERVAL_MS = 5000; // identificación: hueco mínimo desde la última petición de cualquier tipo
+export const ADSB_MIN_INTERVAL_MS = 5000; // separación mínima entre dos peticiones cualesquiera (inicio a inicio)
+export const ADSB_IDENTIFY_INTERVAL_MS = 8000; // identificación: hueco mínimo desde la última petición de cualquier tipo
 export const ADSB_DEFAULT_COOLDOWN_MS = 60000; // pausa global tras un 429 sin Retry-After
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

@@ -211,3 +211,19 @@ describe('la sección Turbulencias aparece siempre en la ficha de un vuelo', () 
   });
 });
 
+describe('la ficha nunca espera al radar', () => {
+  it('con el radar sin responder (cola de adsb.lol), la ficha y la sección Turbulencias ya están', async () => {
+    const dep = Date.now() - 40 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    const leg = { d, o: 'PMI', a: 'LBA', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: '738W', op: 'FR' };
+    const base = network({ flights: { FR2311: { name: 'Ryanair', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
+    const stub = vi.fn((url, o) => (String(url).startsWith(`${LIVE_BASE}/radar/`) ? (calls.push(String(url)), new Promise(() => {})) : base(url, o)));
+    await openApp(stub);
+    await search('FR2311', d);
+    await until(() => $('#result .flight') && area().includes(FORECAST_UNAVAILABLE), 'ficha y sección sin esperar al radar');
+    expect(calls.some(u => u.includes('/radar/'))).toBe(true); // el radar sigue pendiente
+    expect($('#result-view').hidden).toBe(false);
+    expect([...document.querySelectorAll('#result h3')].map(h => h.textContent)).toContain('Turbulencias');
+  });
+});
+
