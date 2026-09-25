@@ -8,7 +8,7 @@ import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { fetchAena, madridDate, AIRPORTS } from '../scripts/aena-fetch.mjs';
-import { needsRadar, findOnRadar } from './radar.mjs';
+import { needsRadar, findOnRadar, radarGateFor, plannedMinFor } from './radar.mjs';
 import { canIdentify, identifyByZone, trackByHex, createHexRegistry } from './identify.mjs';
 import { adsbHealth } from './adsb.mjs';
 import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
@@ -74,7 +74,12 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   if (!m) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
   const cached = state.radar.get(path);
   if (cached && nowMs - cached.at < RADAR_CACHE_MS) return { status: 200, headers: HEADERS, body: cached.body };
-  const leg = (state.legs ?? []).find(l => l.al === m[1] && l.n === m[2] && needsRadar(l, nowMs));
+  // Decisión con js/radar-gate.js: none (cero radar) / direct (hex conocido e indicativo) / identify (+ por ruta).
+  const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
+  const tzOf = iata => airports[iata]?.[4] ?? undefined;
+  const gateOpts = l => ({ originTz: tzOf(l.o), destTz: tzOf(l.a), plannedMin: plannedMinFor(coords(l.o), coords(l.a)) });
+  const leg = (state.legs ?? []).find(l => l.al === m[1] && l.n === m[2] && needsRadar(l, nowMs, gateOpts(l)));
+  const gate = leg ? radarGateFor(leg, nowMs, gateOpts(leg)) : null;
   // Mismo avión (códigos compartidos): una sola consulta por vuelo físico cada 60 s.
   const phys = leg && `phys|${leg.d}|${leg.o}|${leg.a}|${leg.sd ?? `L${leg.sa}`}`;
   const shared = phys && state.radar.get(phys);
@@ -82,7 +87,6 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
     state.radar.set(path, shared);
     return { status: 200, headers: HEADERS, body: shared.body };
   }
-  const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
   const origin = leg && coords(leg.o), dest = leg && coords(leg.a);
   const hexes = state.hexes ??= createHexRegistry();
   let result = null;
@@ -101,11 +105,14 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   // 3) No aparece con su indicativo: identificación por ruta EN SEGUNDO PLANO (nunca se espera aquí). La respuesta
   //    «identificando» no se guarda en caché, para que la app pueda volver a preguntar en unos segundos.
   let identifying = false;
-  if (result.state === 'sin-datos' && phys && !hexes.get(phys) && origin && dest && canIdentify(leg, state.legs, { origin, dest })) {
+  if (result.state === 'sin-datos' && gate?.mode === 'identify' && phys && !hexes.get(phys) && origin && dest
+    && canIdentify(leg, state.legs, { origin, dest, nowMs, ...gateOpts(leg) })) {
     hexes.resolve(phys, () => identifyByZone({ leg, legs: state.legs, origin, dest, nowMs, fetchFn }), nowMs).catch(() => {});
     identifying = hexes.busy(phys);
   }
-  const body = JSON.stringify({ ...result, ...(identifying ? { identifying: true } : {}), checked: new Date(nowMs).toISOString() });
+  // departureConfirmed: si Aena aún no confirma la salida, la app no muestra «Sin señal ADS-B» (puede seguir en tierra).
+  const body = JSON.stringify({ ...result, ...(identifying ? { identifying: true } : {}), ...(gate && !gate.confirmed ? { departureConfirmed: false } : {}),
+    checked: new Date(nowMs).toISOString() });
   if (identifying) return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body };
   if (state.radar.size > 500) state.radar.clear();
   state.radar.set(path, { at: nowMs, body });

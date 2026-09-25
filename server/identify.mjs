@@ -9,7 +9,7 @@
 //  - Nunca hay mapeos fijos de indicativos ni de hex: los indicativos operativos se reasignan cada día.
 // Todas las consultas a adsb.lol pasan por el limitador global (server/adsb.mjs).
 import { adsbGet, adsbLimiter } from './adsb.mjs';
-import { estimatedDepartureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S } from './radar.mjs';
+import { estimatedDepartureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S, radarGateFor, plannedMinFor } from './radar.mjs';
 import { aircraftName } from '../js/plain.js';
 
 // HEURÍSTICAS AJUSTABLES (valores razonables, no demostrados; revisar con casos reales). Todas las funciones aceptan
@@ -80,15 +80,15 @@ export function typeCompatible(aena, adsb) {
   return !a.startsWith('modelo ') && a === b;
 }
 
-const departed = leg => (leg.std ?? leg.st) === 'BOR' || ['FLY', 'FNL'].includes(leg.sta);
 const cancelled = leg => [leg.st, leg.std, leg.sta].some(f => f === 'CAN' || f === 'DES');
 const operatorIcao = (leg, legs) => (leg.op === leg.al ? leg.icao : legs.find(l => l.al === leg.op && l.icao)?.icao) ?? null;
 
-// ¿Se puede intentar? Aena confirma la salida (BOR) o que está en el aire (FLY/FNL), la operadora (y su código OACI),
-// el tipo de avión y una hora de salida: la suya o, si el origen es extranjero, la ESTIMADA desde su llegada.
-export function canIdentify(leg, legs = [], { origin = null, dest = null } = {}) {
-  return Boolean(leg && departed(leg) && !cancelled(leg) && leg.op && leg.ac && operatorIcao(leg, legs)
-    && estimatedDepartureMs(leg, origin, dest) !== null);
+// ¿Se puede intentar? radarGate (js/radar-gate.js) lo permite ('identify': Aena confirma, o sin confirmar pasados
+// 15 min de la salida más reciente), Aena da la operadora (y su código OACI) y el tipo de avión, y hay una hora de
+// salida: la suya o, si el origen es extranjero, la ESTIMADA desde su llegada. tz: zonas de origen y destino.
+export function canIdentify(leg, legs = [], { origin = null, dest = null, nowMs = Date.now(), originTz, destTz } = {}) {
+  if (!leg || cancelled(leg) || !leg.op || !leg.ac || !operatorIcao(leg, legs) || estimatedDepartureMs(leg, origin, dest) === null) return false;
+  return radarGateFor(leg, nowMs, { originTz, destTz, plannedMin: plannedMinFor(origin, dest) }).mode === 'identify';
 }
 // Mismo vuelo físico: misma salida de Aena o, sin ella (origen extranjero), misma llegada.
 const physOf = l => l.sd ?? `L${l.sa}`;
@@ -118,7 +118,7 @@ async function fetchRoute(callsign, fetchFn) {
 // Identificación por zona. Devuelve { state: 'identificado', hex, callsign } | { state: 'ambiguo' | 'sin-datos' |
 // 'no-disponible' | 'no-aplica' }. Nunca elige entre varios.
 export async function identifyByZone({ leg, legs = [], origin, dest, nowMs = Date.now(), fetchFn = fetch, limiter = adsbLimiter, limits = LIMITS }) {
-  if (!origin || !dest || !canIdentify(leg, legs, { origin, dest })) return { state: 'no-aplica' };
+  if (!origin || !dest || !canIdentify(leg, legs, { origin, dest, nowMs })) return { state: 'no-aplica' };
   const depMs = estimatedDepartureMs(leg, origin, dest);
   const elapsedMin = (nowMs - depMs) / 60000;
   if (elapsedMin <= 0) return { state: 'no-aplica' };

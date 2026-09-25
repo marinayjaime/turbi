@@ -3,18 +3,17 @@
 import { LIVE_BASE } from './config.js';
 import { STALE_MIN } from './eta.js';
 import { flightStatus } from './schedule.js';
+import { radarGate, legTimes, aenaTz } from './radar-gate.js';
 
 const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
 
-// Se consulta el radar si el vuelo puede estar en el aire según Aena: salida confirmada («Finalizado», BOR) y llegada
-// todavía no final (sin estado, o uno intermedio: INI, SCH, HOR, TMA…), o la llegada dice «En vuelo»/«Aproximándose»
-// (FLY/FNL). Nunca si no ha despegado, ya llegó (LND, IBK, OPE, OPF, BOR), está cancelado o desviado.
-// La misma regla que el servidor (server/radar.mjs, needsRadar), que además limita la ventana de tiempo.
-const IN_AIR = new Set(['FLY', 'FNL']);
-export function wantsRadar(leg, liveBase = LIVE_BASE) {
-  const flags = [leg.st, leg.std, leg.sta];
-  if (!liveBase || flags.includes('CAN') || flags.includes('DES') || ARR_FINAL.has(leg.sta)) return false;
-  return IN_AIR.has(leg.sta) || (leg.std ?? leg.st) === 'BOR';
+// ¿Se consulta el radar? La misma regla que el servidor, escrita una sola vez en js/radar-gate.js: con confirmación
+// de Aena (BOR, FLY, FNL) como siempre; con un estado de puerta retrasado (ULL, EMB, CER…), dentro de la ventana
+// alrededor del despegue. Nunca cancelado, desviado ni con la llegada final.
+// times: { nowMs, originTz, destTz, plannedMin } (duración estimada de la ruta, para lo que Aena no publica).
+export function wantsRadar(leg, liveBase = LIVE_BASE, { nowMs = Date.now(), originTz = aenaTz(leg.o), destTz = aenaTz(leg.a), plannedMin = null } = {}) {
+  if (!liveBase) return false;
+  return radarGate({ leg, nowMs, ...legTimes(leg, { originTz, destTz }), plannedMin }).mode !== 'none';
 }
 
 // Aena da la salida por finalizada pero no publica la llegada (no es un aeropuerto suyo): se dice.
@@ -102,6 +101,9 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
     const ago = ageMin < 1 ? 'menos de 1 min' : `${ageMin} min`;
     return { ...card, status: { text: `Última señal: volando hace ${ago}`, tone: 'info' }, radar: { state: 'reciente', ageMin } };
   }
+  // Aena aún no confirma la salida (p. ej. «Última llamada»): el avión puede seguir en tierra. Se queda el estado de
+  // Aena, sin «Sin señal ADS-B» (no se asume que haya despegado).
+  if (radar.departureConfirmed === false) return card;
   return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal' } };
 }
 

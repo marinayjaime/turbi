@@ -196,7 +196,8 @@ function turbiEta(q, ctx, radar = null) {
 // Vuelo salido hacia un aeropuerto que no es de Aena: se pregunta al radar y se redibuja la ficha con lo que diga
 // (estado ADS-B y, si la llegada es una estimación Turbi, esa estimación refinada en vuelo).
 async function showRadar(q, flight, stale, ctx = null, recheck = true) {
-  if (!flight || flight.stale || !q.leg || q.leg.past || !wantsRadar(q.leg)) return;
+  if (!flight || flight.stale || !q.leg || q.leg.past) return;
+  if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) return;
   const radar = await fetchRadar(q.schedule.al, q.schedule.n);
   // El servidor identifica el avión por su ruta en segundo plano: se vuelve a mirar una sola vez, sin bloquear nada.
   if (radar?.identifying && recheck) {

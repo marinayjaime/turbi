@@ -6,6 +6,7 @@
 // Todas las consultas a adsb.lol pasan por el limitador global de server/adsb.mjs.
 import { adsbGet, adsbLimiter } from './adsb.mjs';
 import { buildRoute } from '../js/route.js';
+import { radarGate, legTimes, aenaTz } from '../js/radar-gate.js';
 
 export const MAX_SEEN_S = 180; // en zonas con poca cobertura las señales llegan más espaciadas
 const PAUSE_MS = 1500; // espera antes de reintentar (adsb.lol responde 429 si se le pregunta demasiado seguido)
@@ -44,24 +45,20 @@ export function estimatedDepartureMs(leg, origin, dest) {
   if (dep !== null) return dep;
   const arr = arrivalMs(leg);
   if (arr === null || !origin || !dest) return null;
-  return arr - buildRoute({ lat: origin[0], lon: origin[1] }, { lat: dest[0], lon: dest[1] }, 0).durationMin * 60000;
+  return arr - plannedMinFor(origin, dest) * 60000;
 }
 
-// Puede estar en el aire según Aena: salida confirmada («Finalizado», BOR) y llegada todavía no final (sin estado o
-// uno intermedio: INI, SCH, HOR, TMA…), o la llegada dice «En vuelo»/«Aproximándose» (FLY/FNL). Nunca si no despegó,
-// ya llegó (LND, IBK, OPE, OPF o BOR en la llegada), cancelado o desviado. Misma regla que la app (js/radar.js).
-// Ventana: desde la salida de Aena hasta WINDOW_H después. Si Aena no tiene la salida (origen extranjero: solo
-// controla la llegada) y dice FLY/FNL, basta con eso para el indicativo; la ventana se mide con su hora de llegada.
-const ARR_FINAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
-export function needsRadar(leg, nowMs) {
-  const flags = [leg.st, leg.std, leg.sta];
-  if (!leg.icao || flags.includes('CAN') || flags.includes('DES') || ARR_FINAL.has(leg.sta)) return false;
-  const arrivingNow = ['FLY', 'FNL'].includes(leg.sta);
-  if (!arrivingNow && (leg.std ?? leg.st) !== DEPARTED) return false;
-  const dep = departureMs(leg);
-  if (dep !== null) return nowMs >= dep && nowMs - dep < WINDOW_H * 3600000;
-  const arr = arrivingNow ? arrivalMs(leg) : null;
-  return arr !== null && Math.abs(nowMs - arr) < WINDOW_H * 3600000;
+// ¿Se mira el radar? La regla está en js/radar-gate.js (compartida con la app): Aena no es el guardián del radar.
+// originTz/destTz: zona de cada aeropuerto (por defecto, la de Aena: península o Canarias). plannedMin: duración
+// estimada de la ruta (para calcular lo que Aena no publica); sin ella, solo cuentan las horas de Aena.
+export function plannedMinFor(origin, dest) {
+  return origin && dest ? buildRoute({ lat: origin[0], lon: origin[1] }, { lat: dest[0], lon: dest[1] }, 0).durationMin : null;
+}
+export function radarGateFor(leg, nowMs, { originTz = aenaTz(leg.o), destTz = aenaTz(leg.a), plannedMin = null } = {}) {
+  return radarGate({ leg, nowMs, ...legTimes(leg, { originTz, destTz }), plannedMin });
+}
+export function needsRadar(leg, nowMs, opts = {}) {
+  return Boolean(leg.icao) && radarGateFor(leg, nowMs, opts).mode !== 'none';
 }
 
 export function distanceKm([la1, lo1], [la2, lo2]) {

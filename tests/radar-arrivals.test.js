@@ -62,10 +62,14 @@ describe('salida estimada (solo interna, para la identificación por ruta)', () 
     expect(estimatedDepartureMs(withDep, HHN, VLC)).toBe(departureMs(withDep));
     expect(estimatedDepartureMs({ ...fr8606, sa: null, ea: null }, HHN, VLC)).toBeNull();
   });
-  it('sin salida confirmada ni FLY/FNL no se identifica; con FLY y salida estimada, sí se puede', () => {
-    expect(canIdentify(fr8606, [fr8606], { origin: HHN, dest: VLC })).toBe(true);
-    expect(canIdentify({ ...fr8606, sta: 'SCH', st: 'SCH' }, [fr8606], { origin: HHN, dest: VLC })).toBe(false);
-    expect(canIdentify({ ...fr8606, sa: null, ea: null }, [fr8606], { origin: HHN, dest: VLC })).toBe(false);
+  it('con FLY y salida estimada se puede identificar; sin confirmación, solo pasados 15 min de la salida estimada', () => {
+    const o = t => ({ origin: HHN, dest: VLC, nowMs: t });
+    const estDep = arrivalUtc - plannedMin * 60000;
+    expect(canIdentify(fr8606, [fr8606], o(now))).toBe(true);
+    const sch = { ...fr8606, sta: 'SCH', st: 'SCH' };
+    expect(canIdentify(sch, [sch], o(estDep + 10 * 60000))).toBe(false);
+    expect(canIdentify(sch, [sch], o(estDep + 16 * 60000))).toBe(true);
+    expect(canIdentify({ ...fr8606, sa: null, ea: null }, [fr8606], o(now))).toBe(false);
   });
 });
 

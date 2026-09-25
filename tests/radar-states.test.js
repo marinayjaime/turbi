@@ -11,7 +11,7 @@ const now = Date.parse('2026-09-25T09:30:00Z');
 // Salida de Palma a las 10:51 locales (08:51 UTC): dentro de la ventana del servidor.
 const leg = over => ({ al: 'UX', icao: 'AEA', n: '6030', d: '2026-09-25', o: 'PMI', a: 'MAD', sd: '10:40', ed: '2026-09-25T10:51',
   sa: '12:05', ea: '2026-09-25T12:06', st: 'BOR', std: 'BOR', sta: null, ac: '738W', ...over });
-const both = l => [wantsRadar(l, LIVE), needsRadar(l, now)];
+const both = l => [wantsRadar(l, LIVE, { nowMs: now }), needsRadar(l, now)];
 
 describe('salida BOR + llegada no final → radar (app y servidor)', () => {
   it('1. sin estado de llegada', () => expect(both(leg())).toEqual([true, true]));
@@ -30,9 +30,12 @@ describe('nunca radar', () => {
   it('7. cancelado o desviado (en la salida o en la llegada)', () => {
     for (const over of [{ std: 'CAN', st: 'CAN' }, { sta: 'CAN' }, { sta: 'DES' }, { std: 'DES' }]) expect(both(leg(over)), JSON.stringify(over)).toEqual([false, false]);
   });
-  it('8. salida aún no confirmada (embarcando, programado, retrasado…) aunque la llegada tenga un estado intermedio', () => {
+  it('8. salida aún no confirmada: antes de la hora de salida − 5 min, no; ya en la hora, comprobación barata (radarGate)', () => {
+    const before = Date.parse('2026-09-25T08:30:00Z'); // primera salida (programada) 10:40 locales = 08:40 UTC; − 5 min = 08:35
     for (const std of ['EMB', 'SCH', 'INI', 'RET', 'ULL', null]) {
-      expect(both(leg({ std, st: std, sta: 'INI' })), String(std)).toEqual([false, false]);
+      const l = leg({ std, st: std, sta: 'INI' });
+      expect([wantsRadar(l, LIVE, { nowMs: before }), needsRadar(l, before)], String(std)).toEqual([false, false]);
+      expect(both(l), String(std)).toEqual([true, true]); // 09:30 UTC: ya pasada la salida
     }
   });
   it('el servidor mantiene la ventana: nunca antes del despegue ni más de 20 h después', () => {

@@ -6,10 +6,11 @@ const card = { status: { text: 'Ha salido · Aena no informa de la llegada a Dub
 
 describe('cuándo pregunta la app al radar', () => {
   it('ha salido y Aena no informa de la llegada; con servicio en directo', () => {
-    expect(wantsRadar(leg(), 'https://x')).toBe(true);
-    expect(wantsRadar(leg({ sta: 'LND' }), 'https://x')).toBe(false); // antes FLY; ahora FLY sí consulta el radar
-    expect(wantsRadar(leg({ std: 'EMB' }), 'https://x')).toBe(false);
-    expect(wantsRadar(leg(), null)).toBe(false);
+    const t = { nowMs: Date.parse('2026-09-24T21:00:00Z') }; // salida 21:10 en Palma = 19:10 UTC
+    expect(wantsRadar(leg(), 'https://x', t)).toBe(true);
+    expect(wantsRadar(leg({ sta: 'LND' }), 'https://x', t)).toBe(false); // llegada final
+    expect(wantsRadar(leg({ std: 'EMB' }), 'https://x', { nowMs: Date.parse('2026-09-24T18:40:00Z') })).toBe(false); // antes de la salida
+    expect(wantsRadar(leg(), null, t)).toBe(false);
   });
 });
 
@@ -280,12 +281,19 @@ describe('radar también cuando Aena dice «Volando» (FLY/FNL): panel solo con 
   const now = Date.parse('2026-09-25T18:00:00Z');
   const dom = over => ({ d: '2026-09-25', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-25T18:05', sa: '19:25', ea: '2026-09-25T19:30', st: 'FLY', std: 'BOR', sta: 'FLY', ...over });
   const aenaFlying = { status: { text: 'Volando', tone: 'info', flying: true } };
-  it('se consulta con FLY o FNL de Aena, y con salida sin llegada; no con programado, llegado, cancelado o desviado', () => {
-    expect(wantsRadar(dom(), 'https://x')).toBe(true);
-    expect(wantsRadar(dom({ sta: 'FNL', st: 'FNL' }), 'https://x')).toBe(true);
-    expect(wantsRadar(dom({ sta: null, sa: null, ea: null, st: 'BOR' }), 'https://x')).toBe(true);
-    for (const over of [{ std: 'SCH', st: 'SCH', sta: null }, { std: 'EMB', st: 'EMB', sta: null }, { sta: 'LND', st: 'LND' }, { sta: 'IBK' },
-      { std: 'CAN', st: 'CAN', sta: 'CAN' }, { sta: 'DES', st: 'DES' }]) expect(wantsRadar(dom(over), 'https://x')).toBe(false);
+  it('se consulta con FLY o FNL de Aena, y con salida sin llegada; no llegado, cancelado o desviado; programado solo desde la hora de salida', () => {
+    const t = { nowMs: now };
+    expect(wantsRadar(dom(), 'https://x', t)).toBe(true);
+    expect(wantsRadar(dom({ sta: 'FNL', st: 'FNL' }), 'https://x', t)).toBe(true);
+    expect(wantsRadar(dom({ sta: null, sa: null, ea: null, st: 'BOR' }), 'https://x', t)).toBe(true);
+    for (const over of [{ sta: 'LND', st: 'LND' }, { sta: 'IBK' }, { std: 'CAN', st: 'CAN', sta: 'CAN' }, { sta: 'DES', st: 'DES' }]) {
+      expect(wantsRadar(dom(over), 'https://x', t)).toBe(false);
+    }
+    // Estado de puerta (programado, embarcando): antes de la salida − 5 min, no; ya en la hora, comprobación barata.
+    for (const over of [{ std: 'SCH', st: 'SCH', sta: null }, { std: 'EMB', st: 'EMB', sta: null }]) {
+      expect(wantsRadar(dom(over), 'https://x', { nowMs: Date.parse('2026-09-25T15:45:00Z') })).toBe(false); // salida 17:55 = 15:55 UTC
+      expect(wantsRadar(dom(over), 'https://x', t)).toBe(true);
+    }
   });
   it('Aena FLY/FNL + ADS-B lo encuentra → panel completo', () => {
     const r = { state: 'volando', callsign: 'IBE1668', altM: 10668, kmh: 830, seenS: 2, remainingKm: 300, source: 'adsb.lol' };

@@ -102,10 +102,12 @@ describe('identificación por zona (excepcional y conservadora)', () => {
     expect((await identifyByZone({ ...ctx({ legs: [fr2311, other] }), fetchFn })).state).toBe('ambiguo');
     expect(calls.point).toBe(0);
   });
-  it('sin salida confirmada, sin operadora o sin tipo de Aena → no se intenta', async () => {
-    for (const leg of [{ ...fr2311, st: 'EMB', std: 'EMB' }, { ...fr2311, op: undefined }, { ...fr2311, ac: null }]) {
+  it('sin salida confirmada (antes de salida + 15 min), sin operadora o sin tipo de Aena → no se intenta', async () => {
+    // Regla de radarGate (25/09/2026): sin confirmación de Aena, la identificación solo desde la salida más reciente + 15 min.
+    const cases = [[{ ...fr2311, st: 'EMB', std: 'EMB' }, dep + 10 * MIN], [{ ...fr2311, op: undefined }, now], [{ ...fr2311, ac: null }, now]];
+    for (const [leg, nowMs] of cases) {
       const { fetchFn, calls } = apis();
-      expect((await identifyByZone({ ...ctx({ leg, legs: [leg] }), fetchFn })).state).toBe('no-aplica');
+      expect((await identifyByZone({ ...ctx({ leg, legs: [leg], nowMs }), fetchFn })).state).toBe('no-aplica');
       expect(calls.point).toBe(0);
     }
   });

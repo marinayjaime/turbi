@@ -62,6 +62,24 @@ Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap
 - IB715 e IB659: no se intentan (otro vuelo de Iberia en la misma ruta a menos de 2 h).
 - **Pendiente de observar en producción:** frecuencia de 429 con uso real; ajustar `LIMITS` y las separaciones con casos reales.
 
+## Fase cerrada (25/09/2026): Aena no es el guardián del radar (`radarGate`)
+
+**Problema** (casos reales: UX6030, FR8606, LS1246): el radar dependía del estado de Aena (salida BOR o llegada FLY/FNL). Con un estado de puerta retrasado («Última llamada» con el avión ya en el aire), una llegada desde el extranjero sin hora de salida o un estado intermedio de llegada, Turbi ni siquiera miraba ADS-B.
+
+**Regla única** (`js/radar-gate.js`, función pura compartida por la app y el servidor): `none` (cero radar) · `direct` (hex ya conocido, indicativo y variantes seguras) · `identify` (lo anterior + identificación por ruta).
+- **Nunca:** cancelado, desviado o llegada final (LND, IBK, OPE, OPF, BOR de llegada).
+- **Con confirmación de Aena** (salida BOR, llegada FLY/FNL): `identify`, como antes (20 h desde la salida; sin salida de Aena, alrededor de su llegada).
+- **Sin confirmación** (cualquier estado no final, sin lista cerrada: EMB, ULL, CER, INI, SCH…):
+  - `firstDepMs` = la primera salida conocida (programada o estimada) → desde `firstDepMs − 5 min`, `direct`;
+  - `latestDepMs` = `ed ?? sd` → desde `latestDepMs + 15 min`, `identify`;
+  - llegada prevista = la de Aena o, si no la publica, `latestDepMs` + duración estimada (con retraso de salida, la ventana no se cierra antes de tiempo) → pasada `+ 60 min`, `none`;
+  - origen extranjero sin salida: salida estimada = llegada de Aena − duración estimada de la ruta.
+- Márgenes en `RADAR_GATE` (heurísticas ajustables).
+
+**Estado en la ficha:** si ADS-B ve el avión volando, «Volando» y panel completo ganan a los estados de puerta de Aena (ULL, EMB, CER…). Si no lo ve y Aena aún no confirma la salida, se queda el estado de Aena y no se muestra «Sin señal ADS-B» (no se asume que haya despegado). Aena manda en cancelado, desviado y llegada oficial.
+
+**adsb.lol:** sin cambios (5 s entre peticiones, 8 s para la identificación, pausa tras 429, cachés y prioridades).
+
 ## Pendiente
 
 ### Radar: indicativos de 4 cifras con cero (observado, sin implementar)
