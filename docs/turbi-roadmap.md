@@ -20,6 +20,20 @@ Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap
 - **Tests:** 426 de 426.
 - **Despliegue del servidor:** turbi-live se creó desde la URL pública del repositorio, así que Render no lo despliega automáticamente. Tras cambiar `server/` hay que hacer un Manual Deploy. Alternativa sin deploy hook: conectar GitHub en Render con Auto-Deploy en `main`, y quitar el paso `render` del workflow.
 
+### Añadido después (25/09/2026): aterrizaje confirmado por ADS-B
+- `server/radar.mjs` devuelve `{ state: 'aterrizado', callsign, seenS, distanceKm, source }` solo si se cumplen todas estas condiciones:
+  - `alt_baro === 'ground'` (formato real de adsb.lol, comprobado);
+  - señal y posición de 120 s o menos (`seen` y `seen_pos`);
+  - posición válida a 8 km o menos del punto de referencia del aeropuerto de destino;
+  - mismo indicativo;
+  - ha pasado el tiempo mínimo físico desde la salida (línea recta a 950 km/h), para no confundirlo con el avión de ayer aparcado.
+- Todos esos valores son heurísticas conservadoras.
+- La app muestra «Aterrizado · Confirmado por radar ADS-B», sin el panel de vuelo.
+- La app lo guarda en el navegador (`turbi-landed`, 7 días): al recargar no vuelve a «Ha salido», y una lectura posterior de «volando» no lo deshace.
+- Aena manda si confirma la llegada. Desviado o cancelado: nunca «Aterrizado».
+- Perder el radar, que pase la hora estimada o que el avión vaya bajo o lento nunca cuentan como aterrizaje.
+- Pendiente (fase de histórico): guardar el aterrizaje confirmado en el histórico común, no solo en el navegador.
+
 ### Observado, sin resolver
 - **Límite de adsb.lol (~1 petición/s):** varias consultas seguidas desde Render devuelven `no-disponible`. La variante con ceros añade una consulta más en los números cortos. Con el uso normal (una búsqueda de vez en cuando, con 60 s de caché) no se nota. Revisarlo si crece el uso.
 

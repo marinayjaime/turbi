@@ -56,6 +56,7 @@ export function arrivalNote({ leg, officialMs = null, eta = null, departureMs = 
 
 // Si el radar ve el avión en el aire, sustituye al aviso de llegada estimada ya pasada (no puede contradecirlo).
 export function radarNote(radar) {
+  if (radar?.state === 'aterrizado') return LANDED_NOTE;
   return radar?.state === 'volando'
     ? 'El radar indica que el avión sigue en el aire: la previsión de turbulencias no se muestra con el vuelo en curso.' : null;
 }
@@ -78,14 +79,53 @@ const MIN = 60000;
 // Perder el radar nunca se interpreta como «ha aterrizado». No se expone un indicativo concreto: el servidor
 // prueba varias variantes.
 export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
-  if (!radar || !['volando', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
+  if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
   if (radar.state === 'volando') return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
+  if (radar.state === 'aterrizado') return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
   const ageMin = Number.isFinite(lastSeenMs) ? Math.round((nowMs - lastSeenMs) / MIN) : null; // igual que la ETA
   if (ageMin !== null && ageMin < STALE_MIN) {
     const ago = ageMin < 1 ? 'menos de 1 min' : `${ageMin} min`;
     return { ...card, status: { text: `Última señal: volando hace ${ago}`, tone: 'info' }, radar: { state: 'reciente', ageMin } };
   }
   return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal' } };
+}
+
+// Aterrizaje confirmado por ADS-B (el servidor exige tierra, en el destino, señal reciente, mismo indicativo y el
+// tiempo mínimo físico de vuelo). Se guarda para que al recargar no se vuelva a «Ha salido»; una lectura posterior
+// de «volando» no lo deshace. Aena manda si confirma la llegada; desviado o cancelado, nunca.
+const LANDED_STATUS = { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B' };
+export const LANDED_NOTE = 'Este vuelo ya ha aterrizado según el radar ADS-B: no se muestra la previsión de turbulencias.';
+const LANDED_STORE = 'turbi-landed';
+const landings = new Map();
+
+export function withLanding(card, landedAtMs, leg) {
+  if (!Number.isFinite(landedAtMs)) return card;
+  const flags = [leg.st, leg.std, leg.sta];
+  if (leg.sta || flags.includes('CAN') || flags.includes('DES')) return card;
+  return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
+}
+
+export function rememberLanding(key, radar, nowMs = Date.now(), storage = globalThis.localStorage) {
+  if (radar?.state !== 'aterrizado') return;
+  const at = nowMs - (radar.seenS ?? 0) * 1000;
+  landings.set(key, at);
+  try {
+    const all = JSON.parse(storage?.getItem(LANDED_STORE) ?? '{}');
+    for (const [k, t] of Object.entries(all)) if (nowMs - t > 7 * 24 * 3600000) delete all[k];
+    all[key] = at;
+    storage?.setItem(LANDED_STORE, JSON.stringify(all));
+  } catch { /* sin almacenamiento: queda en memoria */ }
+}
+
+// fresh: lee solo el almacenamiento (como tras recargar la página).
+export function recallLanding(key, storage = globalThis.localStorage, { fresh = false } = {}) {
+  if (!fresh && landings.has(key)) return landings.get(key);
+  try {
+    const t = JSON.parse(storage?.getItem(LANDED_STORE) ?? '{}')[key];
+    return Number.isFinite(t) ? t : null;
+  } catch {
+    return null;
+  }
 }
 
 // Última vez que el radar vio el avión volando (hora de la observación = consulta − seenS): en memoria y, para

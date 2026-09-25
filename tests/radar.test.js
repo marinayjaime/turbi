@@ -103,3 +103,39 @@ describe('buscar el vuelo en el radar (solo su indicativo exacto)', () => {
     expect(f.mock.calls[0][1].headers['User-Agent']).toMatch(/^Turbi\/.+github\.com\/marinayjaime\/turbi/);
   });
 });
+
+describe('aterrizaje confirmado por ADS-B (conservador)', () => {
+  // EI737 salió de Palma a las 21:10 (19:10 UTC). PMI–DUB ≈ 1.660 km → mínimo físico ≈ 105 min a 950 km/h.
+  const PMI = [39.5517, 2.73881], DUB = [53.4213, -6.27007];
+  const later = Date.parse('2026-09-24T22:00:00Z'); // 2 h 50 min después de la salida
+  const onGround = over => plane({ flight: 'EIN737  ', alt_baro: 'ground', gs: 12, lat: 53.428, lon: -6.255, seen: 4, seen_pos: 4, ...over }); // ~1,2 km del punto de referencia
+  const land = (ac, over = {}) => findOnRadar({ leg: leg(), fetchFn: radar(ac), pauseMs: 0, dest: DUB, origin: PMI, nowMs: later, ...over });
+  it('«ground» cerca del destino, señal reciente, mismo indicativo → aterrizado', async () => {
+    expect(await land([onGround()])).toEqual({ state: 'aterrizado', callsign: 'EIN737', seenS: 4, distanceKm: 1, source: 'adsb.lol' });
+  });
+  it('«ground» lejos del destino (p. ej. aún en el origen) → no', async () => {
+    expect((await land([onGround({ lat: 39.55, lon: 2.73 })])).state).toBe('sin-datos');
+    expect((await land([onGround({ lat: 53.52, lon: -6.27 })])).state).toBe('sin-datos'); // ~11 km: fuera de los 8 km
+  });
+  it('señal o posición antigua (> 120 s) → no', async () => {
+    expect((await land([onGround({ seen: 150, seen_pos: 150 })])).state).toBe('sin-datos');
+    expect((await land([onGround({ seen: 5, seen_pos: 170 })])).state).toBe('sin-datos');
+  });
+  it('poca altitud o poca velocidad pero en el aire → «volando», nunca aterrizado', async () => {
+    expect((await land([onGround({ alt_baro: 800, gs: 140 })])).state).toBe('volando');
+    expect((await land([onGround({ alt_baro: 3000, gs: 60 })])).state).toBe('volando');
+  });
+  it('desaparece del radar → sin datos, nunca aterrizado', async () => {
+    expect((await land([])).state).toBe('sin-datos');
+  });
+  it('sin posición válida o sin coordenadas del destino → no', async () => {
+    expect((await land([onGround({ lat: undefined })])).state).toBe('sin-datos');
+    expect((await land([onGround()], { dest: null })).state).toBe('sin-datos');
+  });
+  it('otro indicativo en la respuesta → no', async () => {
+    expect((await land([onGround({ flight: 'EIN7LM' })])).state).toBe('sin-datos');
+  });
+  it('antes del tiempo mínimo físico desde la salida (p. ej. el avión de ayer aparcado en el destino) → no', async () => {
+    expect((await land([onGround()], { nowMs: Date.parse('2026-09-24T19:40:00Z') })).state).toBe('sin-datos'); // 30 min tras salir
+  });
+});

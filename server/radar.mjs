@@ -54,21 +54,45 @@ async function lookup(fetchFn, callsign, pauseMs) {
 
 const airborne = a => typeof a.alt_baro === 'number' && (a.seen ?? 0) <= MAX_SEEN_S;
 
+// Aterrizaje confirmado por ADS-B (conservador; heurísticas documentadas):
+//  - adsb.lol/readsb marca el avión en tierra con alt_baro === 'ground' (comprobado con datos reales, 25/09/2026);
+//    poca altitud o poca velocidad NO cuentan;
+//  - señal y posición recientes (seen y seen_pos ≤ LANDED_MAX_SEEN_S);
+//  - posición válida a ≤ LANDED_MAX_KM del punto de referencia del aeropuerto de destino;
+//  - mismo indicativo que se busca;
+//  - y ya ha pasado el tiempo mínimo físico desde la salida (distancia en línea recta a MAX_KMH): así un avión que
+//    llegó ayer y sigue aparcado en el destino con el mismo indicativo no confirma el vuelo de hoy.
+const LANDED_MAX_SEEN_S = 120;
+const LANDED_MAX_KM = 8;
+const MAX_KMH = 950;
+function landedAt(a, callsign, { dest, origin, depMs, nowMs }) {
+  if (a.alt_baro !== 'ground' || a.flight?.trim() !== callsign) return null;
+  if ((a.seen ?? Infinity) > LANDED_MAX_SEEN_S || (a.seen_pos ?? a.seen ?? Infinity) > LANDED_MAX_SEEN_S) return null;
+  if (!dest || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) return null;
+  const km = distanceKm([a.lat, a.lon], dest);
+  if (km > LANDED_MAX_KM) return null;
+  if (!origin || depMs === null || nowMs - depMs < (distanceKm(origin, dest) / MAX_KMH) * 3600000) return null;
+  return { state: 'aterrizado', callsign, seenS: Math.round(a.seen ?? 0), distanceKm: Math.round(km), source: 'adsb.lol' };
+}
+
 // siblings: el mismo vuelo con otros números (códigos compartidos); el avión emite con el de la operadora.
 // dest: [lat, lon] del destino, para calcular cuánto le queda (cálculo de Turbi, no una hora oficial).
-export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS, dest = null }) {
+export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs = PAUSE_MS, dest = null, origin = null, nowMs = Date.now() }) {
   // Indicativo = OACI + número. Si el número tiene 1 o 2 cifras, se prueba después la variante con ceros a la izquierda
   // (Air Europa UX15 emite «AEA015»). No se cambia el número original ni se prueba ninguna otra transformación.
   const variants = l => [`${l.icao}${l.n}`, ...(/^\d{1,2}$/.test(l.n) ? [`${l.icao}${l.n.padStart(3, '0')}`] : [])];
   const callsigns = [...new Set([leg, ...siblings].filter(l => l.icao).flatMap(variants))];
-  let failed = false, a = null, callsign = callsigns[0];
+  let failed = false, a = null, landed = null, callsign = callsigns[0];
+  const ctx = { dest, origin, depMs: departureMs(leg), nowMs };
   for (const [i, cs] of callsigns.entries()) {
     if (i) await wait(pauseMs);
     const r = await lookup(fetchFn, cs, pauseMs);
     if (!r) { failed = true; continue; }
     a = (r.ac ?? []).find(airborne);
     if (a) { callsign = cs; break; }
+    landed ??= (r.ac ?? []).map(x => landedAt(x, cs, ctx)).find(Boolean) ?? null;
   }
+  if (!a && landed) return landed; // en vuelo gana; si no, tierra confirmada en el destino
   if (!a) return failed ? { state: 'no-disponible' } : { state: 'sin-datos', callsign };
   const kmh = Number.isFinite(a.gs) ? Math.round(a.gs * 1.852) : null;
   // Velocidad vertical directa de ADS-B (pies/min): barométrica y, si falta, geométrica.

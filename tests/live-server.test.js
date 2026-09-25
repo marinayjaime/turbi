@@ -79,3 +79,14 @@ describe('vuelos al extranjero (radar)', () => {
     expect((await radarResponse(state, '/radar/../x', { fetchFn, nowMs: now, pauseMs: 0 })).status).toBe(404);
   });
 });
+
+describe('vuelo desviado (Aena) → el radar no se consulta: nunca «aterrizado» en el destino original', () => {
+  it('/radar responde no-aplica', async () => {
+    const des = { airport: 'PMI', type: 'S', row: row({ iataCompania: 'EI', oaciCompania: 'EIN', nombreCompania: 'Aer Lingus', numVuelo: '738', iataOtro: 'DUB', estado: 'DES' }) };
+    const state = createState();
+    await runCycle(state, { ...deps, fetchAenaFn: async () => ({ entries: [...entries, des], failed: [] }) });
+    const fetchFn = vi.fn();
+    expect(JSON.parse((await radarResponse(state, '/radar/EI/738.json', { fetchFn, nowMs: Date.parse('2026-09-24T20:00:00Z'), pauseMs: 0 })).body).state).toBe('no-aplica');
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});

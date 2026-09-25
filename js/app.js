@@ -19,7 +19,8 @@ import { currentPunctuality, fetchPunctuality, fetchPastFlight, dowOf, slotOf } 
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
-import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, rememberSighting, recallSighting } from './radar.js';
+import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding } from './radar.js';
 import { turbiEstimate, etaSide, recallEta, rememberEta } from './eta.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
@@ -195,6 +196,7 @@ async function showRadar(q, flight, stale, ctx = null) {
   if (!flight || flight.stale || !q.leg || q.leg.past || !wantsRadar(q.leg)) return;
   const radar = await fetchRadar(q.schedule.al, q.schedule.n);
   rememberSighting(etaKey(q), radar);
+  rememberLanding(etaKey(q), radar);
   let card = withRadar(flight, radar, recallSighting(etaKey(q)));
   if (flight.arr?.estimated) {
     const eta = turbiEta(q, ctx, radar);
@@ -205,12 +207,16 @@ async function showRadar(q, flight, stale, ctx = null) {
       : { ...flight, arr: null, status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: null }) };
     card = withRadar(base, radar, recallSighting(etaKey(q)));
   }
+  // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
+  const landedAt = recallLanding(etaKey(q));
+  card = withLanding(card, landedAt, q.leg);
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
   el.outerHTML = flightCardHtml(card);
-  // El radar ve el avión en el aire: no puede quedar el aviso de que, según la estimación, ya habría aterrizado.
+  // El aviso de llegada no puede contradecir al radar (en el aire) ni a un aterrizaje confirmado.
   const note = els.result.querySelector('.note');
-  if (radarNote(radar) && note?.textContent === ENDED_ESTIMATED) note.textContent = radarNote(radar);
+  const replacement = Number.isFinite(landedAt) ? LANDED_NOTE : radarNote(radar);
+  if (replacement && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(note?.textContent)) note.textContent = replacement;
 }
 
 async function loadPunctualityHistory(q, punct, stale) {
@@ -236,7 +242,9 @@ async function run(q) {
     const official = q.kind === 'schedule' ? legArrival(q.leg) : null;
     const officialMs = official ? localToUtcMs(official.date, official.time, dTz) : null;
     const visibleArrivalMs = officialMs ?? (eta?.source === 'turbi' ? eta.ms : null);
-    const flight = q.kind === 'schedule' ? flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs) : null;
+    const landedAt = q.kind === 'schedule' ? recallLanding(etaKey(q)) : null; // aterrizaje ADS-B ya confirmado
+    const flight = q.kind === 'schedule'
+      ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs), landedAt, q.leg) : null;
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
@@ -245,7 +253,8 @@ async function run(q) {
     const arrived = q.kind === 'schedule'
       ? arrivalNote({ leg: q.leg, officialMs, eta, departureMs, nowMs: Date.now() })
       : profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.' : null;
-    const note = arrived ?? (rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
+    const landedNote = Number.isFinite(landedAt) && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(arrived) ? LANDED_NOTE : null;
+    const note = landedNote ?? arrived ?? (rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'
       : null);
     if (note) {

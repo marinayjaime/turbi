@@ -221,3 +221,49 @@ describe('estado de presentación: último estado oficial frente a lo que se mue
     expect(presentStatus({ leg: ei(), city: 'Dublín', visibleArrivalMs: arrival, nowMs: arrival + 1 }).text).toBe('Histórico');
   });
 });
+
+import { withLanding, rememberLanding, recallLanding, LANDED_NOTE } from '../js/radar.js';
+describe('aterrizaje confirmado por ADS-B en la ficha', () => {
+  const fake = () => { const m = {}; return { getItem: k => m[k] ?? null, setItem: (k, v) => { m[k] = v; } }; };
+  const now = Date.parse('2026-09-24T22:00:00Z');
+  const intl = { d: '2026-09-24', o: 'PMI', a: 'DUB', sd: '20:55', ed: '2026-09-24T21:10', sa: null, ea: null, st: 'BOR', std: 'BOR', sta: null };
+  const base = { status: { text: 'Ha salido · Aena no informa de la llegada a Dublín', tone: 'info' }, arr: { time: '22:35', estimated: true } };
+  it('el radar confirma tierra en el destino → «Aterrizado», sin panel de vuelo, conservando la llegada', () => {
+    const c = withRadar(base, { state: 'aterrizado', callsign: 'EIN737', seenS: 4, source: 'adsb.lol' }, null, now);
+    expect(c.status).toEqual({ text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B' });
+    expect(c.radar).toEqual({ state: 'aterrizado' });
+    expect(c.arr).toBe(base.arr);
+  });
+  it('se guarda y, al recargar (sin memoria de la sesión) aunque el radar ya no lo vea, sigue «Aterrizado»', () => {
+    const st = fake();
+    rememberLanding('EI737|2026-09-24', { state: 'aterrizado', seenS: 4 }, now, st);
+    const reloaded = recallLanding('EI737|2026-09-24', st, { fresh: true }); // simula recarga: solo almacenamiento
+    expect(reloaded).toBe(now - 4000);
+    const c = withLanding(withRadar(base, { state: 'sin-datos' }, null, now + 600000), reloaded, intl);
+    expect(c.status.text).toBe('Aterrizado');
+    expect(JSON.stringify(c)).not.toMatch(/Ha salido/);
+  });
+  it('una lectura posterior de «volando» no deshace un aterrizaje confirmado', () => {
+    expect(withLanding(withRadar(base, { state: 'volando', seenS: 0 }, null, now), now - 60000, intl).status.text).toBe('Aterrizado');
+  });
+  it('llegada oficial de Aena: tiene prioridad sobre el aterrizaje del radar', () => {
+    const landedAena = { ...intl, a: 'MAD', sa: '19:25', ea: '2026-09-24T20:10', sta: 'LND', st: 'LND' };
+    const card = { status: { text: 'En tierra', tone: 'ok' } };
+    expect(withLanding(card, now, landedAena)).toBe(card);
+  });
+  it('desviado: nunca «Aterrizado» en el destino original', () => {
+    const card = { status: { text: 'Desviado', tone: 'bad' } };
+    expect(withLanding(card, now, { ...intl, sta: 'DES', st: 'DES' })).toBe(card);
+  });
+  it('sin confirmación guardada: nada cambia (perder el radar nunca es aterrizar)', () => {
+    expect(withLanding(base, null, intl)).toBe(base);
+    expect(recallLanding('nada', fake(), { fresh: true })).toBeNull();
+    const st = fake();
+    rememberLanding('X|d', { state: 'sin-datos' }, now, st);
+    expect(recallLanding('X|d', st, { fresh: true })).toBeNull();
+  });
+  it('el aviso de llegada con aterrizaje confirmado por radar', () => {
+    expect(radarNote({ state: 'aterrizado' })).toBe(LANDED_NOTE);
+    expect(LANDED_NOTE).toBe('Este vuelo ya ha aterrizado según el radar ADS-B: no se muestra la previsión de turbulencias.');
+  });
+});

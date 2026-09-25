@@ -179,6 +179,11 @@ describe('radar', () => {
   it('no disponible', () => {
     expect(flightCardHtml({ ...c, radar: { state: 'no-disponible' } })).toContain('El radar no responde ahora mismo.');
   });
+  it('aterrizado: estado «Aterrizado» con su confirmación, sin panel de vuelo', () => {
+    const html = flightCardHtml({ ...c, status: { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B' }, radar: { state: 'aterrizado' } });
+    expect(html).toContain('<span class="status tone-ok">Aterrizado</span><p class="status-note">Confirmado por radar ADS-B</p>');
+    expect(html).not.toMatch(/telemetry|Volando|class="radar/);
+  });
 });
 
 describe('solo la fecha pedida: si ese día no hay vuelo, se dice (nunca se salta a otro día)', () => {
