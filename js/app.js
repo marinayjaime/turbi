@@ -3,7 +3,7 @@ import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight, canonicalRoute, ADSBDB_NOTE } from './flight.js';
-import { fetchSchedule, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
+import { fetchSchedule, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
@@ -238,7 +238,7 @@ function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs 
   const dep = legDeparture(leg), arr = legArrival(leg);
   return {
     al: schedule.al,
-    title: `${schedule.name ?? schedule.al} ${schedule.al} ${schedule.n}`,
+    title: flightTitle(schedule),
     number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg, schedule.al), operator: operatorName(photos, leg, schedule.al),
     route: `${origin.city} a ${destination.city}`,
     // Estado mostrado: con la misma llegada visible que la ficha (Aena o estimación Turbi); ver presentStatus.

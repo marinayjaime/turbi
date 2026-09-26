@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseFlightNumber, fetchSchedule, chooseLeg, tabDates, legDeparture, legArrival, flightStatus } from '../js/schedule.js';
+import { parseFlightNumber, fetchSchedule, chooseLeg, tabDates, legDeparture, legArrival, flightStatus, flightTitle } from '../js/schedule.js';
 
 const leg = over => ({ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T17:55', sa: '19:25', ea: '2026-09-24T19:25', td: 'N', ta: 'T4', g: 'D', st: 'SCH', ac: 'A21N', ...over });
 
@@ -140,5 +140,15 @@ describe('fetchSchedule con datos en directo (Render)', () => {
   it('solo en Render (vuelo nuevo): también sirve', async () => {
     const r = await fetchSchedule('IB1668', fetchFrom({ [LIVE]: liveBody, 'data/flights/IB/1668.json': 404 }), LIVE);
     expect(r.legs).toHaveLength(2);
+  });
+});
+
+describe('flightTitle', () => {
+  it('con nombre: aerolínea y número', () => {
+    expect(flightTitle({ name: 'Iberia', al: 'IB', n: '1668' })).toBe('Iberia IB 1668');
+  });
+  it('sin nombre (aerolínea fuera del catálogo de Aena): solo el número, nunca «JU JU 571»', () => {
+    expect(flightTitle({ name: null, al: 'JU', n: '571' })).toBe('JU 571');
+    expect(flightTitle({ al: 'JU', n: '571' })).toBe('JU 571');
   });
 });

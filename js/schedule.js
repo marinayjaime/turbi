@@ -55,6 +55,9 @@ export async function fetchSchedule(number, fetchFn = fetch, liveBase = LIVE_BAS
   }
 }
 
+// «Iberia IB 1668»; sin nombre de aerolínea (Aena no lo da en aerolíneas fuera de su catálogo), solo «JU 571».
+export const flightTitle = ({ name, al, n }) => [name, `${al} ${n}`].filter(Boolean).join(' ');
+
 // Un mismo número puede tener VARIOS vuelos físicos en una fecha (p. ej. GRU → MAD y después MAD → PEK con el mismo
 // número). Número + fecha no identifica un tramo: se distinguen con physicalFlightKey() y se elige con el estado de
 // Aena y la hora, nunca por el orden de la lista.

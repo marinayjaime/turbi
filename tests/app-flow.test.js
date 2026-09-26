@@ -852,3 +852,16 @@ describe('vuelo fuera de Aena: ADSBDB → hora → pronóstico', () => {
     expect($('#f-destination').value).toBe('MUC');
   });
 });
+
+describe('vuelo de Aena sin nombre de aerolínea (fuera de su catálogo)', () => {
+  it('JU571: la ficha dice «JU 571», nunca «JU JU 571»', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    const leg = { d: tomorrow, o: 'MAD', a: 'BEG', sd: '12:30', ed: `${tomorrow}T12:30`, td: 'T1', g: 'B21', st: 'SCH', std: 'SCH', ac: 'BCS3', op: 'JU' };
+    await openApp(network({ flights: { JU571: { name: null, updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
+    await search('JU571', tomorrow);
+    await until(() => $('#result .flight'), 'ficha');
+    expect($('#result .flight h2').textContent).toBe('JU 571');
+    expect($('#result').textContent).not.toMatch(/JU\s+JU/);
+    expect($('#result').textContent).not.toContain('null');
+  });
+});
