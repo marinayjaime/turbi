@@ -49,7 +49,11 @@ export function normalizeFlights(body) {
   return body.filter(f => f?.isCargo !== true).map(f => ({
     number: flightNumberKey(f.number),
     airline: f.airline?.name ?? null,
-    callSign: f.callSign ?? null,
+    // Identidad del avión para el radar (ADS-B): indicativo tal como lo emite, transpondedor (hex ICAO de 6 cifras) y
+    // matrícula (solo para validar). Lo que no tenga un formato válido se guarda como null.
+    callSign: cleanCallSign(f.callSign),
+    modeS: /^[0-9a-f]{6}$/i.test(String(f.aircraft?.modeS ?? '').trim()) ? String(f.aircraft.modeS).trim().toLowerCase() : null,
+    reg: String(f.aircraft?.reg ?? '').trim().toUpperCase() || null,
     codeshareStatus: f.codeshareStatus ?? null,
     status: f.status ?? null,
     aircraft: f.aircraft?.model ?? null,
@@ -59,6 +63,11 @@ export function normalizeFlights(body) {
     arr: { sched: time(f.arrival?.scheduledTime), revised: time(f.arrival?.revisedTime), predicted: time(f.arrival?.predictedTime), runway: time(f.arrival?.runwayTime) },
     estMin: estimatedMin(f.departure?.airport?.location, f.arrival?.airport?.location),
   })).filter(l => l.o && l.a && l.dep.sched);
+}
+
+function cleanCallSign(cs) {
+  const v = String(cs ?? '').toUpperCase().replace(/\s+/g, '');
+  return /^[A-Z0-9]{3,8}$/.test(v) ? v : null;
 }
 
 // Duración prevista de Turbi (la de buildRoute, por distancia) si AeroDataBox da la posición de los aeropuertos; si no, null.
@@ -208,6 +217,19 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
   }
 
   return {
+    // Solo lo guardado (memoria y rama data): NUNCA llama a AeroDataBox. Para el radar de estos vuelos.
+    async peek(rawNumber, date) {
+      const number = flightNumberKey(rawNumber);
+      if (!NUMBER_RE.test(number) || !DATE_RE.test(date)) return null;
+      const k = `${number}|${date}`;
+      stats.peeks = (stats.peeks ?? 0) + 1;
+      if (memory.has(k)) return memory.get(k);
+      try {
+        const stored = await store.get(entryPath(number, date));
+        if (stored?.data) { memory.set(k, stored.data); return stored.data; }
+      } catch { /* sin caché: sin radar */ }
+      return null;
+    },
     async lookup(rawNumber, date) {
       stats.lookups++;
       const number = flightNumberKey(rawNumber);

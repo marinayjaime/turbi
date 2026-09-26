@@ -15,6 +15,7 @@ import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../s
 import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js';
 import { createAerodatabox } from './aerodatabox.mjs';
 import { createGithubStore } from './adb-store.mjs';
+import { adbRadarResponse } from './radar-adb.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -329,6 +330,10 @@ async function main() {
     const send = r => { res.writeHead(r.status, r.headers); res.end(r.body); };
     if (path.startsWith('/schedule/')) {
       scheduleResponse(state, path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"status":"unavailable","reason":"error"}' }));
+      return;
+    }
+    if (path.startsWith('/radar-adb/')) { // vuelos de AeroDataBox: radar solo por transpondedor o indicativo
+      adbRadarResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
       return;
     }
     if (path.startsWith('/radar/')) {

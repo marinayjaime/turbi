@@ -3,6 +3,7 @@
 // refresco en las 3 h previas a la salida si la consulta era de antes del día del vuelo).
 import { LIVE_BASE } from './config.js';
 import { ADSBDB_NOTE } from './flight.js';
+import { radarGate } from './radar-gate.js';
 
 export const ADB_NOTE = 'horario según AeroDataBox';
 // Nota de la fuente de la ruta en el subtítulo del pronóstico (sin horario de Aena).
@@ -99,4 +100,31 @@ export function adbInfo(meta, leg, nowMs = Date.now()) {
   const depText = dep.utc === leg.dep.sched.utc ? `salida ${hm(dep)}` : `salida ${leg.dep.runway ? '' : 'prevista '}${hm(dep)} (programada ${hm(leg.dep.sched)})`;
   const arrText = !arr ? null : leg.arr.runway ? `llegada ${hm(arr)}` : arr === leg.arr.sched ? `llegada ${hm(arr)}` : `llegada prevista ${hm(arr)}`;
   return `Horario según AeroDataBox (consultado ${ago(nowMs - at)}): ${[adbStatusText(leg.status), depText, arrText, leg.aircraft].filter(Boolean).join(' · ')}`;
+}
+
+// Vuelo físico de AeroDataBox: nunca se mezcla con los de Aena (physicalFlightKey, «phys|…»).
+// adb|número|fecha|origen|destino|salida programada en UTC (minuto).
+export const adbPhysicalKey = (entry, leg) =>
+  `adb|${entry.number}|${entry.date}|${leg.o}|${leg.a}|${new Date(leg.dep.sched.utc).toISOString().slice(0, 16)}Z`;
+
+// ¿Se mira el radar (ADS-B) de un vuelo de AeroDataBox? La MISMA regla en la app y en Render. Reutiliza radarGate
+// (ventana alrededor de la salida y hasta la llegada + 60 min) con las horas de AeroDataBox, y nunca pasa de «direct»:
+// para estos vuelos no hay identificación por zona ni por ruta. Sin transpondedor ni indicativo, no hay radar.
+// El estado de AeroDataBox solo cuenta si es reciente (consultado o refrescado hace ≤ STATUS_FRESH_MS).
+export const STATUS_FRESH_MS = 30 * 60000;
+const FINAL = new Set(['Canceled', 'CanceledUncertain', 'Diverted']);
+const IN_AIR = new Set(['Departed', 'EnRoute', 'Approaching']);
+export function adbRadarGate(leg, meta, nowMs, { plannedMin = null } = {}) {
+  const none = reason => ({ mode: 'none', reason, confirmed: false });
+  if (!leg?.modeS && !leg?.callSign) return none('sin-identificador');
+  if (FINAL.has(leg.status)) return none('cancelado o desviado');
+  if (leg.arr?.runway) return none('llegada final');
+  const fresh = nowMs - Date.parse(meta.refreshedAt ?? meta.fetchedAt) <= STATUS_FRESH_MS;
+  if (fresh && leg.status === 'Arrived') return none('llegada final');
+  const confirmed = fresh && IN_AIR.has(leg.status);
+  const est = leg.dep.runway ?? leg.dep.revised;
+  const arr = leg.arr?.runway ?? leg.arr?.revised ?? leg.arr?.predicted ?? leg.arr?.sched;
+  const g = radarGate({ leg: { st: confirmed ? 'BOR' : null }, nowMs, schedDepMs: leg.dep.sched.utc, estDepMs: est?.utc ?? null,
+    arrMs: arr?.utc ?? null, plannedMin: leg.estMin ?? plannedMin });
+  return g.mode === 'identify' ? { ...g, mode: 'direct' } : g;
 }

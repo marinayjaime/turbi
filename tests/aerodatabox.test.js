@@ -77,10 +77,10 @@ function fakeGithub({ always409 = false, status500 = false, put500 = false, inva
 }
 
 describe('normalizeFlights', () => {
-  it('solo datos normalizados: aeropuertos, horas (local, UTC, desfase), estado, aeronave; sin matrícula, cabeceras ni URL', () => {
+  it('solo datos normalizados: aeropuertos, horas (local, UTC, desfase), estado, aeronave e identidad para el radar; sin cabeceras ni URL', () => {
     const [l] = normalizeFlights(TO3416);
     expect(l).toEqual({
-      number: 'TO3416', airline: 'Transavia France', callSign: 'TVF93ZL', codeshareStatus: 'IsOperator', status: 'Departed', aircraft: 'Boeing 737-800',
+      number: 'TO3416', airline: 'Transavia France', callSign: 'TVF93ZL', modeS: null, reg: 'F-HTVC', codeshareStatus: 'IsOperator', status: 'Departed', aircraft: 'Boeing 737-800',
       o: 'NTE', a: 'AYT',
       dep: { sched: { local: '2026-09-26T12:30', utc: Date.parse('2026-09-26T10:30Z'), off: 120 }, revised: { local: '2026-09-26T12:23', utc: Date.parse('2026-09-26T10:23Z'), off: 120 },
         runway: { local: '2026-09-26T12:34', utc: Date.parse('2026-09-26T10:34Z'), off: 120 } },
