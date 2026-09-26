@@ -110,7 +110,8 @@ export const adbPhysicalKey = (entry, leg) =>
 // ¿Se mira el radar (ADS-B) de un vuelo de AeroDataBox? La MISMA regla en la app y en Render. Reutiliza radarGate
 // (ventana alrededor de la salida y hasta la llegada + 60 min) con las horas de AeroDataBox, y nunca pasa de «direct»:
 // para estos vuelos no hay identificación por zona ni por ruta. Sin transpondedor ni indicativo, no hay radar.
-// El estado de AeroDataBox solo cuenta si es reciente (consultado o refrescado hace ≤ STATUS_FRESH_MS).
+// El estado de AeroDataBox solo cuenta si es reciente (consultado o refrescado hace ≤ STATUS_FRESH_MS); la hora real de
+// despegue confirma la salida aunque el estado sea antiguo.
 export const STATUS_FRESH_MS = 30 * 60000;
 const FINAL = new Set(['Canceled', 'CanceledUncertain', 'Diverted']);
 const IN_AIR = new Set(['Departed', 'EnRoute', 'Approaching']);
@@ -121,7 +122,9 @@ export function adbRadarGate(leg, meta, nowMs, { plannedMin = null } = {}) {
   if (leg.arr?.runway) return none('llegada final');
   const fresh = nowMs - Date.parse(meta.refreshedAt ?? meta.fetchedAt) <= STATUS_FRESH_MS;
   if (fresh && leg.status === 'Arrived') return none('llegada final');
-  const confirmed = fresh && IN_AIR.has(leg.status);
+  // Salida confirmada: estado reciente de vuelo en curso, o la hora REAL de despegue (de pista) ya pasada, aunque el estado
+  // sea antiguo. Una hora programada o revisada nunca la confirma.
+  const confirmed = (fresh && IN_AIR.has(leg.status)) || (Number.isFinite(leg.dep.runway?.utc) && leg.dep.runway.utc <= nowMs);
   const est = leg.dep.runway ?? leg.dep.revised;
   const arr = leg.arr?.runway ?? leg.arr?.revised ?? leg.arr?.predicted ?? leg.arr?.sched;
   const g = radarGate({ leg: { st: confirmed ? 'BOR' : null }, nowMs, schedDepMs: leg.dep.sched.utc, estDepMs: est?.utc ?? null,

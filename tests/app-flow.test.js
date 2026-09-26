@@ -1204,6 +1204,15 @@ describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
     expect($('.radar.muted').textContent).toBe('Sin señal ADS-B reciente para este vuelo.');
     expect($('.telemetry')).toBeNull();
   });
+  it('estado antiguo pero con hora real de despegue y sin señal (caso GA89): «Sin señal ADS-B reciente para este vuelo.»', async () => {
+    const old = new Date(Date.now() - 2 * 3600000).toISOString();
+    const withRunway = raw({ callSign: 'GIA089', aircraft: { model: 'Boeing 777' }, departure: { ...raw().departure, runwayTime: { utc: utc(dep + 60000), local: fmt(dep + 60000, 2) } } });
+    await openApp(network({ flights: {}, schedule: { [`GA89|${d}`]: { ...entry(withRunway), fetchedAt: old } }, radarAdb: { state: 'sin-datos' }, openMeteo: () => tooMany }));
+    await search('GA89', d);
+    await until(() => $('.radar.muted'), 'aviso de radar');
+    expect($('.radar.muted').textContent).toBe('Sin señal ADS-B reciente para este vuelo.');
+    expect(radarCalls()).toHaveLength(1);
+  });
   it('estado de AeroDataBox no confirmado (departureConfirmed: false): ni panel ni «sin señal»', async () => {
     await open(raw({ status: 'Expected' }), { state: 'sin-datos', departureConfirmed: false });
     await networkIdle();

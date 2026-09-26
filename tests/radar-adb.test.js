@@ -179,6 +179,27 @@ describe('cuándo se activa (adbRadarGate, la misma regla en la app y en Render)
     expect(gate(entryOf(raw({ arrival: { ...raw().arrival, runwayTime: { utc: '2026-09-27 02:50Z', local: '2026-09-27 09:50+07:00' } } })), NOW).mode).toBe('none');
     expect(gate(entryOf(raw({ status: 'Expected' }), '2026-09-25T10:00:00.000Z'), Date.parse('2026-09-27T04:01Z')).mode).toBe('none');
   });
+  describe('salida confirmada por la hora REAL de despegue (pista), aunque el estado sea antiguo', () => {
+    const old = new Date(NOW - 3 * 3600000).toISOString(); // estado de hace 3 h: ya no cuenta
+    const runway = utcMs => ({ ...raw().departure, runwayTime: { utc: new Date(utcMs).toISOString().slice(0, 16).replace('T', ' ') + 'Z', local: '2026-09-26 12:34+02:00' } });
+    it('EnRoute antiguo + hora de pista ya pasada → confirmada (departureConfirmed no es false)', () => {
+      expect(gate(entryOf(raw({ departure: runway(NOW - 2 * 3600000) }), old), NOW)).toMatchObject({ mode: 'direct', confirmed: true });
+    });
+    it('estado antiguo y SIN hora de pista → no confirmada', () => {
+      expect(gate(entryOf(raw(), old), NOW)).toMatchObject({ mode: 'direct', confirmed: false });
+    });
+    it('hora de pista en el futuro → no confirmada', () => {
+      expect(gate(entryOf(raw({ status: 'Expected', departure: runway(NOW + 10 * 60000) }), old), NOW).confirmed).toBe(false);
+    });
+    it('una hora revisada (aunque ya pasada) nunca confirma', () => {
+      const revised = { ...raw().departure, revisedTime: { utc: '2026-09-26 11:00Z', local: '2026-09-26 13:00+02:00' } };
+      expect(gate(entryOf(raw({ departure: revised }), old), NOW).confirmed).toBe(false);
+    });
+    it('vuelo finalizado (hora real de llegada) sigue sin radar aunque haya hora de pista de salida', () => {
+      const landed = raw({ departure: runway(NOW - 12 * 3600000), arrival: { ...raw().arrival, runwayTime: { utc: '2026-09-26 13:00Z', local: '2026-09-26 20:00+07:00' } } });
+      expect(gate(entryOf(landed, old), NOW)).toMatchObject({ mode: 'none', reason: 'llegada final' });
+    });
+  });
   it('sin transpondedor ni indicativo → none (sin-identificador)', () => {
     expect(gate(entryOf(raw({ callSign: null, aircraft: {} })), NOW)).toMatchObject({ mode: 'none', reason: 'sin-identificador' });
   });
@@ -238,6 +259,16 @@ describe('Render: /radar-adb/{número}/{fecha}.json', () => {
     const r = render(entryOf(raw(), new Date(NOW - 3 * 3600000).toISOString())), a = adsb({ '/hex/8a04c1': [] });
     expect(await call(r, a)).toMatchObject({ state: 'sin-datos', departureConfirmed: false });
     expect(a.calls).toEqual(['/hex/8a04c1', '/callsign/GIA89']);
+  });
+  it('caso GA89 en producción: EnRoute de hace 2 h + hora de pista pasada, sin modeS y sin señal → «sin-datos» SIN departureConfirmed: false · 1 consulta', async () => {
+    const e = entryOf(raw({ callSign: 'GIA089', aircraft: { model: 'Boeing 777' },
+      departure: { ...raw().departure, runwayTime: { utc: '2026-09-26 12:34Z', local: '2026-09-26 14:34+02:00' } } }), new Date(NOW - 2 * 3600000).toISOString());
+    const r = render(e), a = adsb({ '/callsign/GIA089': [] });
+    const res = await call(r, a);
+    expect(res.state).toBe('sin-datos');
+    expect(res).not.toHaveProperty('departureConfirmed'); // la app dirá «Sin señal ADS-B reciente para este vuelo.»
+    expect(a.calls).toEqual(['/callsign/GIA089']);
+    expect(r.adbApi).not.toHaveBeenCalled();
   });
   it('DL106 JFK → FRA (otro vuelo, otra geometría): por indicativo en su corredor · 1 consulta', async () => {
     const dl = { ...raw(), number: 'DL 106', callSign: 'DAL106', airline: { name: 'Delta Air Lines' },
