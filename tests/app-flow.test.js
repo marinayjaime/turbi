@@ -962,3 +962,62 @@ describe('número comercial asociado por Aena: confirmación antes de usarlo', (
     expect($('.alias-offer')).toBeNull();
   });
 });
+
+// «Actualizar» y «Cambiar hora» solo tienen sentido con una ficha o un pronóstico: nunca en una pantalla de elección
+// (confirmación de un número comercial o selector de tramos).
+describe('controles de la ficha: nunca en pantallas de elección', () => {
+  const visible = id => !document.getElementById(id).hidden;
+  const controls = () => ({ refresh: visible('refresh'), changeTime: visible('change-time') });
+  const tomorrow = () => dayOf(Date.now() + 24 * 3600000);
+  const ALIASES = () => ({ updated: new Date().toISOString(), aliases: {
+    BA8462: { al: 'CJ', n: '8462', name: 'BA CITYFLYER', routes: [['IBZ', 'LCY']], lastEvidence: dayOf(Date.now()) } } });
+  const CJ = d => ({ CJ8462: { name: 'BA CITYFLYER', updated: new Date().toISOString(),
+    legs: [{ d, o: 'IBZ', a: 'LCY', sd: '10:45', ed: `${d}T10:45`, st: 'SCH', std: 'SCH', ac: 'E190', op: 'CJ' }] } });
+  const click = sel => $(sel).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+  it('confirmación de alias: sin «Actualizar» ni «Cambiar hora»; al confirmar, la ficha recupera «Actualizar»', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), aliases: ALIASES(), adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: () => tooMany }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'confirmación');
+    expect(controls()).toEqual({ refresh: false, changeTime: false });
+    click('[data-alias="accept"]');
+    await until(() => $('#result .flight'), 'ficha de CJ 8462');
+    expect(controls()).toEqual({ refresh: true, changeTime: false }); // ficha de Aena: la hora es la de Aena
+  });
+
+  it('«No es este vuelo» → pronóstico por ADSBDB: vuelven «Actualizar» y «Cambiar hora»', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), aliases: ALIASES(), adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'confirmación');
+    click('[data-alias="reject"]');
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    $('#f-time').value = '10:45';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === 'IBZ → LCY', 'pronóstico');
+    expect(controls()).toEqual({ refresh: true, changeTime: true });
+  });
+
+  it('selector de tramos: sin «Actualizar» ni «Cambiar hora»; al escoger, la ficha recupera «Actualizar»', async () => {
+    const d = tomorrow();
+    const inbound = { d, o: 'GRU', a: 'MAD', sd: null, sa: '07:10', ea: `${d}T07:10`, st: 'SCH', sta: 'SCH', ac: '789' };
+    const outbound = { d, o: 'MAD', a: 'PEK', sd: '12:30', ed: `${d}T12:30`, st: 'SCH', std: 'SCH', ac: '789' };
+    // Primero un pronóstico manual (con los dos controles visibles), para comprobar que el selector no los hereda.
+    await openApp(network({ flights: { CA898: { name: 'Air China', updated: new Date().toISOString(), legs: [outbound, inbound] } },
+      adsbdb: { UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG') }, openMeteo: openMeteoOk }));
+    await search('UO625', d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    $('#f-time').value = '10:00';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === 'HND → HKG', 'pronóstico manual');
+    expect(controls()).toEqual({ refresh: true, changeTime: true });
+    typeInto('f-number', 'CA898');
+    await search('CA898', d);
+    await until(() => $('.leg-switch') && !$('#result .flight'), 'selector de tramos');
+    expect(controls()).toEqual({ refresh: false, changeTime: false });
+    document.querySelectorAll('.leg-option')[1].click();
+    await until(() => $('#result .flight'), 'ficha del tramo escogido');
+    expect(controls()).toEqual({ refresh: true, changeTime: false });
+  });
+});

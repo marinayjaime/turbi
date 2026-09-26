@@ -179,24 +179,27 @@ function aliasOfferHtml(q, db) {
   </section>`;
 }
 
-async function showAliasOffer(q) {
-  lastQuery = null;
-  ++runId;
-  stopRadarPoll();
-  stopStatusRefresh();
-  currentView = null;
-  els.result.innerHTML = aliasOfferHtml(q, await airports());
-  show('result');
-}
-
-function showLegChooser(q) {
+// Pantalla de elección (selector de tramos, confirmación de un número comercial): aún no hay ficha, así que
+// «Actualizar» y «Cambiar hora» no tienen sentido y se ocultan (run() los vuelve a poner con la ficha).
+function showChoice(html) {
   lastQuery = null;
   ++runId; // nada de una consulta anterior puede pintar encima
   stopRadarPoll();
   stopStatusRefresh();
   currentView = null;
-  els.result.innerHTML = legSwitchHtml(q, { choose: true });
+  els.refresh.hidden = true;
+  els.changeTime.hidden = true;
+  els.result.innerHTML = html;
   show('result');
+}
+
+async function showAliasOffer(q) {
+  const html = aliasOfferHtml(q, await airports());
+  showChoice(html);
+}
+
+function showLegChooser(q) {
+  showChoice(legSwitchHtml(q, { choose: true }));
 }
 
 async function resolveFlight() {
@@ -476,6 +479,7 @@ async function run(q) {
   stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
   stopStatusRefresh(); // y de refrescar el estado de Aena
   const stale = () => token !== runId;
+  els.refresh.hidden = false;
   show('loading');
   try {
     const { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
@@ -751,6 +755,7 @@ els.savedLink.addEventListener('click', () => {
   runId++; // una consulta en curso ya no debe pintar encima
   stopRadarPoll();
   stopStatusRefresh();
+  els.refresh.hidden = false;
   showForecast(last.view, null, () => true, last.savedAt).catch(() => {});
 });
 window.addEventListener('offline', offerSaved);
