@@ -88,7 +88,10 @@ button { font: inherit; cursor: pointer; }
   background: var(--field); color: var(--accent); font-size: 16px; font-weight: 500;
 }
 .link { display: block; margin: 14px auto 0; border: 0; background: none; color: var(--accent); font-size: 15px; padding: 6px; }
-#back { margin: 0 0 12px; padding: 0; }
+/* Barra superior de la ficha: «‹ Nueva consulta» a la izquierda y «Actualizar ↻» a la derecha, simétricos. */
+.result-bar { display: flex; justify-content: space-between; align-items: center; margin: 0 0 12px; }
+.result-bar .link { margin: 0; padding: 0; }
+#refresh span { display: inline-block; margin-left: 2px; }
 
 .notice { font-size: 15px; color: var(--muted); margin: 4px 0 12px; }
 .error { margin-top: 20px; padding: 14px 16px; border-radius: 12px; background: #fff2f1; color: #c4271c; font-size: 15px; }
@@ -141,6 +144,7 @@ button { font: inherit; cursor: pointer; }
 .card.empty { color: var(--muted); }
 
 .actions { display: flex; gap: 12px; }
+.actions:not(:has(button:not([hidden]))) { display: none; } /* sin botones visibles, no ocupa sitio */
 .secondary { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: 0 6px 20px rgba(10, 40, 70, 0.15); }
 
 #loading { text-align: center; color: var(--muted); padding: 32px 20px; }

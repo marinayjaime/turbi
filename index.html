@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="css/style.css?v=2026-09-26.9">
+  <link rel="stylesheet" href="css/style.css?v=2026-09-26.10">
   <title>Turbi</title>
 </head>
 <body>
@@ -45,11 +45,13 @@
     </section>
 
     <section id="result-view" hidden>
-      <button type="button" id="back" class="link on-sky">‹ Nueva consulta</button>
+      <div class="result-bar">
+        <button type="button" id="back" class="link on-sky">‹ Nueva consulta</button>
+        <button type="button" id="refresh" class="link on-sky" aria-label="Actualizar">Actualizar <span aria-hidden="true">↻</span></button>
+      </div>
       <div id="result" class="panel"></div>
       <div class="actions">
         <button type="button" id="change-time" class="secondary">Cambiar hora</button>
-        <button type="button" id="refresh" class="secondary">Actualizar</button>
       </div>
     </section>
 
@@ -59,6 +61,6 @@
       <button type="button" id="retry" class="link">Reintentar</button>
     </div>
   </main>
-  <script type="module" src="js/app.js?v=2026-09-26.9"></script>
+  <script type="module" src="js/app.js?v=2026-09-26.10"></script>
 </body>
 </html>
