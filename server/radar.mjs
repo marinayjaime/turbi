@@ -7,6 +7,7 @@
 import { adsbGet, adsbLimiter } from './adsb.mjs';
 import { buildRoute } from '../js/route.js';
 import { radarGate, legTimes, aenaTz } from '../js/radar-gate.js';
+import { corridor } from './identify.mjs'; // solo dentro de funciones (el ciclo de módulos es seguro)
 
 export const MAX_SEEN_S = 180; // en zonas con poca cobertura las señales llegan más espaciadas
 const PAUSE_MS = 1500; // espera antes de reintentar (adsb.lol responde 429 si se le pregunta demasiado seguido)
@@ -131,7 +132,19 @@ export async function findOnRadar({ leg, siblings = [], fetchFn = fetch, pauseMs
     if (res.error === 'rate-limited') { diag.rateLimited = true; return done({ state: 'no-disponible' }); } // adsb.lol en pausa: ni una consulta más
     if (res.error) { failed = true; continue; }
     const r = res.data;
-    a = (r.ac ?? []).find(airborne);
+    const flying = (r.ac ?? []).filter(airborne);
+    if (flying.length > 1) {
+      // Varios aviones en vuelo con el MISMO indicativo (p. ej. dos tramos del mismo número a la vez): nunca el primero.
+      // Solo vale el único compatible con ESTE tramo (corridor(), las mismas reglas que la identificación); con 0 o
+      // más de 1, este indicativo no elige ninguno y sigue el flujo normal (siguiente indicativo o identificación).
+      const depMs = estimatedDepartureMs(leg, origin, dest);
+      const compatible = origin && dest && depMs !== null
+        ? flying.filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lon)
+          && corridor({ origin, dest, lat: x.lat, lon: x.lon, track: x.track, elapsedMin: (nowMs - depMs) / 60000 }).ok)
+        : [];
+      diag.ambiguous = (diag.ambiguous ?? 0) + 1;
+      a = compatible.length === 1 ? compatible[0] : null;
+    } else a = flying[0] ?? null;
     if (a) { callsign = cs; break; }
     landed ??= (r.ac ?? []).map(x => landedAt(x, cs, ctx)).find(Boolean) ?? null;
   }
