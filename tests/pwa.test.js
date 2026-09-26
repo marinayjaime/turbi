@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { BUILD_ID } from '../js/config.js';
+import { BUILD_ID } from '../js/build.js';
 
 describe('actualización de la PWA', () => {
   const html = readFileSync('index.html', 'utf8');
@@ -21,8 +21,17 @@ describe('actualización de la PWA', () => {
     expect(app).toContain('turbi-reloaded-${BUILD_ID}');
   });
 
+  it('la versión vive sola en js/build.js (la usa la app, no el servidor); js/config.js no la exporta', async () => {
+    const build = await import('../js/build.js');
+    const config = await import('../js/config.js');
+    expect(Object.keys(build)).toEqual(['BUILD_ID']);
+    expect(config).not.toHaveProperty('BUILD_ID');
+    expect(config).toHaveProperty('LIVE_BASE');
+    expect(sw).toContain("'js/build.js'"); // también disponible sin conexión
+  });
+
   it('mantiene una copia sin conexión nueva y ofrece un aviso de actualización', () => {
-    expect(sw).toContain("const CACHE = 'turbi-v71'");
+    expect(sw).toContain("const CACHE = 'turbi-v72'");
     expect(sw).toContain("e.data?.type === 'SKIP_WAITING'");
     expect(html).toContain('id="update-notice"');
     expect(html).toContain('id="update-app"');
