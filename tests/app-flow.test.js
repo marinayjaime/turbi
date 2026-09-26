@@ -400,3 +400,71 @@ describe('la ficha nunca espera al radar', () => {
     expect([...document.querySelectorAll('#result h3')].map(h => h.textContent)).toContain('Turbulencias');
   });
 });
+
+describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B reales)', () => {
+  const remaining = () => $('.tm-remaining')?.textContent.replace(/\s+/g, ' ').trim();
+  const speed = () => [...document.querySelectorAll('.tm-cell')].find(c => c.textContent.includes('Velocidad'))?.querySelector('.tm-value').textContent;
+  const flyingLeg = n => {
+    const dep = Date.now() - 60 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N', n } };
+  };
+  it('1-2, 5-6, 8) baja cada segundo, la velocidad no cambia, nunca «Aterrizado», nunca negativa y cero peticiones nuevas', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { d, leg } = flyingLeg('715');
+      await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } },
+        radar: { ...RADAR_FLYING, remainingKm: 366, kmh: 900, seenS: 0, checked: new Date().toISOString() }, openMeteo: () => tooMany }));
+      await search('IB715', d);
+      await until(() => $('.telemetry'), 'panel ADS-B');
+      await networkIdle();
+      expect(remaining()).toBe('366km');
+      const before = calls.length;
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(remaining()).toBe('351km'); // 900 km/h → 15 km por minuto
+      expect(speed()).toBe('900km/h'); // la velocidad es la última medida, sin tocar
+      await vi.advanceTimersByTimeAsync(3600000); // una hora sin lecturas nuevas
+      expect(remaining()).toBe('291km'); // quieta a los 5 min de antigüedad; nunca a 0 ni negativa
+      expect($('.telemetry').textContent).toContain('Volando'); // nunca pasa a «Aterrizado» por el paso del tiempo
+      expect($('#result .status')?.textContent ?? '').not.toContain('Aterrizado');
+      expect(calls.slice(before).filter(u => u.includes('/radar/') || u.includes('adsb.lol'))).toHaveLength(0); // 8) cero peticiones
+    } finally { vi.useRealTimers(); }
+  });
+  it('3) una lectura real nueva (Actualizar) sustituye la estimación en el acto y sigue desde ahí', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { d, leg } = flyingLeg('715');
+      const readings = [{ ...RADAR_FLYING, remainingKm: 366, kmh: 900 }, { ...RADAR_FLYING, remainingKm: 300, kmh: 880 }];
+      await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, radar: readings, openMeteo: () => tooMany }));
+      await search('IB715', d);
+      await until(() => $('.telemetry'), 'panel ADS-B');
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(remaining()).toBe('361km');
+      $('#refresh').click();
+      await until(() => remaining() === '300km', 'la lectura nueva');
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(remaining()).toBe('285km'); // 880 km/h desde 300, no desde la estimación anterior
+    } finally { vi.useRealTimers(); }
+  });
+  it('7) cambiar de vuelo cancela el temporizador anterior (no pinta sus km en la ficha nueva)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const a = flyingLeg('715'), b = flyingLeg('3166');
+      const radar = [{ ...RADAR_FLYING, remainingKm: 366, kmh: 900 }, { ...RADAR_FLYING, callsign: 'IBE3166', remainingKm: 800, kmh: 720 }];
+      await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [a.leg] },
+        IB3166: { name: 'Iberia', updated: new Date().toISOString(), legs: [b.leg] } }, radar, openMeteo: () => tooMany }));
+      await search('IB715', a.d);
+      await until(() => $('.telemetry'), 'panel del primer vuelo');
+      await vi.advanceTimersByTimeAsync(5000);
+      await search('IB3166', b.d);
+      await until(() => $('.telemetry')?.textContent.includes('IBE3166'), 'panel del segundo vuelo');
+      const seenValues = new Set();
+      for (let i = 0; i < 30; i++) { await vi.advanceTimersByTimeAsync(1000); seenValues.add(remaining()); }
+      for (const v of seenValues) expect(Number(v.replace(/\D/g, ''))).toBeGreaterThan(780); // solo 800 → 794 (720 km/h)
+      $('#back').click(); // Nueva consulta
+      const last = remaining();
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(remaining()).toBe(last);
+    } finally { vi.useRealTimers(); }
+  });
+});

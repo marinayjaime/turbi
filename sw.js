@@ -1,10 +1,10 @@
 // Network-first para los archivos propios (así las actualizaciones llegan al momento),
 // con la caché como respaldo sin conexión. Las APIs externas no pasan por aquí.
-const CACHE = 'turbi-v55';
+const CACHE = 'turbi-v56';
 const SHELL = [
-  './', 'index.html', 'css/style.css?v=2026-09-26.3', 'manifest.json',
-  'js/app.js?v=2026-09-26.3', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
-  'js/flight.js', 'js/airports.js', 'js/places.js', 'js/schedule.js', 'js/radar.js', 'js/radar-gate.js', 'js/eta.js', 'js/airline-photos.js',
+  './', 'index.html', 'css/style.css?v=2026-09-26.4', 'manifest.json',
+  'js/app.js?v=2026-09-26.4', 'js/ui.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
+  'js/flight.js', 'js/airports.js', 'js/places.js', 'js/schedule.js', 'js/radar.js', 'js/radar-gate.js', 'js/radar-distance.js', 'js/eta.js', 'js/airline-photos.js',
   'js/altitude.js', 'js/turbi-index.js', 'js/models.js', 'js/confidence.js', 'js/summary.js', 'js/forecast.js',
   'js/ui-forecast.js', 'js/storage.js', 'js/aviation-weather.js', 'js/map.js', 'js/speech.js', 'js/config.js', 'js/punctuality.js', 'js/ui-punctuality.js', 'js/plain.js', 'data/icao.json',
   'data/airports.json', 'img/sky.jpg', 'img/turbi-logo.png', 'icons/icon-32.png', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',

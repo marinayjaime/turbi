@@ -6,7 +6,8 @@ import { lookupFlight } from './flight.js';
 import { fetchSchedule, pickLeg, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc, flightCardHtml, missingDateText } from './ui.js';
+import { renderResult, esc, flightCardHtml, missingDateText, thousands } from './ui.js';
+import { distanceReference, startRemainingTicker } from './radar-distance.js';
 import { buildProfile } from './altitude.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
@@ -202,7 +203,10 @@ function turbiEta(q, ctx, radar = null) {
 // identificando el avión por su ruta, se vuelve a mirar en segundo plano (pollRadar) hasta tener un resultado
 // definitivo, cambiar de búsqueda, desaparecer la ficha o agotar los sondeos. Solo se espera la primera respuesta.
 let radarPoll = null;
-function stopRadarPoll() { radarPoll?.cancel(); radarPoll = null; }
+function stopRadarPoll() { radarPoll?.cancel(); radarPoll = null; stopDistance(); }
+// Distancia restante «en vivo» (js/radar-distance.js): solo repinta el número; cero peticiones.
+let distanceTicker = null;
+function stopDistance() { distanceTicker?.stop(); distanceTicker = null; }
 
 async function showRadar(q, flight, stale, ctx = null) {
   if (!flight || flight.stale || !q.leg || q.leg.past) return;
@@ -238,6 +242,20 @@ function paintRadar(q, flight, radar, ctx, stale) {
   if (stale() || card === flight || !el) return;
   // Solo se sustituye la tarjeta .flight: la puntualidad y la sección Turbulencias (#forecast-area) no se tocan.
   el.outerHTML = flightCardHtml(card);
+  // Cada lectura real es la nueva referencia de la distancia (la anterior estimación se descarta en el acto).
+  stopDistance();
+  if (card.radar?.state === 'volando') {
+    distanceTicker = startRemainingTicker({
+      ref: distanceReference(card.radar, Date.now()),
+      isActive: () => !stale() && !els.result.closest('[hidden]'),
+      render: km => {
+        const value = els.result.querySelector('.tm-remaining');
+        if (!value?.firstChild) return false;
+        value.firstChild.textContent = thousands(km);
+        return true;
+      },
+    });
+  }
   // El aviso de llegada no puede contradecir al radar (en el aire) ni a un aterrizaje confirmado.
   const note = els.result.querySelector('.note');
   const replacement = Number.isFinite(landedAt) ? LANDED_NOTE : radarNote(radar);

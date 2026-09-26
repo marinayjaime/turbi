@@ -36,7 +36,7 @@ export function missingDateText(flight, requested, dates, today) {
 }
 
 // Miles con punto (4.800), también con 4 cifras (Intl en español no lo pone).
-const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+export const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
 // Radar: panel de telemetría (estado, velocidad, altitud y distancia; fuente y última señal debajo).
 // La hora de llegada estimada va en la ficha, en «Llegada estimada». Proveedor (adsb.lol) solo en el title.
@@ -53,7 +53,7 @@ function radarHtml(r) {
           <span class="tm-value tm-flying">Volando<span class="fly" aria-hidden="true"><span class="fly-plane">✈</span></span></span></div>${
   cell('Velocidad', r.kmh ? r.kmh : null, 'km/h')}${
   cell('Altitud', Number.isFinite(r.altM) ? thousands(Math.round(r.altM / 100) * 100) : null, 'm')}${
-  cell('Distancia restante', Number.isFinite(r.remainingKm) ? thousands(r.remainingKm) : null, 'km')}
+  cell('Distancia restante', Number.isFinite(r.remainingKm) ? thousands(r.remainingKm) : null, 'km', ' tm-remaining')}
         </div>
         <div class="tm-foot"><span class="tm-source" title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}">Radar ADS-B</span>${''
   }<span class="tm-signal">Última señal hace ${esc(r.seenS)} s · ${esc(r.callsign)}</span></div>${
