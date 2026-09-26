@@ -69,12 +69,19 @@ function estimatedMin(from, to) {
 const today = nowMs => new Date(nowMs).toISOString().slice(0, 10);
 const dayDiff = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY_MS);
 
-// store: { get(path) → { data, sha } | null (lanza si falla), put(path, data, sha?) → { ok, sha } | { ok: false, conflict: true } }
+// store (adb-store.mjs): get(path) → { data, sha } | null (lanza si falla); update(path, next) → lo guardado (con la
+// relectura y los reintentos ante 409/422). Las escrituras se hacen de una en una (nunca en paralelo): primero la consulta del
+// vuelo y después el contador del cupo. Una consulta no se da por completada hasta que está guardada; si GitHub falla,
+// se sirve igualmente (ya se pagó) y se vuelve a intentar guardar en la siguiente petición de ese vuelo.
 export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Date.now(), sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {} }) {
   const memory = new Map(); // número|fecha → entrada (encontrado o negativa)
   const inflight = new Map();
-  const quota = { limit: null, remaining: null, resetAt: null, day: null, dayCalls: 0, dayBudget: Infinity, sha: undefined, loaded: false };
-  const stats = { lookups: 0, memoryHits: 0, storeHits: 0, calls: 0, retries: 0, found: 0, notFound: 0, refreshes: 0, unavailable: {}, disabledUntil: null, disabledReason: null };
+  const quota = { limit: null, remaining: null, resetAt: null, day: null, dayCalls: 0, dayBudget: Infinity, loaded: false };
+  const stats = { lookups: 0, memoryHits: 0, storeHits: 0, calls: 0, retries: 0, found: 0, notFound: 0, refreshes: 0, unavailable: {}, disabledUntil: null, disabledReason: null,
+    saved: 0, saveFailures: 0 };
+  let writes = Promise.resolve(); // cola: una escritura en GitHub cada vez
+  const serial = fn => { const p = writes.then(fn, fn); writes = p.catch(() => {}); return p; };
+  const unsaved = new Set(); // claves en memoria que aún no están en la rama data
   const unavailable = reason => { stats.unavailable[reason] = (stats.unavailable[reason] ?? 0) + 1; return { status: 'unavailable', reason }; };
   const publicEntry = e => ({ status: e.status, source: 'aerodatabox', number: e.number, date: e.date, fetchedAt: e.fetchedAt,
     ...(e.refreshedAt ? { refreshedAt: e.refreshedAt } : {}), legs: e.legs ?? [] });
@@ -84,20 +91,32 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     const q = await store.get(QUOTA_PATH).catch(() => null);
     if (q?.data) Object.assign(quota, { limit: q.data.limit ?? null, remaining: q.data.remaining ?? null, resetAt: q.data.resetAt ?? null,
       day: q.data.day ?? null, dayCalls: q.data.dayCalls ?? 0, dayBudget: q.data.dayBudget ?? Infinity });
-    quota.sha = q?.sha;
     quota.loaded = true;
   }
+  // Siempre en la cola y después de guardar la consulta del vuelo.
   async function saveQuota() {
     const data = { limit: quota.limit, remaining: quota.remaining, resetAt: quota.resetAt, day: quota.day, dayCalls: quota.dayCalls,
       dayBudget: Number.isFinite(quota.dayBudget) ? quota.dayBudget : null, updatedAt: new Date(now()).toISOString() };
+    try { await serial(() => store.update(QUOTA_PATH, () => data)); } catch { /* el contador es orientativo: nunca bloquea una respuesta */ }
+  }
+  // Guarda una entrada (en la cola). Si ya hay una guardada, manda la guardada, salvo que la nuestra traiga el único
+  // refresco y la guardada no: así nunca se pierde ni se repite el refresco.
+  async function persist(k, path, entry) {
     try {
-      let r = await store.put(QUOTA_PATH, data, quota.sha);
-      if (!r.ok) { const cur = await store.get(QUOTA_PATH); r = await store.put(QUOTA_PATH, data, cur?.sha); } // otro escritor: se reintenta una vez
-      if (r.ok) quota.sha = r.sha;
-    } catch { /* el contador es orientativo: nunca bloquea una respuesta */ }
+      const kept = await serial(() => store.update(path, cur => (!cur || (entry.refreshedAt && !cur.refreshedAt) ? entry : null)));
+      unsaved.delete(k);
+      stats.saved++;
+      return kept ?? entry;
+    } catch {
+      unsaved.add(k);
+      stats.saveFailures++;
+      return entry;
+    }
   }
 
   // Cupo: reserva final y reparto diario de lo que queda hasta la renovación.
+  const budgetFor = t => Math.max(1, Math.floor((quota.remaining - RESERVE_UNITS) / UNITS_PER_CALL
+    / (quota.resetAt ? Math.max(1, Math.ceil((quota.resetAt - t) / DAY_MS)) : 30)));
   function canCall() {
     const t = now();
     if (stats.disabledUntil && t < stats.disabledUntil) return stats.disabledReason;
@@ -105,11 +124,11 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     if (quota.remaining !== null && quota.remaining - UNITS_PER_CALL < RESERVE_UNITS) return 'reserva';
     const d = today(t);
     if (quota.day !== d) {
-      const daysLeft = quota.resetAt ? Math.max(1, Math.ceil((quota.resetAt - t) / DAY_MS)) : 30;
       quota.day = d;
       quota.dayCalls = 0;
-      quota.dayBudget = quota.remaining === null ? Infinity
-        : Math.max(1, Math.floor((quota.remaining - RESERVE_UNITS) / UNITS_PER_CALL / daysLeft));
+      quota.dayBudget = quota.remaining === null ? Infinity : budgetFor(t);
+    } else if (!Number.isFinite(quota.dayBudget) && quota.remaining !== null) {
+      quota.dayBudget = budgetFor(t); // el cupo se conoció a mitad de día
     }
     return quota.dayCalls >= quota.dayBudget ? 'tope-diario' : null;
   }
@@ -119,6 +138,8 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     if (remaining !== null) quota.remaining = remaining;
     if (limit !== null) quota.limit = limit;
     if (reset !== null) quota.resetAt = now() + reset * 1000;
+    // Primera respuesta con el cupo real: el tope del día se calcula ya (nunca se queda sin tope el primer día).
+    if (!Number.isFinite(quota.dayBudget) && quota.remaining !== null) quota.dayBudget = budgetFor(now());
   }
   function disable(reason, untilMs) {
     stats.disabledReason = reason;
@@ -159,13 +180,15 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
 
   async function resolve(number, date) {
     const k = `${number}|${date}`;
+    const path = entryPath(number, date);
     let cached = memory.get(k);
-    let sha;
-    if (cached) stats.memoryHits++;
-    else {
+    if (cached) {
+      stats.memoryHits++;
+      if (unsaved.has(k)) { cached = await persist(k, path, cached); memory.set(k, cached); } // guardado pendiente
+    } else {
       let stored;
-      try { stored = await store.get(entryPath(number, date)); } catch { return unavailable('cache'); } // sin caché fiable, no se llama
-      if (stored?.data) { cached = stored.data; sha = stored.sha; memory.set(k, cached); stats.storeHits++; }
+      try { stored = await store.get(path); } catch { return unavailable('cache'); } // sin caché fiable, no se llama
+      if (stored?.data) { cached = stored.data; memory.set(k, cached); stats.storeHits++; }
     }
     const refreshing = cached && refreshDue(cached, now());
     if (cached && !refreshing) return publicEntry(cached);
@@ -175,24 +198,15 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     if (blocked) return cached ? publicEntry(cached) : unavailable(blocked);
 
     const r = await call(number, date);
-    saveQuota();
-    if (r.kind === 'fail') return cached ? publicEntry(cached) : unavailable(r.reason);
+    if (r.kind === 'fail') { await saveQuota(); return cached ? publicEntry(cached) : unavailable(r.reason); }
     const at = new Date(now()).toISOString();
-    let entry;
-    if (refreshing) {
-      // El refresco sustituye los datos si trae el vuelo; una negativa tardía no borra el horario ya conocido.
-      entry = { ...cached, ...(r.kind === 'found' ? { legs: r.legs } : {}), refreshedAt: at };
-      stats.refreshes++;
-      if (!sha) sha = (await store.get(entryPath(number, date)).catch(() => null))?.sha;
-      await store.put(entryPath(number, date), entry, sha).catch(() => null);
-    } else {
-      entry = r.kind === 'found' ? { status: 'found', number, date, fetchedAt: at, legs: r.legs } : { status: 'not_found', number, date, fetchedAt: at, legs: [] };
-      const w = await store.put(entryPath(number, date), entry).catch(() => null);
-      if (w && !w.ok) { // otro proceso lo escribió a la vez: manda el guardado
-        const other = await store.get(entryPath(number, date)).catch(() => null);
-        if (other?.data) entry = other.data;
-      }
-    }
+    // El refresco sustituye los datos si trae el vuelo; una negativa tardía no borra el horario ya conocido.
+    const fresh = refreshing
+      ? { ...cached, ...(r.kind === 'found' ? { legs: r.legs } : {}), refreshedAt: at }
+      : r.kind === 'found' ? { status: 'found', number, date, fetchedAt: at, legs: r.legs } : { status: 'not_found', number, date, fetchedAt: at, legs: [] };
+    if (refreshing) stats.refreshes++;
+    const entry = await persist(k, path, fresh); // 1.º la consulta del vuelo…
+    await saveQuota(); // …2.º el contador (nunca en paralelo)
     if (entry.status === 'found') stats.found++; else stats.notFound++;
     memory.set(k, entry);
     return publicEntry(entry);

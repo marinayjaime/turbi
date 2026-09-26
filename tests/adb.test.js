@@ -77,6 +77,10 @@ describe('horas y textos', () => {
     expect(adbInfo(FOUND, LEG, Date.parse('2026-09-26T13:00Z')))
       .toBe('Horario según AeroDataBox (consultado hace 2 h): Ha salido · salida 12:34 (programada 12:30) · llegada prevista 17:21 · Boeing 737-800');
   });
+  it('hora revisada igual a la programada: solo «salida 10:55»', () => {
+    const same = { ...LEG, status: 'Expected', dep: { sched: LEG.dep.sched, revised: { ...LEG.dep.sched }, runway: null } };
+    expect(adbInfo(FOUND, same, Date.parse('2026-09-26T11:00Z'))).toBe('Horario según AeroDataBox (consultado hace un momento): Programado · salida 12:30 · llegada prevista 17:21 · Boeing 737-800');
+  });
   it('sourceNote y clave física del tramo', () => {
     expect(sourceNote({ routeSource: 'aerodatabox' })).toBe('horario según AeroDataBox');
     expect(sourceNote({ routeSource: 'adsbdb' })).toBe('ruta según ADSBDB (no oficial)');

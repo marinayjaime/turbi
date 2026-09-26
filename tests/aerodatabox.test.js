@@ -35,6 +35,47 @@ function make({ fetchFn, store = createMemoryStore(), nowMs = T0, key = KEY } = 
   return { adb, store, setNow: ms => { t = ms; } };
 }
 
+// API Contents de GitHub simulada: cada PUT lee la punta de la rama al empezar y la confirma al terminar (tras una
+// espera); si otra escritura movió la rama entre medias → 409, como GitHub. Crear sin sha un archivo existente → 422.
+function fakeGithub({ always409 = false, status500 = false, put500 = false, invalid = () => false } = {}) {
+  const files = new Map();
+  let head = 0, n = 0, inFlight = 0;
+  const gh = {
+    requests: [], committed: [], conflicts409: 0, maxConcurrentPuts: 0, status500, put500, beforeFirstPut: null,
+    write(path, data) { files.set(path, { data, sha: `x${++n}` }); head++; },
+    read(path) { return files.get(path)?.data; },
+    fetch: vi.fn(async (url, opts = {}) => {
+      const path = decodeURIComponent(new URL(url).pathname.replace('/repos/marinayjaime/turbi/contents/', ''));
+      const method = opts.method ?? 'GET';
+      const body = opts.body ? JSON.parse(opts.body) : null;
+      gh.requests.push({ method, url: url.split('?')[0], body: body && { branch: body.branch, message: body.message }, auth: opts.headers?.authorization });
+      const reply = (status, json = {}) => ({ ok: status < 300, status, json: async () => json });
+      if (gh.status500) return reply(500);
+      if (method === 'GET') {
+        const f = files.get(path);
+        return f ? reply(200, { sha: f.sha, content: Buffer.from(JSON.stringify(f.data)).toString('base64') }) : reply(404);
+      }
+      if (gh.put500) return reply(500);
+      if (gh.beforeFirstPut) { const f = gh.beforeFirstPut; gh.beforeFirstPut = null; f(); }
+      inFlight++;
+      gh.maxConcurrentPuts = Math.max(gh.maxConcurrentPuts, inFlight);
+      const start = head;
+      await new Promise(r => setTimeout(r, 5));
+      inFlight--;
+      if (invalid(path)) return reply(422, { message: 'Invalid request.' });
+      if (always409 || head !== start) { gh.conflicts409++; return reply(409, { message: 'is at abc but expected def' }); }
+      const cur = files.get(path);
+      if (cur && !body.sha) return reply(422, { message: 'Invalid request. "sha" wasn\'t supplied.' });
+      if (body.sha && cur?.sha !== body.sha) { gh.conflicts409++; return reply(409, { message: 'does not match' }); }
+      files.set(path, { data: JSON.parse(Buffer.from(body.content, 'base64').toString()), sha: `x${++n}` });
+      head++;
+      gh.committed.push(path);
+      return reply(201, { content: { sha: `x${n}` } });
+    }),
+  };
+  return gh;
+}
+
 describe('normalizeFlights', () => {
   it('solo datos normalizados: aeropuertos, horas (local, UTC, desfase), estado, aeronave; sin matrícula, cabeceras ni URL', () => {
     const [l] = normalizeFlights(TO3416);
@@ -102,13 +143,13 @@ describe('consulta base: una por vuelo + fecha', () => {
     expect(a).toEqual(b);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
-  it('escritura concurrente (otro proceso guardó antes): se usa lo guardado', async () => {
-    const store = createMemoryStore();
+  it('escritura concurrente (otro proceso guardó el mismo vuelo antes): se relee y manda lo guardado', async () => {
+    const gh = fakeGithub();
     const other = { status: 'found', number: 'TO3416', date: '2026-09-26', fetchedAt: '2026-09-26T07:59:00.000Z', legs: normalizeFlights(TO3416) };
-    const realPut = store.put;
-    store.put = async (path, data, sha) => { if (path.includes('TO3416') && !store.files.has(path)) await realPut(path, other); return realPut(path, data, sha); };
-    const { adb } = make({ fetchFn: api(ok(TO3416)), store });
+    gh.beforeFirstPut = () => gh.write(entryPath('TO3416', '2026-09-26'), other); // otro escritor se adelanta
+    const { adb } = make({ fetchFn: api(ok(TO3416)), store: createGithubStore({ token: 't', fetchFn: gh.fetch }) });
     expect((await adb.lookup('TO3416', '2026-09-26')).fetchedAt).toBe('2026-09-26T07:59:00.000Z');
+    expect(gh.read(entryPath('TO3416', '2026-09-26')).fetchedAt).toBe('2026-09-26T07:59:00.000Z');
   });
   it('fuera de −2…+60 días o formato inválido: sin llamada', async () => {
     const fetchFn = api(ok(TO3416));
@@ -253,30 +294,96 @@ describe('cupo: reserva final de 20 unidades y reparto diario', () => {
   });
 });
 
-describe('caché en GitHub (rama data)', () => {
-  const gh = (...responses) => vi.fn(async () => responses.shift());
-  const json = (status, body) => ({ ok: status < 300, status, json: async () => body });
-  it('get: 404 → null; 200 → datos decodificados y sha', async () => {
-    const data = { status: 'not_found' };
-    const fetchFn = gh(json(404), json(200, { sha: 'abc', content: Buffer.from(JSON.stringify(data)).toString('base64') }));
-    const s = createGithubStore({ token: 't0k3n', fetchFn });
-    expect(await s.get('adb/2026-09-26/XX1.json')).toBeNull();
-    expect(await s.get('adb/2026-09-26/XX1.json')).toEqual({ data, sha: 'abc' });
-    const [url, opts] = fetchFn.mock.calls[0];
-    expect(url).toBe('https://api.github.com/repos/marinayjaime/turbi/contents/adb/2026-09-26/XX1.json?ref=data');
-    expect(opts.headers.authorization).toBe('Bearer t0k3n');
+describe('caché en GitHub (rama data): conflictos como en GitHub', () => {
+  it('dos escrituras concurrentes sobre la rama: la segunda recibe 409, relee, reintenta y las dos quedan guardadas', async () => {
+    const gh = fakeGithub();
+    const s = createGithubStore({ token: 't0k3n', fetchFn: gh.fetch });
+    await Promise.all([s.update('adb/2026-09-27/LH400.json', () => ({ status: 'found' })), s.update('adb/_quota.json', () => ({ remaining: 306 }))]);
+    expect(gh.conflicts409).toBeGreaterThanOrEqual(1); // el mismo 409 que dio GitHub en producción
+    expect(gh.read('adb/2026-09-27/LH400.json')).toEqual({ status: 'found' });
+    expect(gh.read('adb/_quota.json')).toEqual({ remaining: 306 });
+    const put = gh.requests.find(r => r.method === 'PUT');
+    expect(put.url).toBe('https://api.github.com/repos/marinayjaime/turbi/contents/adb/2026-09-27/LH400.json');
+    expect(put.body).toMatchObject({ branch: 'data', message: 'AeroDataBox: adb/2026-09-27/LH400.json' });
+    expect(put.auth).toBe('Bearer t0k3n');
   });
-  it('put: crear sin sha; 422/409 → conflicto (otro escritor); otros errores lanzan', async () => {
-    const fetchFn = gh(json(201, { content: { sha: 'n1' } }), json(422, {}), json(409, {}), json(500, {}));
-    const s = createGithubStore({ token: 't', fetchFn });
-    expect(await s.put('adb/x.json', { a: 1 })).toEqual({ ok: true, sha: 'n1' });
-    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
-    expect(body).toMatchObject({ branch: 'data', message: 'AeroDataBox: adb/x.json' });
-    expect(body.sha).toBeUndefined();
-    expect(JSON.parse(Buffer.from(body.content, 'base64').toString())).toEqual({ a: 1 });
-    expect(await s.put('adb/x.json', { a: 2 })).toEqual({ ok: false, conflict: true });
-    expect(await s.put('adb/x.json', { a: 2 }, 'viejo')).toEqual({ ok: false, conflict: true });
-    await expect(s.put('adb/x.json', { a: 2 })).rejects.toThrow('GitHub 500');
+  it('422 al crear porque el archivo ya existe: se relee y manda lo guardado (sin sobrescribir)', async () => {
+    const gh = fakeGithub();
+    const s = createGithubStore({ token: 't', fetchFn: gh.fetch });
+    gh.beforeFirstPut = () => gh.write('adb/x.json', { v: 'otro' });
+    expect(await s.update('adb/x.json', cur => (cur ? null : { v: 'mío' }))).toEqual({ v: 'otro' });
+    expect(gh.read('adb/x.json')).toEqual({ v: 'otro' });
+  });
+  it('un 422 que no es «archivo existente» no se toma por conflicto: error sin insistir', async () => {
+    const gh = fakeGithub({ invalid: path => path.includes('mal') });
+    const s = createGithubStore({ token: 't', fetchFn: gh.fetch });
+    await expect(s.update('adb/mal.json', () => ({ a: 1 }))).rejects.toThrow('GitHub 422');
+    expect(gh.requests.filter(r => r.method === 'PUT')).toHaveLength(1);
+  });
+  it('máximo 3 intentos: 409 continuos → error', async () => {
+    const gh = fakeGithub({ always409: true });
+    const s = createGithubStore({ token: 't', fetchFn: gh.fetch });
+    await expect(s.update('adb/y.json', () => ({ a: 1 }))).rejects.toThrow('3 conflictos');
+    expect(gh.requests.filter(r => r.method === 'PUT')).toHaveLength(3);
+  });
+  it('otros errores (500) lanzan', async () => {
+    const gh = fakeGithub({ status500: true });
+    await expect(createGithubStore({ token: 't', fetchFn: gh.fetch }).update('adb/z.json', () => ({ a: 1 }))).rejects.toThrow('GitHub 500');
+  });
+});
+
+describe('persistencia en producción (GitHub simulado): la consulta queda guardada antes de responder', () => {
+  const setup = (fetchFn, gh = fakeGithub(), nowMs = T0) => ({ gh, ...make({ fetchFn, store: createGithubStore({ token: 't', fetchFn: gh.fetch }), nowMs }) });
+  it('escrituras en serie: primero adb/<fecha>/<vuelo>.json, después adb/_quota.json; nunca dos a la vez', async () => {
+    const { adb, gh } = setup(api(ok(TO3416, 308)));
+    await adb.lookup('LH400', '2026-09-27');
+    expect(gh.read('adb/2026-09-27/LH400.json')).toMatchObject({ status: 'found', number: 'LH400', date: '2026-09-27' });
+    expect(gh.committed).toEqual(['adb/2026-09-27/LH400.json', 'adb/_quota.json']);
+    expect(gh.maxConcurrentPuts).toBe(1);
+    expect(gh.conflicts409).toBe(0);
+  });
+  it('varias búsquedas distintas a la vez: todas guardadas, escrituras de una en una', async () => {
+    const { adb, gh } = setup(vi.fn(async () => ok(TO3416, 300)));
+    await Promise.all(['AA1', 'AA2', 'AA3'].map(n => adb.lookup(n, '2026-09-27')));
+    for (const n of ['AA1', 'AA2', 'AA3']) expect(gh.read(`adb/2026-09-27/${n}.json`)).toMatchObject({ status: 'found' });
+    expect(gh.maxConcurrentPuts).toBe(1);
+  });
+  it('encontrado y negativa: tras «reiniciar Render» (instancia nueva, misma rama) 0 llamadas nuevas', async () => {
+    const gh = fakeGithub();
+    const fetchFn = vi.fn(async url => (url.includes('LH400') ? ok(TO3416, 308) : empty(306)));
+    // (misma fecha que el vuelo simulado: la base es del propio día, así que no hay refresco operativo en juego)
+    await setup(fetchFn, gh).adb.lookup('LH400', '2026-09-26');
+    await setup(fetchFn, gh).adb.lookup('KE1201', '2026-09-26');
+    expect(gh.read('adb/2026-09-26/LH400.json')).toMatchObject({ status: 'found' });
+    expect(gh.read('adb/2026-09-26/KE1201.json')).toMatchObject({ status: 'not_found' });
+    const restarted = setup(fetchFn, gh).adb;
+    expect((await restarted.lookup('LH400', '2026-09-26')).status).toBe('found');
+    expect((await restarted.lookup('KE1201', '2026-09-26')).status).toBe('not_found');
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+  it('si GitHub falla al guardar: se sirve lo obtenido y se guarda en la siguiente petición (sin volver a pagar)', async () => {
+    const gh = fakeGithub({ put500: true });
+    const fetchFn = api(ok(TO3416));
+    const { adb } = setup(fetchFn, gh);
+    expect((await adb.lookup('LH400', '2026-09-26')).status).toBe('found');
+    expect(adb.health().saveFailures).toBe(1);
+    gh.put500 = false;
+    await adb.lookup('LH400', '2026-09-26');
+    expect(gh.read('adb/2026-09-26/LH400.json')).toMatchObject({ status: 'found' });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+  it('tope diario: se calcula con la primera respuesta real (nunca null el primer día)', async () => {
+    const { adb, gh } = setup(api(ok(TO3416, 300))); // 300 restantes, renovación en 20 días
+    await adb.lookup('LH400', '2026-09-27');
+    expect(adb.health().quota.dayBudget).toBe(Math.floor((300 - RESERVE_UNITS) / 2 / 20)); // 7
+    expect(gh.read('adb/_quota.json')).toMatchObject({ remaining: 300, dayCalls: 1, dayBudget: 7 });
+  });
+  it('contador guardado sin tope ese mismo día (como el de producción): se calcula antes de la siguiente llamada', async () => {
+    const gh = fakeGithub();
+    gh.write('adb/_quota.json', { limit: 400, remaining: 306, resetAt: T0 + 30 * 86400000, day: '2026-09-26', dayCalls: 2, dayBudget: null });
+    const { adb } = setup(api(ok(TO3416, 304)), gh);
+    await adb.lookup('LH400', '2026-09-27');
+    expect(adb.health().quota.dayBudget).toBe(Math.floor((306 - RESERVE_UNITS) / 2 / 30)); // 4
   });
 });
 

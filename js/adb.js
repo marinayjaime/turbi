@@ -95,7 +95,8 @@ const ago = ms => (ms < 90000 ? 'hace un momento' : ms < 5400000 ? `hace ${Math.
 export function adbInfo(meta, leg, nowMs = Date.now()) {
   const at = Date.parse(meta.refreshedAt ?? meta.fetchedAt);
   const { dep, arr } = adbTimes(leg);
-  const depText = dep === leg.dep.sched ? `salida ${hm(dep)}` : `salida ${leg.dep.runway ? '' : 'prevista '}${hm(dep)} (programada ${hm(leg.dep.sched)})`;
+  // Hora revisada igual a la programada: solo «salida 10:55», sin «prevista … (programada …)».
+  const depText = dep.utc === leg.dep.sched.utc ? `salida ${hm(dep)}` : `salida ${leg.dep.runway ? '' : 'prevista '}${hm(dep)} (programada ${hm(leg.dep.sched)})`;
   const arrText = !arr ? null : leg.arr.runway ? `llegada ${hm(arr)}` : arr === leg.arr.sched ? `llegada ${hm(arr)}` : `llegada prevista ${hm(arr)}`;
   return `Horario según AeroDataBox (consultado ${ago(nowMs - at)}): ${[adbStatusText(leg.status), depText, arrText, leg.aircraft].filter(Boolean).join(' · ')}`;
 }
