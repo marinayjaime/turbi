@@ -6,8 +6,8 @@
 //  - Freno: nunca baja de REMAINING_FLOOR_KM por extrapolación (si la lectura real ya está por debajo, no se mueve).
 //    Cerca del aeropuerto hay aproximación, esperas y vectores: la distancia en línea recta deja de bajar a la
 //    velocidad del avión. La llegada la decide una lectura real o Aena, nunca el paso del tiempo.
-//  - Señal antigua: se deja de extrapolar cuando la posición tiene más de MAX_EXTRAPOLATION_S (seenS + tiempo desde
-//    que se recibió). En crucero son ~70 km: el error de usar la velocidad sobre el suelo como velocidad de
+//  - Señal antigua: se deja de extrapolar cuando la posición tiene más de MAX_EXTRAPOLATION_S (seenS + tiempo en la
+//    caché del servidor + tiempo desde que se recibió). En crucero son ~70 km: el error de usar la velocidad sobre el suelo como velocidad de
 //    acercamiento es pequeño (< 5 %, unos 4 km); más allá, descensos y virajes la hacen poco representativa. Está por
 //    encima de los 180 s con los que el servidor aún da por buena una posición (MAX_SEEN_S).
 //  - Sin velocidad creíble de vuelo (< MIN_KMH: en tierra o rodando), no se extrapola.
@@ -17,10 +17,16 @@ export const MIN_KMH = 200;
 export const TICK_MS = 1000;
 
 // Referencia a partir de una lectura real; null si no se puede interpolar.
+// Antigüedad de la posición al recibirla: seenS (lo que tenía cuando el servidor la leyó, en `checked`) más lo que la
+// respuesta ha podido pasar en la caché de 60 s del servidor (recepción − checked). Un `checked` futuro (pequeño
+// desfase de reloj) no resta; sin `checked` válido, solo seenS. Solo acorta el margen de extrapolación: la distancia
+// mostrada al llegar sigue siendo exactamente la del servidor.
 export function distanceReference(radar, receivedAtMs) {
   if (radar?.state !== 'volando' || !Number.isFinite(radar.remainingKm) || radar.remainingKm < 0) return null;
   const seenS = Number.isFinite(radar.seenS) && radar.seenS >= 0 ? radar.seenS : 0;
-  return { km: radar.remainingKm, kmh: Number.isFinite(radar.kmh) ? radar.kmh : null, at: receivedAtMs, ageAtReceiptS: seenS };
+  const checkedMs = typeof radar.checked === 'string' ? Date.parse(radar.checked) : NaN;
+  const cachedS = Number.isFinite(checkedMs) ? Math.max(0, receivedAtMs - checkedMs) / 1000 : 0;
+  return { km: radar.remainingKm, kmh: Number.isFinite(radar.kmh) ? radar.kmh : null, at: receivedAtMs, ageAtReceiptS: seenS + cachedS };
 }
 
 // Distancia visible en nowMs. { km, moving }: moving = false cuando ya no se extrapola (freno, señal antigua…).

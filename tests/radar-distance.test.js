@@ -38,6 +38,41 @@ describe('estimación de la distancia visible', () => {
   });
 });
 
+describe('antigüedad inicial: seenS + tiempo en la caché del servidor (checked)', () => {
+  const at = s => new Date(T0 + s * 1000).toISOString();
+  it('seenS 0 y checked 60 s antes → solo quedan 240 s de extrapolación; la distancia inicial es la del servidor', () => {
+    const ref = distanceReference(reading({ seenS: 0, checked: at(-60) }), T0);
+    expect(ref.ageAtReceiptS).toBe(60);
+    expect(estimateRemaining(ref, T0).km).toBe(366); // no se descuenta la antigüedad del número
+    expect(estimateRemaining(ref, T0 + 239000).moving).toBe(true);
+    expect(estimateRemaining(ref, T0 + 240000)).toEqual({ km: 306, moving: false }); // 366 − 900 × 240 / 3600
+    expect(estimateRemaining(ref, T0 + 600000).km).toBe(306);
+  });
+  it('seenS 120 y checked 30 s antes → antigüedad inicial 150 s (quedan 150 s)', () => {
+    const ref = distanceReference(reading({ seenS: 120, checked: at(-30) }), T0);
+    expect(ref.ageAtReceiptS).toBe(150);
+    expect(estimateRemaining(ref, T0 + 600000).km).toBe(329); // 366 − 900 × 150 / 3600 = 328,5
+  });
+  it('checked en el futuro (desfase de reloj) nunca añade antigüedad negativa', () => {
+    expect(distanceReference(reading({ seenS: 10, checked: at(+45) }), T0).ageAtReceiptS).toBe(10);
+  });
+  it('checked inválido o ausente → solo seenS', () => {
+    for (const checked of ['no es una fecha', undefined, null, 12345]) {
+      expect(distanceReference(reading({ seenS: 20, checked }), T0).ageAtReceiptS).toBe(20);
+    }
+  });
+  it('cero cambios de red: el cálculo y el temporizador no hacen ninguna petición', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const t = startRemainingTicker({ ref: distanceReference(reading({ checked: at(-60) }), T0), render: () => true });
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(t.running).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
 describe('temporizador (1 s, encadenado)', () => {
   it('repinta cada segundo, se detiene solo al dejar de moverse y no hace nada más', async () => {
     const shown = [];
