@@ -68,6 +68,14 @@ const IN_PROGRESS_GATE = new Set(['EMB', 'ULL', 'CER', 'BTR']);
 const ENDED_AFTER_ARRIVAL_MIN = 90;
 const MAX_FLIGHT_H = 20; // el vuelo más largo posible (como MAX_FLIGHT_MIN en scripts/aena.mjs)
 
+// Estado final CONFIRMADO por Aena (llegada final, cancelado o desviado): manda sobre cualquier lectura ADS-B.
+export function aenaFinal(leg) {
+  const flags = [leg.st, leg.std, leg.sta];
+  if (flags.includes('CAN') || flags.includes('DES')) return true;
+  const sta = leg.sta ?? (['LND', 'IBK', 'OPE', 'OPF'].includes(leg.st) ? leg.st : null);
+  return FINAL_ARRIVAL.has(sta);
+}
+
 // 'cancelado' | 'terminado' | 'en-curso' | 'pendiente'
 export function legPhase(leg, nowMs = Date.now()) {
   const flags = [leg.st, leg.std, leg.sta];

@@ -545,3 +545,196 @@ describe('radar por tramo: la app pide exactamente el vuelo físico que muestra'
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('refresco del estado oficial de Aena mientras el vuelo está en curso (sin ADS-B ni meteorología)', () => {
+  const T = Date.parse('2026-09-26T12:00:00Z'); // 14:00 en Madrid
+  const D = '2026-09-26';
+  // FR1526 MLA → BCN (llegada a un aeropuerto de Aena), en el aire.
+  const flyLeg = over => ({ d: D, o: 'MLA', a: 'BCN', sd: null, sa: '14:40', ea: `${D}T14:40`, st: 'FLY', sta: 'FLY', ac: '738W', ...over });
+  // Render simulado: `render.legs` y `render.updated` se cambian durante la prueba; `render.fail` = sin respuesta.
+  function app({ legs, radar = null, render }) {
+    const base = network({ flights: { FR1526: { name: 'Ryanair', updated: new Date(T).toISOString(), legs } }, radar, openMeteo: openMeteoOk });
+    return vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/flights/`)) {
+        calls.push(u);
+        if (render.fail) return Promise.reject(new TypeError('Failed to fetch'));
+        return Promise.resolve(json({ name: 'Ryanair', updated: render.updated, legs: render.legs }));
+      }
+      return base(url, o);
+    });
+  }
+  const renderCalls = () => calls.filter(u => u.startsWith(`${LIVE_BASE}/flights/`));
+  const meteoCalls = () => calls.filter(u => u.includes('open-meteo'));
+  const statusText = () => $('#result .status')?.textContent ?? '';
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: T, shouldAdvanceTime: true });
+
+  it('1) FLY → el siguiente ciclo de Render trae LND → «En tierra» sin recargar; 9) sin volver a pedir la meteorología', async () => {
+    fake();
+    try {
+      const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+      await openApp(app({ legs: [flyLeg()], render }));
+      await search('FR1526', D);
+      await until(() => $('#result .flight'), 'ficha');
+      await networkIdle();
+      const meteo = meteoCalls().length;
+      const before = renderCalls().length;
+      await advance(300000);
+      expect(renderCalls()).toHaveLength(before); // nada antes de updated + 10 min + 20 s
+      render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
+      render.updated = new Date(T + 600000).toISOString();
+      await advance(330000); // 630 s
+      await until(() => statusText().includes('En tierra'), 'estado En tierra');
+      expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+      expect(shell()).toEqual(SHELL_OK);
+      expect(meteoCalls()).toHaveLength(meteo); // ni una consulta más a Open-Meteo
+      const after = renderCalls().length;
+      await advance(3600000);
+      expect(renderCalls()).toHaveLength(after); // 7) llegada final: se acabó el refresco
+    } finally { vi.useRealTimers(); }
+  });
+  it('2) FLY → IBK / OPF / BOR de llegada → «Ha llegado»', async () => {
+    for (const sta of ['IBK', 'OPF', 'BOR']) {
+      fake();
+      try {
+        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+        await openApp(app({ legs: [flyLeg()], render }));
+        await search('FR1526', D);
+        await until(() => $('#result .flight'), 'ficha');
+        render.legs = [flyLeg({ st: sta, sta })];
+        render.updated = new Date(T + 600000).toISOString();
+        await advance(650000);
+        await until(() => statusText().includes('Ha llegado'), `Ha llegado (${sta})`);
+      } finally { vi.useRealTimers(); }
+    }
+  });
+  it('3) radar «Volando» con distancia animada → Aena LND: fuera telemetría, radar y distancia; una respuesta tardía del radar no la repinta', async () => {
+    fake();
+    try {
+      const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+      const base = app({ legs: [flyLeg()], render });
+      let radarN = 0, releaseLate;
+      const stub = vi.fn((url, o) => {
+        const u = String(url);
+        if (!u.startsWith(`${LIVE_BASE}/radar/`)) return base(url, o);
+        calls.push(u);
+        radarN++;
+        if (radarN === 1) return Promise.resolve(json({ state: 'sin-datos', identifying: true }));
+        if (radarN === 2) return new Promise(r => { releaseLate = () => r(json({ ...RADAR_FLYING, remainingKm: 250, kmh: 800 })); }); // se queda en el aire
+        return Promise.resolve(json({ ...RADAR_FLYING, remainingKm: 250, kmh: 800 }));
+      });
+      await openApp(stub);
+      await search('FR1526', D);
+      await until(() => radarN === 1, 'primera consulta del radar');
+      await advance(20000); // sondeo del radar: pendiente
+      expect(radarN).toBe(2);
+      render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
+      render.updated = new Date(T + 600000).toISOString();
+      await advance(610000);
+      await until(() => statusText().includes('En tierra'), 'En tierra');
+      releaseLate(); // la respuesta tardía del radar («volando») llega ahora
+      await advance(5000);
+      expect($('.telemetry')).toBeNull();
+      expect(statusText()).toContain('En tierra');
+      const radarBefore = calls.filter(u => u.includes('/radar/')).length;
+      await advance(600000);
+      expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(radarBefore); // radar parado
+      expect($('.tm-remaining')).toBeNull(); // sin distancia animada
+    } finally { vi.useRealTimers(); }
+  });
+  it('3b) con la telemetría «Volando» ya pintada, Aena LND la quita y para la distancia animada', async () => {
+    fake();
+    try {
+      const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+      await openApp(app({ legs: [flyLeg()], radar: { ...RADAR_FLYING, remainingKm: 250, kmh: 800 }, render }));
+      await search('FR1526', D);
+      await until(() => $('.telemetry'), 'telemetría');
+      render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
+      render.updated = new Date(T + 600000).toISOString();
+      await advance(630000);
+      await until(() => statusText().includes('En tierra'), 'En tierra');
+      expect($('.telemetry')).toBeNull();
+      expect($('.tm-remaining')).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+  it('4) un fallo de red no borra ni cambia el último estado; después se recupera', async () => {
+    fake();
+    try {
+      const render = { updated: new Date(T).toISOString(), legs: [flyLeg()], fail: true };
+      await openApp(app({ legs: [flyLeg()], render }));
+      await search('FR1526', D);
+      await until(() => $('#result .flight'), 'ficha');
+      const before = statusText();
+      await advance(900000);
+      expect(statusText()).toBe(before);
+      expect(shell()).toEqual(SHELL_OK);
+      render.fail = false;
+      render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
+      render.updated = new Date(Date.now()).toISOString();
+      await advance(130000);
+      await until(() => statusText().includes('En tierra'), 'En tierra tras recuperarse');
+    } finally { vi.useRealTimers(); }
+  });
+  it('5) CA898 con dos tramos: el refresco solo mira el tramo elegido (la llegada del otro no lo cambia)', async () => {
+    fake();
+    try {
+      const inbound = { d: D, o: 'GRU', a: 'MAD', sd: null, sa: '07:10', ea: `${D}T07:10`, st: 'LND', sta: 'LND', ac: '789' };
+      const outbound = { d: D, o: 'MAD', a: 'PEK', sd: '13:30', ed: `${D}T13:35`, st: 'BOR', std: 'BOR', ac: '789' };
+      const render = { updated: new Date(T).toISOString(), legs: [inbound, outbound] };
+      const base = network({ flights: { CA898: { name: 'Air China', updated: new Date(T).toISOString(), legs: [inbound, outbound] } }, openMeteo: openMeteoOk });
+      await openApp(vi.fn((url, o) => {
+        const u = String(url);
+        if (u.startsWith(`${LIVE_BASE}/flights/`)) { calls.push(u); return Promise.resolve(json({ updated: render.updated, legs: render.legs })); }
+        return base(url, o);
+      }));
+      await search('CA898', D);
+      await until(() => $('#result .flight'), 'ficha');
+      expect($('.leg-option.selected').textContent).toContain('MAD → PEK');
+      render.legs = [{ ...inbound, st: 'IBK', sta: 'IBK' }, outbound]; // cambia solo el OTRO tramo
+      render.updated = new Date(T + 600000).toISOString();
+      await advance(700000);
+      expect(statusText()).not.toContain('Ha llegado');
+      expect($('.leg-option.selected').textContent).toContain('MAD → PEK');
+    } finally { vi.useRealTimers(); }
+  });
+  it('6) cambiar de vuelo o «Nueva consulta» cancela el refresco; 7) un vuelo ya terminado no refresca; 8) cero consultas al radar por el refresco', async () => {
+    fake();
+    try {
+      const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+      const tomorrow = '2026-09-27';
+      const other = { d: tomorrow, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${tomorrow}T17:55`, sa: '19:25', ea: `${tomorrow}T19:25`, st: 'SCH', ac: 'A21N' };
+      const flights = { FR1526: { name: 'Ryanair', updated: new Date(T).toISOString(), legs: [flyLeg()] },
+        IB1668: { name: 'Iberia', updated: new Date(T).toISOString(), legs: [other] },
+        FR1527: { name: 'Ryanair', updated: new Date(T).toISOString(), legs: [flyLeg({ st: 'LND', sta: 'LND' })] } };
+      const base = network({ flights, openMeteo: openMeteoOk });
+      await openApp(vi.fn((url, o) => {
+        const u = String(url);
+        const m = u.match(/\/flights\/(\w+)\/(\d+)\.json$/);
+        if (u.startsWith(`${LIVE_BASE}/flights/`)) { calls.push(u); return Promise.resolve(json(m[1] + m[2] === 'FR1526' ? { updated: render.updated, legs: render.legs } : flights[m[1] + m[2]])); }
+        return base(url, o);
+      }));
+      await search('FR1526', D);
+      await until(() => $('#result .flight'), 'ficha');
+      const radarBefore = calls.filter(u => u.includes('/radar/')).length;
+      // Las búsquedas también descargan el horario de Render una vez: solo cuentan las peticiones posteriores.
+      const count = code => renderCalls().filter(u => u.includes(code)).length;
+      const fr1526 = count('/FR/1526');
+      await search('IB1668', tomorrow); // otro vuelo
+      await until(() => $('#result .flight')?.textContent.includes('IB 1668'), 'otro vuelo');
+      await advance(3600000);
+      expect(count('/FR/1526')).toBe(fr1526); // 6) el refresco del vuelo anterior se canceló
+      expect(count('/IB/1668')).toBe(1); // 7) vuelo futuro: solo la búsqueda, ningún refresco
+      expect(calls.filter(u => u.includes('/radar/'))).toHaveLength(radarBefore); // 8)
+      await search('FR1527', D); // ya aterrizado según Aena
+      await until(() => $('#result .flight')?.textContent.includes('FR 1527'), 'vuelo terminado');
+      await advance(3600000);
+      expect(count('/FR/1527')).toBe(1); // 7) vuelo terminado: solo la búsqueda
+      await search('FR1526', D);
+      await until(() => $('#result .flight')?.textContent.includes('FR 1526'), 'FR1526 otra vez');
+      const again = count('/FR/1526');
+      $('#back').click(); // «Nueva consulta»
+      await advance(3600000);
+      expect(count('/FR/1526')).toBe(again);
+    } finally { vi.useRealTimers(); }
+  });
+});

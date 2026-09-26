@@ -3,7 +3,8 @@ import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
-import { fetchSchedule, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
+import { fetchSchedule, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
+import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
@@ -23,9 +24,9 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
-import { BUILD_ID } from './config.js';
+import { BUILD_ID, LIVE_BASE } from './config.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
@@ -145,6 +146,7 @@ function showLegChooser(q) {
   lastQuery = null;
   ++runId; // nada de una consulta anterior puede pintar encima
   stopRadarPoll();
+  stopStatusRefresh();
   currentView = null;
   els.result.innerHTML = legSwitchHtml(q, { choose: true });
   show('result');
@@ -256,6 +258,7 @@ async function showRadar(q, flight, stale, ctx = null) {
   if (!flight || flight.stale || !q.leg || q.leg.past) return;
   if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) return;
   stopRadarPoll();
+  q.etaCtx = ctx;
   const cardVisible = () => Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]');
   const poll = pollRadar({
     // El mismo vuelo físico en la primera consulta y en todos los sondeos.
@@ -268,6 +271,10 @@ async function showRadar(q, flight, stale, ctx = null) {
 }
 
 function paintRadar(q, flight, radar, ctx, stale) {
+  // Aena ya confirmó la llegada (o canceló/desvió): ninguna lectura ADS-B, ni una respuesta tardía, la contradice.
+  if (aenaFinal(q.leg)) return;
+  if (radar) q.lastRadar = radar;
+  flight = q.flightBase ?? flight; // la tarjeta con el último estado de Aena (refrescado)
   rememberSighting(etaKey(q), radar);
   rememberLanding(etaKey(q), radar);
   let card = withRadar(flight, radar, recallSighting(etaKey(q)));
@@ -307,35 +314,94 @@ function paintRadar(q, flight, radar, ctx, stale) {
   if (replacement && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(note?.textContent)) note.textContent = replacement;
 }
 
+// Estado oficial de Aena mientras el vuelo está en curso (js/status-refresh.js): solo /flights/AL/N.json, siempre el
+// mismo vuelo físico, sin ADS-B ni meteorología. Se para con la llegada final, cancelado/desviado, otra búsqueda,
+// otro tramo o al salir de la ficha.
+let statusRefresh = null;
+function stopStatusRefresh() { statusRefresh?.stop(); statusRefresh = null; }
+
+function watchAena(q, stale) {
+  stopStatusRefresh();
+  if (q.kind !== 'schedule' || q.leg.past || !LIVE_BASE || legPhase(q.leg) !== 'en-curso') return;
+  const { al, n } = q.schedule;
+  const getJson = async url => {
+    try { const res = await fetch(url, { signal: AbortSignal.timeout(10000), cache: 'no-store' }); return res.ok ? await res.json() : null; } catch { return null; }
+  };
+  statusRefresh = startStatusRefresh({
+    key: physicalFlightKey(q.leg),
+    initialUpdated: q.schedule.updated,
+    fetchLive: () => getJson(`${LIVE_BASE}/flights/${al}/${n}.json`),
+    fetchPages: () => getJson(`data/flights/${al}/${n}.json`),
+    isOver: aenaFinal,
+    isActive: () => !stale() && Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]'),
+    onLeg: (leg, updated) => { applyAenaLeg(q, leg, updated, stale).catch(() => {}); },
+  });
+}
+
+// El tramo de Aena refrescado (el MISMO vuelo físico): pasa a ser el de la consulta y se repinta solo la tarjeta.
+async function applyAenaLeg(q, leg, updated, stale) {
+  if (stale() || physicalFlightKey(leg) !== physicalFlightKey(q.leg)) return;
+  q.leg = leg; // q es lastQuery: «Actualizar» y cualquier acción posterior usan ya el estado nuevo
+  q.schedule = { ...q.schedule, updated: updated ?? q.schedule.updated };
+  const { flight, officialMs, eta, departureMs } = await buildFlight(q);
+  if (stale()) return;
+  q.flightBase = flight;
+  const el = els.result.querySelector('.flight');
+  if (!el) return;
+  if (aenaFinal(leg)) {
+    // Aena gana: fuera la telemetría, el radar y la distancia animada.
+    stopRadarPoll();
+    el.outerHTML = flightCardHtml(flight);
+    const flags = [leg.st, leg.std, leg.sta];
+    const note = flags.includes('CAN') ? 'Vuelo cancelado.' : flags.includes('DES') ? 'Vuelo desviado.'
+      : endedNote(leg) ?? arrivalNote({ leg, officialMs, eta, departureMs, nowMs: Date.now() });
+    const area = $in('forecast-area');
+    if (note && area) area.innerHTML = `<p class="note">${esc(note)}</p>`;
+    return;
+  }
+  // Sin estado final: con el radar mostrando «Volando», su telemetría manda y no se toca (la distancia sigue su curso).
+  if (q.lastRadar?.state === 'volando') return;
+  if (q.lastRadar) paintRadar(q, flight, q.lastRadar, q.etaCtx, stale);
+  else el.outerHTML = flightCardHtml(flight);
+}
+
 async function loadPunctualityHistory(q, punct, stale) {
   punct.history = await fetchPunctuality(q.schedule.al, q.schedule.n, `${q.leg.o}-${q.leg.a}`);
   const el = $in('punctuality');
   if (!stale() && el) el.innerHTML = punctualityHtml(punct);
 }
 
+// La tarjeta del vuelo a partir de q (y su tramo de Aena). Se usa al buscar y en cada refresco del estado de Aena
+// (sin tocar la meteorología). Zonas horarias de data/airports.json: nunca se piden por la red.
+async function buildFlight(q) {
+  const oTz = timezoneOf(q.origin), dTz = timezoneOf(q.destination);
+  const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
+  const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
+  // Llegada: la de Aena si la publica; si no, estimación Turbi (salida + duración estimada, en la hora del destino).
+  const etaCtx = { depUtcMs: departureMs, plannedMin: profile.durationMin, tz: dTz };
+  const eta = turbiEta(q, etaCtx);
+  // La llegada visible (una sola fuente para la ficha, el estado y el aviso): Aena o la estimación Turbi.
+  const official = q.kind === 'schedule' ? legArrival(q.leg) : null;
+  const officialMs = official ? localToUtcMs(official.date, official.time, dTz) : null;
+  const visibleArrivalMs = officialMs ?? (eta?.source === 'turbi' ? eta.ms : null);
+  // Aterrizaje ADS-B ya confirmado; si Aena ya dio un estado final, manda Aena.
+  const landedAt = q.kind === 'schedule' && !aenaFinal(q.leg) ? recallLanding(etaKey(q)) : null;
+  const flight = q.kind === 'schedule'
+    ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
+      departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg) : null;
+  return { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight };
+}
+
 async function run(q) {
   lastQuery = q;
   const token = ++runId;
   stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
+  stopStatusRefresh(); // y de refrescar el estado de Aena
   const stale = () => token !== runId;
   show('loading');
   try {
-    // Zonas horarias de data/airports.json: todas resueltas al generarlo; nunca se piden por la red.
-    const oTz = timezoneOf(q.origin), dTz = timezoneOf(q.destination);
+    const { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
-    const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
-    const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
-    // Llegada: la de Aena si la publica; si no, estimación Turbi (salida + duración estimada, en la hora del destino).
-    const etaCtx = { depUtcMs: departureMs, plannedMin: profile.durationMin, tz: dTz };
-    const eta = turbiEta(q, etaCtx);
-    // La llegada visible (una sola fuente para la ficha, el estado y el aviso): Aena o la estimación Turbi.
-    const official = q.kind === 'schedule' ? legArrival(q.leg) : null;
-    const officialMs = official ? localToUtcMs(official.date, official.time, dTz) : null;
-    const visibleArrivalMs = officialMs ?? (eta?.source === 'turbi' ? eta.ms : null);
-    const landedAt = q.kind === 'schedule' ? recallLanding(etaKey(q)) : null; // aterrizaje ADS-B ya confirmado
-    const flight = q.kind === 'schedule'
-      ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
-        departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg) : null;
     const punct = flight ? punctualityState(q) : null;
     els.changeTime.hidden = Boolean(flight);
     const rel = reliability(departureMs, Date.now());
@@ -353,6 +419,7 @@ async function run(q) {
       currentView = null;
       els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
       show('result');
+      watchAena(q, stale);
       await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale, etaCtx))]);
       return;
     }
@@ -363,6 +430,7 @@ async function run(q) {
       currentView = null;
       els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight, punctuality: punct });
       show('result');
+      watchAena(q, stale);
       const ctx = { q, profile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
       lastForecastCtx = ctx;
       await Promise.all([
@@ -576,12 +644,13 @@ for (const input of [els.origin, els.destination]) {
   });
 }
 
-els.back.addEventListener('click', () => { stopRadarPoll(); setNotice(); show('query'); });
+els.back.addEventListener('click', () => { stopRadarPoll(); stopStatusRefresh(); setNotice(); show('query'); });
 els.savedLink.addEventListener('click', () => {
   const last = loadLast();
   if (!last) return;
   runId++; // una consulta en curso ya no debe pintar encima
   stopRadarPoll();
+  stopStatusRefresh();
   showForecast(last.view, null, () => true, last.savedAt).catch(() => {});
 });
 window.addEventListener('offline', offerSaved);
