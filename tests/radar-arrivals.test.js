@@ -26,17 +26,17 @@ describe('origen extranjero: FLY/FNL basta para consultar el radar', () => {
   it('1. sta=FLY sin salida (sd/ed vacíos) → radar (app y servidor)', () => {
     expect(departureMs(fr8606)).toBeNull();
     expect(needsRadar(fr8606, now)).toBe(true);
-    expect(wantsRadar(fr8606, 'https://x')).toBe(true);
+    expect(wantsRadar(fr8606, 'https://x', { nowMs: now })).toBe(true);
   });
   it('2. sta=FNL → radar', () => {
     const l = { ...fr8606, sta: 'FNL', st: 'FNL' };
-    expect([needsRadar(l, now), wantsRadar(l, 'https://x')]).toEqual([true, true]);
+    expect([needsRadar(l, now), wantsRadar(l, 'https://x', { nowMs: now })]).toEqual([true, true]);
   });
   it('5. llegada final (LND, IBK, OPE, OPF, BOR) → no', () => {
-    for (const sta of ['LND', 'IBK', 'OPE', 'OPF', 'BOR']) expect([needsRadar({ ...fr8606, sta, st: sta }, now), wantsRadar({ ...fr8606, sta, st: sta }, 'https://x')], sta).toEqual([false, false]);
+    for (const sta of ['LND', 'IBK', 'OPE', 'OPF', 'BOR']) expect([needsRadar({ ...fr8606, sta, st: sta }, now), wantsRadar({ ...fr8606, sta, st: sta }, 'https://x', { nowMs: now })], sta).toEqual([false, false]);
   });
   it('6. cancelado o desviado → no', () => {
-    for (const sta of ['CAN', 'DES']) expect([needsRadar({ ...fr8606, sta, st: sta }, now), wantsRadar({ ...fr8606, sta, st: sta }, 'https://x')], sta).toEqual([false, false]);
+    for (const sta of ['CAN', 'DES']) expect([needsRadar({ ...fr8606, sta, st: sta }, now), wantsRadar({ ...fr8606, sta, st: sta }, 'https://x', { nowMs: now })], sta).toEqual([false, false]);
   });
   it('sin salida, la ventana de tiempo se mide con la llegada de Aena; sin ninguna hora, no', () => {
     expect(needsRadar(fr8606, Date.parse('2026-09-26T12:00:00Z'))).toBe(false); // > 20 h después de la llegada
