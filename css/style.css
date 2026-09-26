@@ -326,6 +326,7 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 
 /* Varios vuelos físicos con el mismo número y fecha: se escoge el tramo por su ruta. */
 .leg-switch { display: flex; flex-direction: column; gap: 8px; margin: 0 0 36px; } /* 16 px + los −20 px de .plane-photo */
+.leg-switch:last-child { margin-bottom: 0; } /* selector solo (sin ficha debajo): sin hueco al final del panel */
 .leg-title { margin: 0; font-weight: 600; }
 .alias-offer { display: flex; flex-direction: column; gap: 8px; }
 .alias-route { margin: 0; }
