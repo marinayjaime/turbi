@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseFlightNumber, fetchSchedule, pickLeg, tabDates, legDeparture, legArrival, flightStatus } from '../js/schedule.js';
+import { parseFlightNumber, fetchSchedule, chooseLeg, tabDates, legDeparture, legArrival, flightStatus } from '../js/schedule.js';
 
 const leg = over => ({ d: '2026-09-24', o: 'PMI', a: 'MAD', sd: '17:55', ed: '2026-09-24T17:55', sa: '19:25', ea: '2026-09-24T19:25', td: 'N', ta: 'T4', g: 'D', st: 'SCH', ac: 'A21N', ...over });
 
@@ -32,12 +32,12 @@ describe('fetchSchedule', () => {
   });
 });
 
-describe('pickLeg y tabDates', () => {
+describe('chooseLeg (un solo tramo por fecha) y tabDates', () => {
   const legs = ['2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01']
     .map(d => leg({ d }));
-  it('elige el tramo de la fecha', () => {
-    expect(pickLeg(legs, '2026-09-25').d).toBe('2026-09-25');
-    expect(pickLeg(legs, '2026-12-01')).toBeNull();
+  it('elige el tramo de la fecha, como siempre, sin selector', () => {
+    expect(chooseLeg(legs, '2026-09-25')).toEqual({ leg: legs[2], choices: [] });
+    expect(chooseLeg(legs, '2026-12-01')).toEqual({ leg: null, choices: [] });
   });
   it('pestañas: hasta 7 fechas empezando el día anterior a la elegida', () => {
     expect(tabDates(legs, '2026-09-25')).toEqual(['2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29', '2026-09-30']);

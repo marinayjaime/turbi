@@ -2,6 +2,9 @@
 // Leg = { d, o, a, sd, ed, sa, ea, td, ta, g, st, ac } (ver scripts/aena.mjs)
 
 import { LIVE_BASE } from './config.js';
+import { physicalFlightKey } from './physical-flight.js';
+import { aenaTz } from './radar-gate.js';
+import { localToUtcMs } from './time.js';
 
 const BASE = 'data/flights/';
 const DELAY_MIN = 15;
@@ -52,7 +55,59 @@ export async function fetchSchedule(number, fetchFn = fetch, liveBase = LIVE_BAS
   }
 }
 
-export const pickLeg = (legs, date) => legs.find(l => l.d === date) ?? null;
+// Un mismo número puede tener VARIOS vuelos físicos en una fecha (p. ej. GRU → MAD y después MAD → PEK con el mismo
+// número). Número + fecha no identifica un tramo: se distinguen con physicalFlightKey() y se elige con el estado de
+// Aena y la hora, nunca por el orden de la lista.
+//   - Un solo tramo: ese.
+//   - Varios: se elige solo si hay EXACTAMENTE uno en curso (en el aire, salido o embarcando) y todos los demás ya
+//     terminaron o se cancelaron. En cualquier otro caso (dos futuros, dos terminados, uno en curso y otro por salir…)
+//     no se elige: `leg` es null y `choices` trae los tramos, en orden de hora, para que el usuario escoja por ruta.
+// Devuelve { leg, choices } (choices: todos los tramos de la fecha si hay más de uno; si no, []).
+const FINAL_ARRIVAL = new Set(['LND', 'IBK', 'OPE', 'OPF', 'BOR']);
+const IN_PROGRESS_GATE = new Set(['EMB', 'ULL', 'CER', 'BTR']);
+const ENDED_AFTER_ARRIVAL_MIN = 90;
+const MAX_FLIGHT_H = 20; // el vuelo más largo posible (como MAX_FLIGHT_MIN en scripts/aena.mjs)
+
+// 'cancelado' | 'terminado' | 'en-curso' | 'pendiente'
+export function legPhase(leg, nowMs = Date.now()) {
+  const flags = [leg.st, leg.std, leg.sta];
+  if (flags.includes('CAN') || flags.includes('DES')) return 'cancelado';
+  const sta = leg.sta ?? (['FLY', 'FNL', 'LND', 'IBK', 'OPE', 'OPF'].includes(leg.st) ? leg.st : null);
+  const std = leg.std ?? (sta ? null : leg.st);
+  if (FINAL_ARRIVAL.has(sta)) return 'terminado';
+  if (sta === 'FLY' || sta === 'FNL') return 'en-curso'; // Aena (llegada) lo ve en el aire: manda sobre la hora
+  // Aena no siempre cierra el estado: con la llegada de Aena muy pasada o, sin llegada (destino extranjero), pasada la
+  // duración máxima de un vuelo desde la salida, el tramo ya terminó aunque la salida siga en BOR o en puerta.
+  const arrMs = arrivalUtcMs(leg);
+  const dep = legDeparture(leg);
+  const depMs = dep ? localToUtcMs(dep.date, dep.time, aenaTz(leg.o)) : null;
+  if (arrMs !== null ? nowMs - arrMs > ENDED_AFTER_ARRIVAL_MIN * 60000 : depMs !== null && nowMs - depMs > MAX_FLIGHT_H * 3600000) return 'terminado';
+  if (std === 'BOR' || IN_PROGRESS_GATE.has(std)) return 'en-curso';
+  return 'pendiente';
+}
+
+// Llegada de Aena (estimada o programada, con el cambio de día) y salida programada, en UTC; null si no hay.
+function arrivalUtcMs(leg) {
+  const arr = legArrival(leg);
+  return arr ? localToUtcMs(arr.date, arr.time, aenaTz(leg.a)) : null;
+}
+// Hora de referencia para ordenar (salida programada o, si no la hay, llegada).
+const legOrderMs = leg => (leg.sd ? localToUtcMs(leg.d, leg.sd, aenaTz(leg.o)) : null) ?? arrivalUtcMs(leg) ?? Infinity;
+
+export function chooseLeg(legs, date, nowMs = Date.now()) {
+  const byKey = new Map();
+  for (const l of legs) if (l.d === date && !byKey.has(physicalFlightKey(l))) byKey.set(physicalFlightKey(l), l);
+  const all = [...byKey.values()].sort((x, y) => legOrderMs(x) - legOrderMs(y) || physicalFlightKey(x).localeCompare(physicalFlightKey(y)));
+  if (all.length <= 1) return { leg: all[0] ?? null, choices: [] };
+  const phases = all.map(l => legPhase(l, nowMs));
+  const active = all.filter((_, i) => phases[i] === 'en-curso');
+  const rest = phases.filter(p => p !== 'en-curso');
+  const leg = active.length === 1 && rest.every(p => p === 'terminado' || p === 'cancelado') ? active[0] : null;
+  return { leg, choices: all };
+}
+
+// El tramo elegido por el usuario (su clave de vuelo físico), si sigue existiendo en esa fecha.
+export const legByKey = (legs, key) => legs.find(l => physicalFlightKey(l) === key) ?? null;
 
 export function tabDates(legs, selected, max = 7) {
   const dates = [...new Set(legs.map(l => l.d))].sort();

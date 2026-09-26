@@ -468,3 +468,48 @@ describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('un número con varios vuelos físicos la misma fecha (CA898: GRU → MAD y MAD → PEK)', () => {
+  const at = ms => ({ d: dayOf(ms), t: formatLocal(ms, MAD) });
+  it('llegada ya terminada + salida en el aire → ficha de MAD → Pekín (no «Ha llegado») y selector de ruta', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse('2026-09-26T11:00:00Z'), shouldAdvanceTime: true }); // 13:00 en Madrid
+    try {
+    const arr = at(Date.now() - 5 * 3600000), dep = at(Date.now() - 30 * 60000);
+    const inbound = { d: arr.d, o: 'GRU', a: 'MAD', sd: null, sa: arr.t, ea: `${arr.d}T${arr.t}`, st: 'LND', sta: 'LND', ac: '789' };
+    const outbound = { d: dep.d, o: 'MAD', a: 'PEK', sd: dep.t, ed: `${dep.d}T${dep.t}`, st: 'BOR', std: 'BOR', ac: '789' };
+    await openApp(network({ flights: { CA898: { name: 'Air China', updated: new Date().toISOString(), legs: [inbound, outbound] } }, openMeteo: () => tooMany }));
+    await search('CA898', dep.d);
+    await until(() => $('#result .flight'), 'ficha');
+    expect($('#result .flight').textContent).toContain('Madrid a');
+    expect($('#result .flight').textContent).not.toContain('Ha llegado');
+    const options = [...document.querySelectorAll('.leg-switch .leg-option')];
+    expect(options).toHaveLength(2);
+    expect(options.find(b => b.classList.contains('selected')).textContent).toContain('MAD → PEK');
+    expect(shell()).toEqual(SHELL_OK);
+    } finally { vi.useRealTimers(); }
+  });
+  it('dos tramos futuros el mismo día → se pregunta por ruta; al escoger, se ve ese tramo', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    const inbound = { d: tomorrow, o: 'GRU', a: 'MAD', sd: null, sa: '07:10', ea: `${tomorrow}T07:10`, st: 'SCH', sta: 'SCH', ac: '789' };
+    const outbound = { d: tomorrow, o: 'MAD', a: 'PEK', sd: '12:30', ed: `${tomorrow}T12:30`, st: 'SCH', std: 'SCH', ac: '789' };
+    await openApp(network({ flights: { CA898: { name: 'Air China', updated: new Date().toISOString(), legs: [outbound, inbound] } }, openMeteo: () => tooMany }));
+    await search('CA898', tomorrow);
+    await until(() => $('.leg-switch'), 'selector de tramos');
+    expect($('#result .flight')).toBeNull(); // no se escoge en silencio
+    const options = [...document.querySelectorAll('.leg-option')];
+    expect(options.map(b => b.querySelector('small').textContent.split(' · ')[0])).toEqual(['GRU → MAD', 'MAD → PEK']); // por hora
+    options[1].click();
+    await until(() => $('#result .flight'), 'ficha del tramo escogido');
+    expect($('#result .leg-option.selected').textContent).toContain('MAD → PEK');
+    expect($('#result .flight').textContent).toContain('Madrid a');
+    expect(shell()).toEqual(SHELL_OK);
+  });
+  it('un vuelo normal (un solo tramo ese día) sigue igual: sin selector', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    const leg = { d: tomorrow, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${tomorrow}T17:55`, sa: '19:25', ea: `${tomorrow}T19:25`, st: 'SCH', ac: 'A21N' };
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany }));
+    await search('IB1668', tomorrow);
+    await until(() => $('#result .flight'), 'ficha');
+    expect($('.leg-switch')).toBeNull();
+  });
+});

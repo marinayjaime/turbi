@@ -193,13 +193,18 @@ describe('vuelo pasado desde el histórico (Aena ya no lo publica)', () => {
   });
 });
 
-import { fetchPastFlight } from '../js/punctuality.js';
-describe('fetchPastFlight', () => {
-  it('busca la fecha en todas las rutas del vuelo; si no está o no hay red, null', async () => {
+import { fetchPastFlights } from '../js/punctuality.js';
+describe('fetchPastFlights', () => {
+  it('busca la fecha en todas las rutas del vuelo; si no está o no hay red, []', async () => {
     const body = { routes: { 'PMI-MAD': { past: [['2026-09-24', '17:55', 49, '19:25', 45, 0]] } } };
     const f = async () => ({ ok: true, json: async () => body });
-    expect(await fetchPastFlight('IB', '1668', '2026-09-24', f)).toMatchObject({ o: 'PMI', a: 'MAD', ea: '2026-09-24T20:10' });
-    expect(await fetchPastFlight('IB', '1668', '2026-09-23', f)).toBeNull();
-    expect(await fetchPastFlight('IB', '1668', '2026-09-24', async () => { throw new TypeError('x'); })).toBeNull();
+    expect(await fetchPastFlights('IB', '1668', '2026-09-24', f)).toEqual([expect.objectContaining({ o: 'PMI', a: 'MAD', ea: '2026-09-24T20:10' })]);
+    expect(await fetchPastFlights('IB', '1668', '2026-09-23', f)).toEqual([]);
+    expect(await fetchPastFlights('IB', '1668', '2026-09-24', async () => { throw new TypeError('x'); })).toEqual([]);
+  });
+  it('un número con dos rutas el mismo día devuelve los dos tramos (nunca solo el primero)', async () => {
+    const body = { routes: { 'GRU-MAD': { past: [['2026-09-24', null, null, '07:10', 5, 0]] }, 'MAD-PEK': { past: [['2026-09-24', '12:30', 10, null, null, 0]] } } };
+    const legs = await fetchPastFlights('CA', '898', '2026-09-24', async () => ({ ok: true, json: async () => body }));
+    expect(legs.map(l => `${l.o}-${l.a}`).sort()).toEqual(['GRU-MAD', 'MAD-PEK']);
   });
 });

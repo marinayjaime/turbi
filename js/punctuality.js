@@ -82,16 +82,18 @@ export function legFromHistory({ o, a }, [d, sd, dd, sa, ad, x, ac = null, op = 
 }
 
 // Busca en el histórico publicado (data/punctuality/AL/N.json) el vuelo de una fecha pasada. Sin datos → null.
-export async function fetchPastFlight(al, n, date, fetchFn = fetch) {
+// TODOS los tramos de ese número en esa fecha (un número puede volar varias rutas el mismo día): [] si no hay.
+export async function fetchPastFlights(al, n, date, fetchFn = fetch) {
+  const out = [];
   try {
     const res = await fetchFn(`data/punctuality/${al}/${n}.json`, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
+    if (!res.ok) return out;
     for (const [route, r] of Object.entries((await res.json()).routes ?? {})) {
-      const row = r.past?.find(p => p[0] === date);
-      if (row) { const [o, a] = route.split('-'); return legFromHistory({ o, a }, row); }
+      const [o, a] = route.split('-');
+      for (const row of r.past ?? []) if (row[0] === date) out.push(legFromHistory({ o, a }, row));
     }
   } catch { /* sin red o sin datos */ }
-  return null;
+  return out;
 }
 
 // --- Histórico ---

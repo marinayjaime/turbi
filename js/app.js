@@ -3,7 +3,8 @@ import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlight } from './flight.js';
-import { fetchSchedule, pickLeg, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
+import { fetchSchedule, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate } from './schedule.js';
+import { physicalFlightKey } from './physical-flight.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
 import { renderResult, esc, flightCardHtml, missingDateText, thousands } from './ui.js';
@@ -17,7 +18,7 @@ import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText }
 import { loadAviation } from './aviation-weather.js';
 import { renderMap } from './map.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
-import { currentPunctuality, fetchPunctuality, fetchPastFlight, dowOf, slotOf } from './punctuality.js';
+import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
@@ -92,19 +93,61 @@ async function airports() {
   return airportsDb;
 }
 
+// Tramo que el usuario ha escogido para un número y una fecha con varios vuelos físicos ({ number, date, key }).
+let legPick = null;
+
 async function scheduleQuery(schedule, date) {
   // Solo el vuelo de la fecha pedida: si ese día no está, se dice (nunca se enseña otro día).
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date());
+  const number = `${schedule.al}${schedule.n}`;
+  // Un número puede tener varios vuelos físicos esa fecha (p. ej. GRU → MAD y MAD → PEK): chooseLeg solo elige si
+  // es seguro; si no, el usuario escoge por ruta.
+  let { leg, choices } = chooseLeg(schedule.legs, date, Date.now());
   // Fecha pasada que Aena ya no publica: el vuelo sale del histórico (horas finales de Aena guardadas por Turbi).
-  const leg = pickLeg(schedule.legs, date) ?? (date < today ? await fetchPastFlight(schedule.al, schedule.n, date) : null);
-  if (!leg) {
-    throw new Error(missingDateText(`${schedule.al}${schedule.n}`, date, [...new Set(schedule.legs.map(l => l.d))].sort(), today));
+  if (!leg && !choices.length && date < today) {
+    const past = chooseLeg(await fetchPastFlights(schedule.al, schedule.n, date), date, Date.now());
+    ({ leg, choices } = past);
   }
+  const picked = legPick?.number === number && legPick.date === date ? legByKey(choices, legPick.key) : null;
+  if (picked) leg = picked;
   const db = await airports();
+  const options = choices.map(l => legOption(l, db));
+  if (!leg && choices.length) return { kind: 'choose', number, schedule, date, options };
+  if (!leg) {
+    throw new Error(missingDateText(number, date, [...new Set(schedule.legs.map(l => l.d))].sort(), today));
+  }
   const origin = findAirport(db, leg.o);
   const destination = findAirport(db, leg.a);
   if (!origin || !destination) throw new Error(`No conozco el aeropuerto «${!origin ? leg.o : leg.a}».`);
-  return { kind: 'schedule', number: `${schedule.al}${schedule.n}`, schedule, leg, origin, destination, date: leg.d };
+  return { kind: 'schedule', number, schedule, leg, origin, destination, date: leg.d, options, legKey: physicalFlightKey(leg) };
+}
+
+// Un tramo, para escogerlo por su ruta: «São Paulo → Madrid · llega 07:10 · Ha llegado».
+function legOption(leg, db) {
+  const city = iata => findAirport(db, iata)?.city ?? iata;
+  const dep = legDeparture(leg), arr = legArrival(leg);
+  const when = leg.sd && dep ? `sale ${dep.time}` : arr ? `llega ${arr.time}` : '';
+  return { key: physicalFlightKey(leg), route: `${city(leg.o)} → ${city(leg.a)}`, iata: `${leg.o} → ${leg.a}`, when, status: flightStatus(leg).text };
+}
+
+// Selector de tramo: pantalla para escoger (sin tramo elegido) o fila de rutas encima de la ficha (con tramo elegido).
+function legSwitchHtml(q, { choose = false } = {}) {
+  if (!(q.options?.length > 1)) return '';
+  const date = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(Date.parse(`${q.date}T12:00:00Z`));
+  const buttons = q.options.map(o => `<button type="button" class="leg-option${o.key === q.legKey ? ' selected' : ''}" data-leg-key="${esc(o.key)}"${
+    o.key === q.legKey ? ' aria-current="true"' : ''}><strong>${esc(o.route)}</strong><small>${esc([o.iata, o.when, o.status].filter(Boolean).join(' · '))}</small></button>`).join('');
+  const title = choose ? `<p class="leg-title">El ${esc(q.number.replace(/^(\w{2})/, '$1 '))} tiene ${q.options.length} vuelos el ${esc(date)}. ¿Cuál quieres ver?</p>`
+    : `<p class="leg-title">Este número tiene ${q.options.length} vuelos el ${esc(date)}:</p>`;
+  return `<nav class="leg-switch" aria-label="Tramos de este vuelo" data-number="${esc(q.number)}" data-date="${esc(q.date)}">${title}${buttons}</nav>`;
+}
+
+function showLegChooser(q) {
+  lastQuery = null;
+  ++runId; // nada de una consulta anterior puede pintar encima
+  stopRadarPoll();
+  currentView = null;
+  els.result.innerHTML = legSwitchHtml(q, { choose: true });
+  show('result');
 }
 
 async function resolveFlight() {
@@ -189,7 +232,8 @@ function punctualityState(q) {
   };
 }
 
-const etaKey = q => `${q.schedule.al}${q.schedule.n}|${q.leg.d}`;
+// Por vuelo físico, no por número + fecha: dos tramos del mismo número el mismo día no comparten aterrizaje, señal ni ETA.
+const etaKey = q => `${q.schedule.al}${q.schedule.n}|${physicalFlightKey(q.leg)}`;
 
 // Llegada estimada por Turbi (Aena no publica la llegada), con la última ETA en vuelo de este vuelo para suavizar.
 // (en el histórico, solo la última ETA calculada en vuelo que siga guardada: ver turbiEstimate).
@@ -306,7 +350,7 @@ async function run(q) {
     if (note) {
       if (!flight) throw new Error(note);
       currentView = null;
-      els.result.innerHTML = flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
+      els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
       show('result');
       await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale, etaCtx))]);
       return;
@@ -316,7 +360,7 @@ async function run(q) {
     // de turbulencias se carga aparte en su sección. Un fallo meteorológico nunca sustituye la ficha.
     if (flight) {
       currentView = null;
-      els.result.innerHTML = flightShellHtml({ flight, punctuality: punct });
+      els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight, punctuality: punct });
       show('result');
       const ctx = { q, profile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
       lastForecastCtx = ctx;
@@ -487,7 +531,8 @@ async function submit() {
   show('loading'); // buscar el vuelo también puede tardar unos segundos
   try {
     const q = await resolveFlight();
-    if (q) run(q);
+    if (q?.kind === 'choose') showLegChooser(q);
+    else if (q) run(q);
     else show('query');
   } catch (err) {
     showError(err instanceof TypeError ? 'Sin conexión o el servicio no responde.' : err.message);
@@ -495,6 +540,15 @@ async function submit() {
 }
 
 els.form.addEventListener('submit', e => { e.preventDefault(); submit(); });
+
+// Escoger otro tramo del mismo número y fecha (por su ruta): se recuerda y se vuelve a consultar.
+els.result.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-leg-key]');
+  if (!btn) return;
+  const nav = btn.closest('.leg-switch');
+  legPick = { number: nav.dataset.number, date: nav.dataset.date, key: btn.dataset.legKey };
+  submit();
+});
 
 // Timeline: al tocar un tramo se muestra su detalle (otra vez para ocultarlo).
 els.result.addEventListener('click', e => {
