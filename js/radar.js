@@ -81,6 +81,18 @@ export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE, {
   }
 }
 
+// Radar de un vuelo de AeroDataBox (sin Aena): el servidor lo busca solo por transpondedor o indicativo.
+// legKey: adbPhysicalKey() del tramo que muestra la ficha.
+export async function fetchAdbRadar(number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE, { poll = false } = {}) {
+  try {
+    const query = new URLSearchParams({ leg: legKey, ...(poll ? { poll: '1' } : {}) }).toString();
+    const res = await fetchFn(`${liveBase}/radar-adb/${encodeURIComponent(number)}/${date}.json?${query}`, { signal: AbortSignal.timeout(20000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 const MIN = 60000;
 
 // Ficha con la respuesta del radar y la última vez que lo vio volando (lastSeenMs):

@@ -4,7 +4,7 @@ import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlightResult, canonicalRoute } from './flight.js';
 import { aliasOffer, adsbdbVetoes } from './aliases.js';
-import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote } from './adb.js';
+import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate } from './adb.js';
 import { fetchSchedule, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
@@ -25,7 +25,7 @@ import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf }
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
-import { wantsRadar, fetchRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
+import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
   rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { BUILD_ID, LIVE_BASE } from './config.js';
@@ -284,10 +284,11 @@ async function adbQuery(number, date, adb) {
     return null;
   }
   const { dep, durationMin } = adbTimes(leg);
+  const meta = { number: adb.number ?? input, date: adb.date ?? date, fetchedAt: adb.fetchedAt, refreshedAt: adb.refreshedAt };
   return {
-    number: leg.number || input, airline: leg.airline ?? '', origin, destination,
+    kind: 'adb', number: leg.number || input, airline: leg.airline ?? '', origin, destination,
     date: dep.local.slice(0, 10), time: dep.local.slice(11, 16), depUtcMs: dep.utc, durationMin,
-    routeSource: 'aerodatabox', adbInfo: adbInfo(adb, leg),
+    routeSource: 'aerodatabox', adbInfo: adbInfo(adb, leg), adbLeg: leg, adbMeta: meta, adbKey: adbPhysicalKey(meta, leg),
   };
 }
 
@@ -355,6 +356,29 @@ function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs 
   };
 }
 
+// Ficha de un vuelo de AeroDataBox (no es de Aena): horas del día según AeroDataBox (programada y, si cambia, la
+// revisada o la real), modelo y estado tal como estaban al consultar; sin puerta, foto ni puntualidad. El pie dice la
+// fuente y cuándo se consultó. El radar (si procede) se pinta encima con el mismo panel que los vuelos de Aena.
+const ADB_TONES = { Delayed: 'warn', Canceled: 'bad', CanceledUncertain: 'bad', Diverted: 'bad', Arrived: 'ok' };
+function adbCard(q, durationMin) {
+  const leg = q.adbLeg;
+  const m = String(leg.number || q.number).match(/^([A-Z0-9]{2})(\d+[A-Z]?)$/);
+  const [al, n] = m ? [m[1], m[2]] : [String(q.number).slice(0, 2), String(q.number).slice(2)];
+  const { dep, arr } = adbTimes(leg);
+  const side = (sched, best) => (sched ? { date: sched.local.slice(0, 10), time: sched.local.slice(11, 16),
+    est: best && best.utc !== sched.utc ? best.local.slice(11, 16) : null, late: Boolean(best && best.utc > sched.utc), terminal: null }
+    : best ? { date: best.local.slice(0, 10), time: best.local.slice(11, 16), est: null, late: false, terminal: null } : null);
+  const at = Date.parse(q.adbMeta.refreshedAt ?? q.adbMeta.fetchedAt);
+  return {
+    al, title: flightTitle({ name: leg.airline, al, n }), number: `${al} ${n}`, airline: leg.airline ?? null, photo: null, operator: null,
+    route: `${q.origin.city} a ${q.destination.city}`,
+    status: { text: adbStatusText(leg.status) ?? 'Horario de AeroDataBox', tone: ADB_TONES[leg.status] ?? 'info' },
+    o: leg.o, a: leg.a, duration: durationMin, durationEstimated: false,
+    dep: side(leg.dep.sched, dep), arr: side(leg.arr.sched, arr), aircraft: leg.aircraft ?? null,
+    gateChanged: false, stale: false, past: false, sourceNote: `Horario según AeroDataBox · consultado ${agoText(Date.now() - at)}`,
+  };
+}
+
 // Situación de hoy (inmediata) + histórico (se carga después). Solo vuelos con horario de Aena.
 function punctualityState(q) {
   const { leg, schedule } = q;
@@ -384,7 +408,33 @@ function stopRadarPoll() { radarPoll?.cancel(); radarPoll = null; stopDistance()
 let distanceTicker = null;
 function stopDistance() { distanceTicker?.stop(); distanceTicker = null; }
 
+// Vuelo de AeroDataBox: «ha aterrizado» solo con la hora real (de pista) de llegada; si solo pasó la prevista, se dice así.
+function adbArrivalNote(q, profile) {
+  if (q.adbLeg?.arr?.runway) return 'Este vuelo ya ha aterrizado.';
+  return profile.arrivalMs < Date.now() ? 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.' : null;
+}
+
+// Clave del vuelo para avistamientos y aterrizajes guardados: el vuelo físico de Aena o el de AeroDataBox (nunca se mezclan).
+const radarKey = q => (q.kind === 'adb' ? q.adbKey : etaKey(q));
+
+// Radar de un vuelo de AeroDataBox: mismo sondeo, mismo panel y misma distancia restante que los de Aena. Solo si la
+// regla compartida (adbRadarGate) lo permite: con transpondedor o indicativo y dentro de la ventana del vuelo.
+async function showAdbRadar(q, flight, stale, ctx) {
+  if (!flight || !LIVE_BASE) return;
+  if (adbRadarGate(q.adbLeg, q.adbMeta, Date.now(), { plannedMin: ctx?.plannedMin }).mode === 'none') return;
+  stopRadarPoll();
+  const cardVisible = () => Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]');
+  const poll = pollRadar({
+    fetchOnce: ({ poll: isPoll }) => fetchAdbRadar(q.adbMeta.number, q.adbMeta.date, q.adbKey, undefined, undefined, { poll: isPoll }),
+    onResult: radar => paintRadar(q, flight, radar, ctx, stale),
+    isActive: () => !stale() && cardVisible(),
+  });
+  radarPoll = poll;
+  await poll.first;
+}
+
 async function showRadar(q, flight, stale, ctx = null) {
+  if (q.kind === 'adb') return showAdbRadar(q, flight, stale, ctx);
   if (!flight || flight.stale || !q.leg || q.leg.past) return;
   if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) return;
   stopRadarPoll();
@@ -402,12 +452,12 @@ async function showRadar(q, flight, stale, ctx = null) {
 
 function paintRadar(q, flight, radar, ctx, stale) {
   // Aena ya confirmó la llegada (o canceló/desvió): ninguna lectura ADS-B, ni una respuesta tardía, la contradice.
-  if (aenaFinal(q.leg)) return;
+  if (q.kind === 'schedule' && aenaFinal(q.leg)) return;
   if (radar) q.lastRadar = radar;
   flight = q.flightBase ?? flight; // la tarjeta con el último estado de Aena (refrescado)
-  rememberSighting(etaKey(q), radar);
-  rememberLanding(etaKey(q), radar);
-  let card = withRadar(flight, radar, recallSighting(etaKey(q)));
+  rememberSighting(radarKey(q), radar);
+  rememberLanding(radarKey(q), radar);
+  let card = withRadar(flight, radar, recallSighting(radarKey(q)));
   if (flight.arr?.estimated) {
     const eta = turbiEta(q, ctx, radar);
     rememberEta(etaKey(q), eta);
@@ -415,11 +465,11 @@ function paintRadar(q, flight, radar, ctx, stale) {
     const base = etaSide(eta)
       ? { ...flight, arr: etaSide(eta), status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: eta.ms }) }
       : { ...flight, arr: null, status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: null }) };
-    card = withRadar(base, radar, recallSighting(etaKey(q)));
+    card = withRadar(base, radar, recallSighting(radarKey(q)));
   }
   // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
-  const landedAt = recallLanding(etaKey(q));
-  card = withLanding(card, landedAt, q.leg);
+  const landedAt = recallLanding(radarKey(q));
+  card = withLanding(card, landedAt, q.kind === 'adb' ? {} : q.leg);
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
   // Solo se sustituye la tarjeta .flight: la puntualidad y la sección Turbulencias (#forecast-area) no se tocan.
@@ -496,6 +546,7 @@ async function applyAenaLeg(q, leg, updated, stale) {
 }
 
 async function loadPunctualityHistory(q, punct, stale) {
+  if (!punct) return; // sin puntualidad (vuelos que no son de Aena)
   punct.history = await fetchPunctuality(q.schedule.al, q.schedule.n, `${q.leg.o}-${q.leg.a}`);
   const el = $in('punctuality');
   if (!stale() && el) el.innerHTML = punctualityHtml(punct);
@@ -515,10 +566,11 @@ async function buildFlight(q) {
   const officialMs = official ? localToUtcMs(official.date, official.time, dTz) : null;
   const visibleArrivalMs = officialMs ?? (eta?.source === 'turbi' ? eta.ms : null);
   // Aterrizaje ADS-B ya confirmado; si Aena ya dio un estado final, manda Aena.
-  const landedAt = q.kind === 'schedule' && !aenaFinal(q.leg) ? recallLanding(etaKey(q)) : null;
+  const landedAt = q.kind === 'schedule' && !aenaFinal(q.leg) ? recallLanding(etaKey(q)) : q.kind === 'adb' ? recallLanding(q.adbKey) : null;
   const flight = q.kind === 'schedule'
     ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
-      departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg) : null;
+      departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg)
+    : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin), landedAt, {}) : null;
   return { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight };
 }
 
@@ -533,17 +585,18 @@ async function run(q) {
   try {
     const { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
-    const punct = flight ? punctualityState(q) : null;
+    const punct = flight && q.kind === 'schedule' ? punctualityState(q) : null; // la puntualidad es de Aena
     els.changeTime.hidden = Boolean(flight) || q.routeSource === 'aerodatabox'; // con AeroDataBox la hora no es del usuario
     const rel = reliability(departureMs, Date.now());
     // Aviso de llegada: solo con la llegada que muestra la ficha (Aena o estimación Turbi visible), nunca con la
     // duración interna de buildProfile. En la consulta manual (sin horario de Aena) se usa la del perfil, como antes.
     const arrived = q.kind === 'schedule'
       ? arrivalNote({ leg: q.leg, officialMs, eta, departureMs, nowMs: Date.now() })
+      : q.kind === 'adb' ? adbArrivalNote(q, profile)
       : profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.' : null;
     const landedNote = Number.isFinite(landedAt) && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(arrived) ? LANDED_NOTE : null;
     const note = landedNote ?? arrived ?? (rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
-      : q.leg?.st === 'CAN' ? 'Vuelo cancelado.'
+      : q.leg?.st === 'CAN' || ['Canceled', 'CanceledUncertain'].includes(q.adbLeg?.status) ? 'Vuelo cancelado.'
       : null);
     if (note) {
       if (!flight) throw new Error(note);
@@ -819,7 +872,7 @@ window.addEventListener('offline', offerSaved);
 window.addEventListener('online', () => { els.savedLink.hidden = true; });
 els.changeTime.addEventListener('click', () => { setTimeNeeded(true); show('query'); els.time.focus(); });
 // Actualizar vuelve a pedir el horario (retrasos, puerta, estado).
-els.refresh.addEventListener('click', () => (lastQuery?.kind === 'schedule' ? submit() : lastQuery && run(lastQuery)));
+els.refresh.addEventListener('click', () => (['schedule', 'adb'].includes(lastQuery?.kind) ? submit() : lastQuery && run(lastQuery)));
 els.retry.addEventListener('click', () => (lastQuery ? run(lastQuery) : submit()));
 // Reintentar solo la sección de turbulencias (la ficha se queda como está).
 els.result.addEventListener('click', e => {

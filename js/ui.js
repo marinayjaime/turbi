@@ -57,7 +57,8 @@ function radarHtml(r) {
         </div>
         <div class="tm-foot"><span class="tm-source" title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}">Radar ADS-B</span>${''
   }<span class="tm-signal">Última señal hace ${esc(r.seenS)} s · ${esc(r.callsign)}</span></div>${
-  r.match === 'ruta' ? '\n        <p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>' : ''}
+  r.match === 'ruta' ? '\n        <p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>' : ''}${
+  r.aircraftChanged ? '\n        <p class="tm-match">Avión localizado por su indicativo: no es el que AeroDataBox tenía asignado a este vuelo.</p>' : ''}
       </div>`;
   }
   if (r.state === 'reciente' || r.state === 'aterrizado') return ''; // lo dice el estado (y su nota)
@@ -124,7 +125,7 @@ ${photoHtml(c)}
         <strong>${esc(c.a)}</strong>
       </div>
       <div class="sides">${side('Salida', c.dep)}${side('Llegada', c.arr)}</div>
-      ${c.dep && !c.past ? `
+      ${c.dep && !c.past && !c.sourceNote ? `
       <div class="gate${c.dep.gate ? '' : ' pending'}">
         <span class="gate-k">Puerta de embarque</span>
         <span class="gate-v">${!c.dep.gate ? 'Aún sin asignar' : /^[A-Z]$/i.test(c.dep.gate) ? `Zona ${esc(c.dep.gate)}` : esc(c.dep.gate)}</span>
@@ -134,6 +135,7 @@ ${photoHtml(c)}
       ${c.past ? `<p class="foot">${c.arr?.estimated ? 'Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.'
         : c.dep?.estimated ? 'Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.'
         : 'Horas finales publicadas por Aena y guardadas por Turbi.'}</p>`
+        : c.sourceNote ? `<p class="foot">${esc(c.sourceNote)}</p>` // vuelos sin Aena (AeroDataBox): de dónde es el horario
         : c.updatedAgo ? `<p class="foot">Datos actualizados ${esc(c.updatedAgo)}</p>` : ''}
     </section>`;
 }

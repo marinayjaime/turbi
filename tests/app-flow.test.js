@@ -36,7 +36,7 @@ const RADAR_FLYING = { state: 'volando', callsign: 'IBE715', altM: 10668, altFt:
   seenS: 2, remainingKm: 300, source: 'adsb.lol' };
 
 let calls;
-function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null, schedule = {} }) {
+function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null, schedule = {}, radarAdb = null }) {
   const radars = Array.isArray(radar) ? [...radar] : null;
   calls = [];
   return vi.fn(async url => {
@@ -46,6 +46,7 @@ function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null
     if (url === 'data/airline-photos.json') return json(JSON.parse(readFileSync('data/airline-photos.json', 'utf8')));
     const f = url.match(/^data\/flights\/(\w+)\/(\d+)\.json$/);
     if (f && flights[`${f[1]}${f[2]}`]) return json(flights[`${f[1]}${f[2]}`]);
+    if (url.startsWith(`${LIVE_BASE}/radar-adb/`)) return radarAdb ? json(typeof radarAdb === 'function' ? radarAdb(url) : radarAdb) : notFound;
     if (url.startsWith(`${LIVE_BASE}/radar/`)) return radars ? json(radars.length > 1 ? radars.shift() : radars[0]) : radar ? json(radar) : notFound;
     const cs = url.match(/^https:\/\/api\.adsbdb\.com\/v0\/callsign\/(\w+)$/);
     if (cs) return typeof adsbdb[cs[1]] === 'function' ? adsbdb[cs[1]]() : adsbdb[cs[1]] ? json(adsbdb[cs[1]]) : notFound;
@@ -1036,15 +1037,18 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
   const schCalls = () => calls.filter(u => u.includes('/schedule/'));
   const adsbCalls = () => calls.filter(u => u.includes('adsbdb.com'));
 
-  it('UO625: sin pedir la hora, pronóstico con aeropuertos y horario del día; ni ADSBDB ni radar', async () => {
+  it('UO625: sin pedir la hora, ficha y pronóstico con aeropuertos y horario del día; ni ADSBDB ni radar (vuelo de mañana)', async () => {
     const d = tomorrow();
     await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: found(d, [raw(d)]) }, adsbdb: { UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG') }, openMeteo: openMeteoOk }));
     await search('UO625', d);
-    await until(() => $('#result .route')?.textContent === 'HND → HKG', 'pronóstico');
+    await until(() => $('#result .flight') && $('#forecast-area .summary'), 'ficha y pronóstico');
     await networkIdle();
     expect($('#time-field').hidden).toBe(true); // no se pidió la hora
-    expect($('#result .sub').textContent).toContain('UO625 · Hong Kong Express · horario según AeroDataBox · 10:00–13:05');
-    expect($('.source-info').textContent).toMatch(/^Horario según AeroDataBox \(consultado hace un momento\): Programado · salida 10:00 · llegada 13:05 · Airbus A321neo$/);
+    const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
+    expect($('#result .flight h2').textContent).toBe('UO 625');
+    for (const t of ['Airbus A321neo', 'Hong Kong Express · Tokyo a Hong Kong', 'Programado', 'HND', 'HKG', 'Salida 10:00', 'Llegada 13:05',
+      'Horario según AeroDataBox · consultado hace un momento']) expect(card).toContain(t);
+    expect(card).not.toMatch(/Aena|Puerta de embarque/);
     expect(calls).toContain('data/flights/UO/625.json'); // Aena primero
     expect(schCalls()).toEqual([`${LIVE_BASE}/schedule/UO625/${d}.json`]);
     expect(adsbCalls()).toEqual([]);
@@ -1057,7 +1061,7 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     $('#refresh').click();
     await networkIdle();
     await search('UO625', d);
-    await until(() => $('#result .route')?.textContent === 'HND → HKG', 'segunda búsqueda');
+    await until(() => $('#result .flight h2')?.textContent === 'UO 625', 'segunda búsqueda');
     await networkIdle();
     expect(schCalls()).toHaveLength(1);
     expect(adsbCalls()).toEqual([]);
@@ -1073,7 +1077,7 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     const options = [...document.querySelectorAll('.leg-option')];
     expect(options.map(o => o.querySelector('small').textContent)).toEqual(['HND → HKG · sale 10:00 · Programado', 'HKG → BKK · sale 15:00 · Programado']);
     options[1].click();
-    await until(() => $('#result .route')?.textContent === 'HKG → BKK', 'pronóstico del tramo escogido');
+    await until(() => $('#result .flight')?.textContent.includes('Hong Kong a Bangkok'), 'ficha del tramo escogido');
     expect(schCalls()).toHaveLength(1);
   });
 
@@ -1127,8 +1131,9 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     await until(() => $('.alias-offer'), 'confirmación');
     expect(schCalls()).toEqual([]);
     $('[data-alias="reject"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await until(() => $('#result .route')?.textContent === 'IBZ → LCY', 'pronóstico por AeroDataBox');
-    expect($('#result .sub').textContent).toContain('BA8462 · British Airways · horario según AeroDataBox');
+    await until(() => $('#result .flight h2')?.textContent === 'BA 8462', 'ficha por AeroDataBox');
+    expect($('#result .flight').textContent).toContain('British Airways · Ibiza (Eivissa) a London');
+    expect($('#result .flight .foot').textContent).toContain('Horario según AeroDataBox');
     expect(schCalls()).toHaveLength(1);
     expect(adsbCalls()).toHaveLength(1); // solo el veto del alias
   });
@@ -1147,8 +1152,79 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     $('[data-alias="reject"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await until(() => $('.leg-switch'), 'selector de tramos de AeroDataBox');
     document.querySelectorAll('.leg-option')[1].click();
-    await until(() => $('#result .route')?.textContent === 'LCY → EDI', 'tramo escogido');
+    await until(() => $('#result .flight')?.textContent.includes('London a Ingliston, Edinburgh'), 'tramo escogido');
     expect($('.alias-offer')).toBeNull();
     expect(schCalls()).toHaveLength(1);
+  });
+});
+
+// Radar de vuelos de AeroDataBox: misma ficha, mismo panel y mismo sondeo que Aena; solo si hay transpondedor o indicativo.
+describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
+  // GA89 AMS (+02:00) → CGK (+07:00), salió hace 2 h y llega dentro de 10 h (horas relativas a ahora).
+  const fmt = (ms, offH) => { const t = new Date(ms + offH * 3600000).toISOString(); return `${t.slice(0, 10)} ${t.slice(11, 16)}${offH >= 0 ? '+' : '-'}${String(Math.abs(offH)).padStart(2, '0')}:00`; };
+  const utc = ms => `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`;
+  const dep = Math.floor((Date.now() - 2 * 3600000) / 60000) * 60000, arr = dep + 12 * 3600000;
+  const d = fmt(dep, 2).slice(0, 10);
+  const raw = (over = {}) => ({ number: 'GA 89', callSign: 'GIA89', status: 'EnRoute', codeshareStatus: 'IsOperator', airline: { name: 'Garuda Indonesia' },
+    departure: { airport: { iata: 'AMS' }, scheduledTime: { utc: utc(dep), local: fmt(dep, 2) } },
+    arrival: { airport: { iata: 'CGK' }, scheduledTime: { utc: utc(arr), local: fmt(arr, 7) } },
+    aircraft: { model: 'Boeing 777', reg: 'PK-GIK', modeS: '8A04C1' }, ...over });
+  const entry = r => ({ status: 'found', source: 'aerodatabox', number: 'GA89', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([r]) });
+  const FLYING = { state: 'volando', callsign: 'GIA89', hex: '8a04c1', match: 'transpondedor', altFt: 37000, altM: 11278, kmh: 905, vRateFpm: 0,
+    seenS: 3, remainingKm: 9300, source: 'adsb.lol' };
+  const radarCalls = () => calls.filter(u => u.includes('/radar-adb/'));
+  const open = async (r, radarAdb) => {
+    await openApp(network({ flights: {}, schedule: { [`GA89|${d}`]: entry(r) }, radarAdb, openMeteo: () => tooMany }));
+    await search('GA89', d);
+    await until(() => $('#result .flight'), 'ficha de AeroDataBox');
+  };
+
+  it('en el aire con transpondedor: ficha + panel «Volando» con velocidad, altitud, distancia y señal; pide el vuelo físico exacto', async () => {
+    await open(raw(), FLYING);
+    await until(() => $('.telemetry'), 'panel del radar');
+    const panel = $('.telemetry').textContent.replace(/\s+/g, ' ');
+    for (const t of ['Volando', '905', '11.300', '9.300', 'Radar ADS-B', 'Última señal hace 3 s', 'GIA89']) expect(panel).toContain(t);
+    expect($('#result .flight h2').textContent).toBe('GA 89');
+    expect($('#result .flight').textContent).not.toContain('Aena');
+    const key = `adb|GA89|${d}|AMS|CGK|${new Date(dep).toISOString().slice(0, 16)}Z`;
+    expect(radarCalls()[0]).toBe(`${LIVE_BASE}/radar-adb/GA89/${d}.json?leg=${encodeURIComponent(key)}`);
+    expect(calls.some(u => u.includes('/radar/'))).toBe(false); // nunca el radar de Aena
+    expect(calls.filter(u => u.includes('/schedule/'))).toHaveLength(1); // AeroDataBox: nada más que la consulta del horario
+  });
+  it('sin transpondedor ni indicativo: ficha sin radar y 0 peticiones de radar', async () => {
+    await open(raw({ callSign: null, aircraft: { model: 'Boeing 777' } }), FLYING);
+    await networkIdle();
+    expect(radarCalls()).toEqual([]);
+    expect($('.telemetry')).toBeNull();
+    expect($('#result .flight').textContent).not.toContain('Sin señal');
+  });
+  it('sin señal (el servidor no lo ve): «Sin señal ADS-B reciente», sin inventar nada', async () => {
+    await open(raw(), { state: 'sin-datos' });
+    await until(() => $('.radar.muted'), 'aviso de radar');
+    expect($('.radar.muted').textContent).toBe('Sin señal ADS-B reciente para este vuelo.');
+    expect($('.telemetry')).toBeNull();
+  });
+  it('estado de AeroDataBox no confirmado (departureConfirmed: false): ni panel ni «sin señal»', async () => {
+    await open(raw({ status: 'Expected' }), { state: 'sin-datos', departureConfirmed: false });
+    await networkIdle();
+    expect(radarCalls()).toHaveLength(1);
+    expect($('.radar.muted')).toBeNull();
+  });
+  it('aterrizado según ADS-B → «Aterrizado»', async () => {
+    await open(raw(), { state: 'aterrizado', callsign: 'GIA89', seenS: 30, distanceKm: 2, source: 'adsb.lol' });
+    await until(() => $('#result .flight .status')?.textContent.includes('Aterrizado'), 'aterrizado');
+  });
+  it('cambio de avión aceptado por indicativo: se dice en el panel', async () => {
+    await open(raw(), { ...FLYING, hex: '8a0500', match: 'indicativo', aircraftChanged: true });
+    await until(() => $('.telemetry'), 'panel');
+    expect($('.telemetry').textContent).toContain('no es el que AeroDataBox tenía asignado a este vuelo');
+  });
+  it('«Actualizar»: vuelve a pedir el radar, pero no el horario de AeroDataBox (caché del navegador)', async () => {
+    await open(raw(), FLYING);
+    await until(() => $('.telemetry'), 'panel');
+    await networkIdle();
+    $('#refresh').click();
+    await until(() => radarCalls().length === 2, 'radar de nuevo');
+    expect(calls.filter(u => u.includes('/schedule/'))).toHaveLength(1);
   });
 });
