@@ -8,21 +8,25 @@ export const ADB_NOTE = 'horario según AeroDataBox';
 // Nota de la fuente de la ruta en el subtítulo del pronóstico (sin horario de Aena).
 export const sourceNote = q => (q.routeSource === 'adsbdb' ? ADSBDB_NOTE : q.routeSource === 'aerodatabox' ? ADB_NOTE : '');
 
-export const REFRESH_WINDOW_MS = 3 * 3600000;
+export const REFRESH_WINDOW_MS = 3 * 3600000; // desde 3 h antes de la salida programada…
+export const REFRESH_AFTER_ARRIVAL_MS = 2 * 3600000; // …hasta 2 h después de la llegada programada
 const PREFIX = 'turbi-adb:';
 const KEEP_DAYS = 3;
 const TIMEOUT_MS = 15000; // Render gratis puede estar dormido: se espera un poco antes de seguir con ADSBDB
 
 export const adbNumber = n => String(n ?? '').toUpperCase().replace(/\s+/g, '');
 
-// ¿Toca el refresco operativo? (la misma regla en Render y en el navegador)
+// ¿Toca el refresco operativo? (la misma regla en Render y en el navegador) Solo si la consulta base es de antes del día
+// del vuelo (hora local del origen) y aún no se hizo, y ahora está entre 3 h antes de la salida programada y 2 h después
+// de la llegada programada (sin llegada: salida + duración prevista de Turbi, estMin).
 export function refreshDue(entry, nowMs) {
   if (entry?.status !== 'found' || entry.refreshedAt) return false;
   const fetched = Date.parse(entry.fetchedAt);
   return entry.legs.some(l => {
     const { utc, off } = l.dep.sched;
     const fetchedLocalDay = new Date(fetched + off * 60000).toISOString().slice(0, 10);
-    return fetchedLocalDay < entry.date && nowMs >= utc - REFRESH_WINDOW_MS && nowMs < utc;
+    const arrival = l.arr?.sched?.utc ?? utc + (l.estMin ?? 0) * 60000;
+    return fetchedLocalDay < entry.date && nowMs >= utc - REFRESH_WINDOW_MS && nowMs <= arrival + REFRESH_AFTER_ARRIVAL_MS;
   });
 }
 

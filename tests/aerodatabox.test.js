@@ -45,7 +45,15 @@ describe('normalizeFlights', () => {
         runway: { local: '2026-09-26T12:34', utc: Date.parse('2026-09-26T10:34Z'), off: 120 } },
       arr: { sched: { local: '2026-09-26T17:30', utc: Date.parse('2026-09-26T14:30Z'), off: 180 }, revised: null,
         predicted: { local: '2026-09-26T17:21', utc: Date.parse('2026-09-26T14:21Z'), off: 180 }, runway: null },
+      estMin: null, // sin posición de los aeropuertos en la respuesta
     });
+  });
+  it('duración prevista de Turbi (por distancia) si la respuesta trae la posición de los aeropuertos', () => {
+    const withLoc = structuredClone(TO3416);
+    withLoc[0].departure.airport.location = { lat: 47.1532, lon: -1.6107 };
+    withLoc[0].arrival.airport.location = { lat: 36.8987, lon: 30.8005 };
+    expect(normalizeFlights(withLoc)[0].estMin).toBeGreaterThan(200);
+    expect(normalizeFlights(withLoc)[0].estMin).toBeLessThan(270);
   });
   it('descarta carga y tramos sin aeropuertos u hora programada', () => {
     expect(normalizeFlights([{ ...TO3416[0], isCargo: true }])).toEqual([]);
@@ -152,16 +160,48 @@ describe('errores: un solo reintento para 5xx o tiempo agotado; nunca para 401/4
   });
 });
 
-describe('refresco operativo: uno solo, en las 3 h previas a la salida, si la base era de antes del día', () => {
+describe('refresco operativo: uno solo, de 3 h antes de la salida a 2 h después de la llegada, si la base era de antes del día', () => {
   const base = { status: 'found', number: 'TO3416', date: '2026-09-26', fetchedAt: '2026-09-24T09:00:00.000Z', legs: normalizeFlights(TO3416) };
-  const dep = Date.parse('2026-09-26T10:30Z');
-  it('refreshDue: ventana y condiciones', () => {
-    expect(refreshDue(base, dep - 2 * 3600000)).toBe(true);
-    expect(refreshDue(base, dep - 4 * 3600000)).toBe(false); // demasiado pronto
-    expect(refreshDue(base, dep + 60000)).toBe(false); // ya salió
+  const dep = Date.parse('2026-09-26T10:30Z'), arr = Date.parse('2026-09-26T14:30Z'); // programadas (NTE → AYT)
+  const H = 3600000;
+  it('abrir 2 h antes de la salida → sí', () => expect(refreshDue(base, dep - 2 * H)).toBe(true));
+  it('abrir durante el vuelo → sí', () => expect(refreshDue(base, dep + 2 * H)).toBe(true));
+  it('abrir 1 h después de la llegada → sí', () => expect(refreshDue(base, arr + H)).toBe(true));
+  it('fuera de la ventana → no (más de 3 h antes de salir, más de 2 h después de llegar)', () => {
+    expect(refreshDue(base, dep - 3 * H - 60000)).toBe(false);
+    expect(refreshDue(base, arr + 2 * H + 60000)).toBe(false);
+    expect(refreshDue(base, dep - 3 * H)).toBe(true); // bordes incluidos
+    expect(refreshDue(base, arr + 2 * H)).toBe(true);
+  });
+  it('sin hora de llegada: salida + duración prevista + 2 h (sin duración: salida + 2 h)', () => {
+    const noArr = l => ({ ...l, arr: { ...l.arr, sched: null } });
+    const est = { ...base, legs: base.legs.map(l => ({ ...noArr(l), estMin: 240 })) };
+    expect(refreshDue(est, dep + 5 * H)).toBe(true);
+    expect(refreshDue(est, dep + 6 * H + 60000)).toBe(false);
+    const none = { ...base, legs: base.legs.map(noArr) };
+    expect(refreshDue(none, dep + 2 * H)).toBe(true);
+    expect(refreshDue(none, dep + 2 * H + 60000)).toBe(false);
+  });
+  it('otras condiciones: base del mismo día, ya refrescado o negativa → no', () => {
     expect(refreshDue({ ...base, fetchedAt: '2026-09-26T05:00:00.000Z' }, dep - 3600000)).toBe(false); // base del mismo día (hora local de NTE)
     expect(refreshDue({ ...base, refreshedAt: '2026-09-26T08:00:00.000Z' }, dep - 3600000)).toBe(false);
     expect(refreshDue({ ...base, status: 'not_found', legs: [] }, dep - 3600000)).toBe(false);
+  });
+  it('un segundo refresco nunca ocurre: ni en la ventana, ni durante el vuelo, ni tras reiniciar Render', async () => {
+    const store = createMemoryStore({ [entryPath('TO3416', '2026-09-26')]: base });
+    const fetchFn = api(ok(TO3416));
+    await make({ fetchFn, store, nowMs: dep - 2 * H }).adb.lookup('TO3416', '2026-09-26');
+    for (const t of [dep - H, dep + 2 * H, arr + H]) await make({ fetchFn, store, nowMs: t }).adb.lookup('TO3416', '2026-09-26');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(store.files.get(entryPath('TO3416', '2026-09-26')).data.refreshedAt).toBe(new Date(dep - 2 * H).toISOString());
+  });
+  it('abrir durante el vuelo sin refresco previo → ese es el único refresco', async () => {
+    const store = createMemoryStore({ [entryPath('TO3416', '2026-09-26')]: base });
+    const fetchFn = api(ok(TO3416));
+    const { adb } = make({ fetchFn, store, nowMs: dep + 2 * H });
+    expect((await adb.lookup('TO3416', '2026-09-26')).refreshedAt).toBe(new Date(dep + 2 * H).toISOString());
+    await adb.lookup('TO3416', '2026-09-26');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
   it('dentro de la ventana: 1 llamada de refresco; después, ninguna (ni tras reiniciar)', async () => {
     const store = createMemoryStore({ [entryPath('TO3416', '2026-09-26')]: base });

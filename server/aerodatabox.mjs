@@ -13,6 +13,7 @@
 //   - Fechas de −2 a +60 días. Si la caché persistente no responde, no se consulta (no se puede garantizar el máximo).
 
 import { refreshDue, REFRESH_WINDOW_MS } from '../js/adb.js';
+import { buildRoute } from '../js/route.js';
 
 export { refreshDue, REFRESH_WINDOW_MS };
 const API = 'https://aerodatabox.p.rapidapi.com';
@@ -54,7 +55,15 @@ export function normalizeFlights(body) {
     a: f.arrival?.airport?.iata ?? null,
     dep: { sched: time(f.departure?.scheduledTime), revised: time(f.departure?.revisedTime), runway: time(f.departure?.runwayTime) },
     arr: { sched: time(f.arrival?.scheduledTime), revised: time(f.arrival?.revisedTime), predicted: time(f.arrival?.predictedTime), runway: time(f.arrival?.runwayTime) },
+    estMin: estimatedMin(f.departure?.airport?.location, f.arrival?.airport?.location),
   })).filter(l => l.o && l.a && l.dep.sched);
+}
+
+// Duración prevista de Turbi (la de buildRoute, por distancia) si AeroDataBox da la posición de los aeropuertos; si no, null.
+function estimatedMin(from, to) {
+  const ok = p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon);
+  if (!ok(from) || !ok(to)) return null;
+  try { return buildRoute({ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon }, 0).durationMin; } catch { return null; }
 }
 
 const today = nowMs => new Date(nowMs).toISOString().slice(0, 10);
