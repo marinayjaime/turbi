@@ -106,10 +106,15 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" 2>/dev/null || git ls-files)
-          if ! echo "$changed" | grep -qE '^(server/|scripts/aena|package(-lock)?\.json|render\.yaml|data/airports\.json)'; then
+          # Grafo real de dependencias del proceso de Render (entrada de render.yaml, imports recursivos, recursos leídos
+          # con new URL(…, import.meta.url), render.yaml y package*.json). Si el detector falla: afectado (fail-safe).
+          affected=$(printf '%s\n' "$changed" | node scripts/render-deps.mjs --affected) || affected="(fail-safe) · el detector de dependencias ha fallado"
+          if [ -z "$affected" ]; then
             echo "El servidor no ha cambiado: no hace falta redesplegar Render"; exit 0
           fi
+          echo "Cambios que afectan a Render:"
+          echo "$affected"
           if [ -z "$HOOK" ]; then
-            echo "::warning::El servidor ha cambiado, pero falta el secreto RENDER_DEPLOY_HOOK: hay que desplegar Render a mano"; exit 0
+            echo "::warning::El servidor ha cambiado ($(echo "$affected" | cut -d' ' -f1 | paste -sd, -)), pero falta el secreto RENDER_DEPLOY_HOOK: hay que desplegar Render a mano"; exit 0
           fi
           curl -fsS -X POST "$HOOK" > /dev/null && echo "Render redesplegándose"
