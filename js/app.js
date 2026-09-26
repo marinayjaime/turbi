@@ -2,7 +2,7 @@ import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
-import { lookupFlight } from './flight.js';
+import { lookupFlight, canonicalRoute, ADSBDB_NOTE } from './flight.js';
 import { fetchSchedule, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
@@ -83,10 +83,27 @@ function setTimeNeeded(on, message = '') {
 }
 
 function setManual(on, message = '') {
+  adsbRoute = null;
   els.manual.hidden = !on;
   els.number.closest('.field').hidden = on;
   els.toggleManual.textContent = on ? 'Buscar por nº de vuelo' : 'Introducir a mano';
   setTimeNeeded(on, message);
+}
+
+// Ruta que ADSBDB da para el número escrito (no oficial): se enseña con origen y destino editables antes de consultar.
+// { input: número normalizado, flight: ruta con aeropuertos canónicos }
+let adsbRoute = null;
+const numberKey = n => String(n).toUpperCase().replace(/\s+/g, '');
+
+function showAdsbRoute(number, flight) {
+  setManual(false);
+  adsbRoute = { input: numberKey(number), flight };
+  els.manual.hidden = false; // el nº de vuelo sigue visible, con origen y destino debajo
+  els.origin.value = flight.origin.iata;
+  els.destination.value = flight.destination.iata;
+  setTimeNeeded(true, `Aena no publica este vuelo. Ruta según ADSBDB (no oficial): ${flight.origin.city} (${flight.origin.iata}) → `
+    + `${flight.destination.city} (${flight.destination.iata}). Corrige origen o destino si no es correcta e indica la hora de salida.`);
+  els.time.focus();
 }
 
 async function airports() {
@@ -156,34 +173,47 @@ async function resolveFlight() {
   const date = els.date.value, time = els.time.value;
   if (!date) throw new Error('Indica la fecha.');
 
-  if (els.manual.hidden) {
+  // Segunda pulsación con la ruta de ADSBDB en pantalla (mismo número): origen y destino, tal como estén ahora.
+  if (adsbRoute && adsbRoute.input === numberKey(els.number.value)) {
+    if (!time) throw new Error('Indica la hora de salida.');
+    const { origin, destination } = await typedAirports();
+    const { flight } = adsbRoute;
+    const same = origin.iata === flight.origin.iata && destination.iata === flight.destination.iata;
+    // Si el usuario corrige la ruta, ya no es la de ADSBDB: se quita la nota (el número sigue siendo el suyo).
+    return { number: flight.number, airline: flight.airline, origin, destination, date, time, ...(same ? { routeSource: 'adsbdb' } : {}) };
+  }
+
+  if (els.manual.hidden || adsbRoute) {
     const number = els.number.value.trim();
     if (!number) throw new Error('Escribe el número de vuelo.');
     const schedule = await fetchSchedule(number);
     if (schedule) return scheduleQuery(schedule, date);
-    const flight = await lookupFlight(number);
+    const raw = await lookupFlight(number);
+    const flight = raw && canonicalRoute(raw, await airports());
     if (!flight) {
-      setManual(true, 'No encuentro ese vuelo, introdúcelo a mano.');
+      setManual(true, raw
+        ? `ADSBDB da la ruta ${raw.origin.iata} → ${raw.destination.iata}, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.`
+        : 'No encuentro ese vuelo, introdúcelo a mano.');
       return null;
     }
-    if (els.timeField.hidden) {
-      setTimeNeeded(true, 'No tengo el horario de este vuelo: indica la hora de salida.');
-      els.time.focus();
-      return null;
-    }
-    if (!time) throw new Error('Indica la hora de salida.');
-    return { number: flight.number, airline: flight.airline, origin: flight.origin, destination: flight.destination, date, time };
+    showAdsbRoute(number, flight);
+    return null;
   }
 
   if (!time) throw new Error('Indica la hora de salida.');
+  const { origin, destination } = await typedAirports();
+  return { number: '', airline: '', origin, destination, date, time };
+}
 
+// Origen y destino escritos en el formulario, resueltos en data/airports.json (con su zona horaria).
+async function typedAirports() {
   if (!els.origin.value.trim() || !els.destination.value.trim()) throw new Error('Indica los aeropuertos de origen y destino.');
   const db = await airports();
   const origin = findAirport(db, els.origin.value);
   const destination = findAirport(db, els.destination.value);
   if (!origin) throw new Error(`No conozco el aeropuerto «${els.origin.value.trim()}».`);
   if (!destination) throw new Error(`No conozco el aeropuerto «${els.destination.value.trim()}».`);
-  return { number: '', airline: '', origin, destination, date, time };
+  return { origin, destination };
 }
 
 // Salida en UTC y duración real (si el horario trae la llegada).
@@ -521,7 +551,7 @@ async function runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, sta
   const { segments, verdict } = analyze(route, weather);
   const view = {
     title: `${q.origin.iata} → ${q.destination.iata}`,
-    subtitle: [q.number, q.airline].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
+    subtitle: [q.number, q.airline, q.routeSource === 'adsbdb' ? ADSBDB_NOTE : ''].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
     times: `${formatLocal(route.departureMs, oTz)}–${formatLocal(route.arrivalMs, dTz)}`,
     verdict, reliability: rel, durationMin: route.durationMin, segments, flight,
   };
@@ -632,7 +662,12 @@ els.result.addEventListener('click', e => {
   detail.hidden = false;
 });
 
-els.toggleManual.addEventListener('click', () => setManual(els.manual.hidden));
+els.toggleManual.addEventListener('click', () => setManual(Boolean(adsbRoute) || els.manual.hidden));
+// Otro número: la ruta de ADSBDB del anterior deja de valer.
+els.number.addEventListener('input', () => {
+  if (!adsbRoute || adsbRoute.input === numberKey(els.number.value)) return;
+  setManual(false);
+});
 
 for (const input of [els.origin, els.destination]) {
   input.addEventListener('input', async () => {

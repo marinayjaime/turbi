@@ -35,7 +35,7 @@ const RADAR_FLYING = { state: 'volando', callsign: 'IBE715', altM: 10668, altFt:
   seenS: 2, remainingKm: 300, source: 'adsb.lol' };
 
 let calls;
-function network({ flights, radar = null, openMeteo }) {
+function network({ flights, radar = null, openMeteo, adsbdb = {} }) {
   const radars = Array.isArray(radar) ? [...radar] : null;
   calls = [];
   return vi.fn(async url => {
@@ -46,6 +46,8 @@ function network({ flights, radar = null, openMeteo }) {
     const f = url.match(/^data\/flights\/(\w+)\/(\d+)\.json$/);
     if (f && flights[`${f[1]}${f[2]}`]) return json(flights[`${f[1]}${f[2]}`]);
     if (url.startsWith(`${LIVE_BASE}/radar/`)) return radars ? json(radars.length > 1 ? radars.shift() : radars[0]) : radar ? json(radar) : notFound;
+    const cs = url.match(/^https:\/\/api\.adsbdb\.com\/v0\/callsign\/(\w+)$/);
+    if (cs) return adsbdb[cs[1]] ? json(adsbdb[cs[1]]) : notFound;
     if (url.startsWith('https://api.open-meteo.com/v1/forecast')) return openMeteo(url);
     if (url.startsWith('https://api.open-meteo.com/data/')) return json({ last_run_initialisation_time: Math.floor(Date.now() / 1000) - 6 * 3600 });
     return notFound; // Render, puntualidad, METAR, nombres de lugares: sin datos en la prueba
@@ -736,5 +738,117 @@ describe('refresco del estado oficial de Aena mientras el vuelo está en curso (
       await advance(3600000);
       expect(count('/FR/1526')).toBe(again);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+// Vuelos fuera de Aena (regresión: los aeropuertos de ADSBDB no traían zona horaria → «Falta la zona horaria…»).
+// Respuestas simuladas con la forma real de ADSBDB; coordenadas y nombres distintos a propósito de data/airports.json,
+// para comprobar que la app usa siempre los aeropuertos canónicos.
+const AIRPORTS_DB = JSON.parse(readFileSync('data/airports.json', 'utf8'));
+const adsbdbAirport = iata => ({ iata_code: iata, icao_code: 'XXXX', name: `ADSBDB ${iata}`, municipality: `Ciudad ${iata}`,
+  latitude: AIRPORTS_DB[iata][2] + 0.5, longitude: AIRPORTS_DB[iata][3] + 0.5, country_iso_name: 'XX', elevation: 0 });
+const adsbdbRoute = (iata, icao, name, o, a) => ({ response: { flightroute: {
+  callsign: iata, callsign_icao: icao, callsign_iata: iata,
+  airline: { name, icao: icao.slice(0, 3), iata: iata.slice(0, 2) },
+  origin: adsbdbAirport(o), destination: adsbdbAirport(a),
+} } });
+const submitForm = () => document.getElementById('query-form').dispatchEvent(new Event('submit', { cancelable: true }));
+const typeInto = (id, value) => {
+  const el = document.getElementById(id);
+  el.value = value;
+  el.dispatchEvent(new Event('input'));
+};
+
+describe('vuelo fuera de Aena: ADSBDB → hora → pronóstico', () => {
+  const CASES = [
+    ['UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG', 'UO/625'],
+    ['S73033', 'SBI3033', 'S7 Airlines', 'DME', 'UUD', 'S7/3033'],
+    ['LH505', 'DLH505', 'Lufthansa', 'GRU', 'MUC', 'LH/505'],
+  ];
+  it.each(CASES)('%s: ruta de ADSBDB con aeropuertos canónicos y pronóstico sin errores', async (number, icao, airline, o, a, aenaPath) => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    await openApp(network({ flights: {}, adsbdb: { [number]: adsbdbRoute(number, icao, airline, o, a) }, openMeteo: openMeteoOk }));
+    await search(number, tomorrow);
+
+    // 1) Aena no lo tiene → ADSBDB (con el número tal cual) → ruta para revisar, origen/destino editables y hora.
+    await until(() => !$('#time-field').hidden, 'petición de la hora de salida');
+    expect($('#notice').textContent).toContain('Ruta según ADSBDB (no oficial)');
+    expect($('#notice').textContent).toContain(`${AIRPORTS_DB[o][1]} (${o}) → ${AIRPORTS_DB[a][1]} (${a})`);
+    expect($('#manual').hidden).toBe(false);
+    expect($('#number-field').hidden).toBe(false);
+    expect($('#f-origin').value).toBe(o);
+    expect($('#f-destination').value).toBe(a);
+    expect($('#error').hidden).toBe(true);
+    expect(calls).toContain(`data/flights/${aenaPath}.json`);
+
+    // 2) Hora → pronóstico.
+    $('#f-time').value = '10:00';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === `${o} → ${a}`, 'pronóstico de la ruta');
+    await networkIdle();
+    expect($('#error').hidden).toBe(true);
+    expect($('#result-view').hidden).toBe(false);
+    const sub = $('#result .sub').textContent;
+    expect(sub).toContain(`${number} · ${airline} · ruta según ADSBDB (no oficial)`);
+
+    // ADSBDB: una sola consulta, con el número escrito por el usuario. Ni radar ni adsb.lol.
+    const adsbdbCalls = calls.filter(u => u.includes('adsbdb.com'));
+    expect(adsbdbCalls).toEqual([`https://api.adsbdb.com/v0/callsign/${number}`]);
+    expect(calls.some(u => u.includes('/radar/') || u.includes('adsb.lol'))).toBe(false);
+    // El pronóstico parte de las coordenadas de data/airports.json, no de las de ADSBDB.
+    const meteo = calls.find(u => u.startsWith('https://api.open-meteo.com/v1/forecast'));
+    const lats = new URL(meteo).searchParams.get('latitude').split(',').map(Number);
+    expect(lats[0]).toBeCloseTo(AIRPORTS_DB[o][2], 3);
+  });
+
+  it('origen o destino corregido: se usa el escrito y desaparece la nota de ADSBDB', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    await openApp(network({ flights: {}, adsbdb: { LH505: adsbdbRoute('LH505', 'DLH505', 'Lufthansa', 'GRU', 'MUC') }, openMeteo: openMeteoOk }));
+    await search('LH505', tomorrow);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    $('#f-destination').value = 'FRA';
+    $('#f-time').value = '10:00';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === 'GRU → FRA', 'pronóstico con el destino corregido');
+    expect($('#result .sub').textContent).toContain('LH505 · Lufthansa');
+    expect($('#result .sub').textContent).not.toContain('ADSBDB');
+    expect(calls.filter(u => u.includes('adsbdb.com'))).toHaveLength(1);
+  });
+
+  it('aeropuerto de ADSBDB que no está en data/airports.json → entrada manual, sin ruta', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    const body = adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG');
+    body.response.flightroute.destination.iata_code = 'ZZZ';
+    await openApp(network({ flights: {}, adsbdb: { UO625: body }, openMeteo: openMeteoOk }));
+    await search('UO625', tomorrow);
+    await until(() => !$('#manual').hidden, 'entrada manual');
+    expect($('#number-field').hidden).toBe(true);
+    expect($('#notice').textContent).toContain('introdúcelo a mano');
+    expect($('#f-origin').value).toBe('');
+    expect($('#f-destination').value).toBe('');
+    expect(calls.some(u => u.startsWith('https://api.open-meteo.com/'))).toBe(false);
+  });
+
+  it('ADSBDB no conoce el número → entrada manual', async () => {
+    await openApp(network({ flights: {}, openMeteo: openMeteoOk }));
+    await search('XX9999', dayOf(Date.now() + 24 * 3600000));
+    await until(() => !$('#manual').hidden, 'entrada manual');
+    expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+  });
+
+  it('otro número tras ver la ruta: la ruta anterior deja de valer y se consulta el nuevo', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    await openApp(network({ flights: {}, adsbdb: {
+      UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG'),
+      LH505: adsbdbRoute('LH505', 'DLH505', 'Lufthansa', 'GRU', 'MUC'),
+    }, openMeteo: openMeteoOk }));
+    await search('UO625', tomorrow);
+    await until(() => !$('#time-field').hidden, 'ruta de UO625');
+    typeInto('f-number', 'LH505');
+    expect($('#manual').hidden).toBe(true);
+    expect($('#time-field').hidden).toBe(true);
+    submitForm();
+    await until(() => $('#f-origin').value === 'GRU' && !$('#manual').hidden, 'ruta de LH505');
+    expect($('#f-destination').value).toBe('MUC');
   });
 });

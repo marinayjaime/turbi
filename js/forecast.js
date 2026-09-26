@@ -5,6 +5,7 @@ import { buildSegmentsV2, summarize, altitudeTable } from './summary.js';
 import { computeConfidence } from './confidence.js';
 import { summarizeMetar, summarizeTaf, sigmetsNearRoute, pirepsNearRoute } from './aviation-weather.js';
 import { agoText } from './storage.js';
+import { ADSBDB_NOTE } from './flight.js';
 
 const METAR_MAX_AGE_MS = 3 * 3600000;
 
@@ -15,7 +16,7 @@ export async function forecastView({ q, profile, flight, times, nowMs, fetchFn =
     v: 2,
     flight,
     title: `${q.origin.iata} → ${q.destination.iata}`,
-    subtitle: [q.number, q.airline].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
+    subtitle: [q.number, q.airline, q.routeSource === 'adsbdb' ? ADSBDB_NOTE : ''].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
     times,
     fromCity: q.origin.city,
     toCity: q.destination.city,

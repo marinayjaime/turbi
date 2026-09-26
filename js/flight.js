@@ -1,3 +1,5 @@
+import { findAirport } from './airports.js';
+
 const ADSBDB = 'https://api.adsbdb.com/v0/callsign/';
 const FLIGHT_RE = /^[A-Z0-9]{2,3}\d{1,4}[A-Z]?$/;
 
@@ -22,4 +24,15 @@ export async function lookupFlight(number, fetchFn = fetch, timeoutMs = 8000) {
   } catch {
     return null;
   }
+}
+
+// Nota que acompaña siempre a una ruta sacada de ADSBDB (no es un horario oficial).
+export const ADSBDB_NOTE = 'ruta según ADSBDB (no oficial)';
+
+// ADSBDB solo aporta los códigos IATA de origen y destino: los aeropuertos (zona horaria, nombre, ciudad, coordenadas)
+// salen siempre de data/airports.json. Si alguno no está, null → entrada manual (nunca una ruta sin zona horaria).
+export function canonicalRoute(flight, db) {
+  const origin = findAirport(db, flight.origin.iata ?? '');
+  const destination = findAirport(db, flight.destination.iata ?? '');
+  return origin && destination ? { ...flight, origin, destination } : null;
 }

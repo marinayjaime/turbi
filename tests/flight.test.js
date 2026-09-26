@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { lookupFlight } from '../js/flight.js';
+import { lookupFlight, canonicalRoute } from '../js/flight.js';
 
 const ADSBDB_OK = {
   response: { flightroute: {
@@ -50,5 +50,22 @@ describe('lookupFlight', () => {
     expect(await lookupFlight('hola', f)).toBeNull();
     expect(await lookupFlight('', f)).toBeNull();
     expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe('canonicalRoute', () => {
+  const db = { HND: ['Tokyo Haneda International Airport', 'Tokyo', 35.5497, 139.787, 'Asia/Tokyo'],
+    HKG: ['Hong Kong International Airport', 'Hong Kong', 22.3118, 113.9149, 'Asia/Hong_Kong'] };
+  const raw = { number: 'UO625', airline: 'Hong Kong Express',
+    origin: { iata: 'HND', name: 'Haneda', city: 'Tokyo', lat: 35.55, lon: 139.78 },
+    destination: { iata: 'HKG', name: 'Chek Lap Kok', city: 'HK', lat: 22.31, lon: 113.91 } };
+  it('sustituye los aeropuertos de ADSBDB por los de data/airports.json (con zona horaria)', () => {
+    expect(canonicalRoute(raw, db)).toEqual({ number: 'UO625', airline: 'Hong Kong Express',
+      origin: { iata: 'HND', name: 'Tokyo Haneda International Airport', city: 'Tokyo', lat: 35.5497, lon: 139.787, tz: 'Asia/Tokyo' },
+      destination: { iata: 'HKG', name: 'Hong Kong International Airport', city: 'Hong Kong', lat: 22.3118, lon: 113.9149, tz: 'Asia/Hong_Kong' } });
+  });
+  it('origen o destino desconocido (o sin código) → null', () => {
+    expect(canonicalRoute({ ...raw, destination: { ...raw.destination, iata: 'ZZZ' } }, db)).toBeNull();
+    expect(canonicalRoute({ ...raw, origin: { ...raw.origin, iata: undefined } }, db)).toBeNull();
   });
 });
