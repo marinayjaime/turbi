@@ -142,7 +142,7 @@ describe('radar', () => {
     expect(html).toMatch(/<span class="tm-label">Estado<\/span>\s*<span class="tm-value tm-flying">Volando<span class="fly"/);
     expect(html).toMatch(/<span class="tm-label">Velocidad<\/span>\s*<span class="tm-value">851<small>km\/h<\/small><\/span>/);
     expect(html).toMatch(/<span class="tm-label">Altitud<\/span>\s*<span class="tm-value">10\.700<small>m<\/small><\/span>/);
-    expect(html).toMatch(/<span class="tm-label">Distancia restante<\/span>\s*<span class="tm-value">8\.411<small>km<\/small><\/span>/);
+    expect(html).toMatch(/<span class="tm-label">Distancia restante<\/span>\s*<span class="tm-value tm-remaining">8\.411<small>km<\/small><\/span>/);
     expect(html).toMatch(/<span class="tm-source" title="Datos ADS-B de adsb\.lol">Radar ADS-B<\/span>/); // proveedor solo como title
     expect(html).toContain('<span class="tm-signal">Última señal hace 0 s · AEA039</span>');
     expect(html).not.toContain('Según el radar');
@@ -162,7 +162,7 @@ describe('radar', () => {
   it('valores dinámicos; si falta un dato, «—» (no se inventa)', () => {
     const html = flightCardHtml({ ...c, radar: { ...r, kmh: null, remainingKm: undefined, altM: 3048, seenS: 42, callsign: 'FIN1676' } });
     expect(html).toMatch(/Velocidad<\/span>\s*<span class="tm-value">—<\/span>/);
-    expect(html).toMatch(/Distancia restante<\/span>\s*<span class="tm-value">—<\/span>/);
+    expect(html).toMatch(/Distancia restante<\/span>\s*<span class="tm-value tm-remaining">—<\/span>/);
     expect(html).toContain('3.000<small>m</small>');
     expect(html).toContain('Última señal hace 42 s · FIN1676');
   });
