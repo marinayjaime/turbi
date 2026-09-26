@@ -2,7 +2,8 @@ import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
-import { lookupFlight, canonicalRoute, ADSBDB_NOTE } from './flight.js';
+import { lookupFlightResult, canonicalRoute, ADSBDB_NOTE } from './flight.js';
+import { aliasOffer, adsbdbVetoes } from './aliases.js';
 import { fetchSchedule, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
@@ -84,11 +85,16 @@ function setTimeNeeded(on, message = '') {
 
 function setManual(on, message = '') {
   adsbRoute = null;
+  aliasState = null;
   els.manual.hidden = !on;
   els.number.closest('.field').hidden = on;
   els.toggleManual.textContent = on ? 'Buscar por nº de vuelo' : 'Introducir a mano';
   setTimeNeeded(on, message);
 }
+
+// Número comercial que Aena publica con otro número (BA8462 → CJ8462): se ofrece y el usuario confirma.
+// { input: número normalizado, date, offer, adsb (resultado de ADSBDB, para seguir si no lo confirma), accepted }
+let aliasState = null;
 
 // Ruta que ADSBDB da para el número escrito (no oficial): se enseña con origen y destino editables antes de consultar.
 // { input: número normalizado, flight: ruta con aeropuertos canónicos }
@@ -159,6 +165,30 @@ function legSwitchHtml(q, { choose = false } = {}) {
   return `<nav class="leg-switch" aria-label="Tramos de este vuelo" data-number="${esc(q.number)}" data-date="${esc(q.date)}">${title}${buttons}</nav>`;
 }
 
+// «Aena publica este vuelo como CJ 8462 · BA CITYFLYER» + ruta(s) respaldada(s) + [Ver CJ 8462] / No es este vuelo.
+function aliasOfferHtml(q, db) {
+  const { alias, legs } = q.offer;
+  const city = iata => findAirport(db, iata)?.city ?? iata;
+  const target = `${alias.al} ${alias.n}`;
+  const routes = [...new Set(legs.map(l => `${l.o}|${l.a}`))].map(r => r.split('|'))
+    .map(([o, a]) => `<p class="alias-route"><strong>${esc(city(o))} → ${esc(city(a))}</strong> <small>${esc(o)} → ${esc(a)}</small></p>`).join('');
+  return `<section class="alias-offer" aria-label="Vuelo publicado por Aena con otro número">
+    <p class="leg-title">Aena publica este vuelo como ${esc(target)}${alias.name ? ` · ${esc(alias.name)}` : ''}</p>${routes}
+    <button type="button" class="primary" data-alias="accept">Ver ${esc(target)}</button>
+    <button type="button" class="link" data-alias="reject">No es este vuelo</button>
+  </section>`;
+}
+
+async function showAliasOffer(q) {
+  lastQuery = null;
+  ++runId;
+  stopRadarPoll();
+  stopStatusRefresh();
+  currentView = null;
+  els.result.innerHTML = aliasOfferHtml(q, await airports());
+  show('result');
+}
+
 function showLegChooser(q) {
   lastQuery = null;
   ++runId; // nada de una consulta anterior puede pintar encima
@@ -186,23 +216,41 @@ async function resolveFlight() {
   if (els.manual.hidden || adsbRoute) {
     const number = els.number.value.trim();
     if (!number) throw new Error('Escribe el número de vuelo.');
+    const input = numberKey(number);
+    // Candidato ya confirmado (mismo número y fecha): se vuelve a pedir con los datos de ahora.
+    if (aliasState?.accepted && aliasState.input === input && aliasState.date === date) {
+      const offer = await aliasOffer(number, date);
+      if (offer) return scheduleQuery(offer.schedule, date);
+      aliasState = null; // ya no hay candidato: búsqueda normal
+    }
     const schedule = await fetchSchedule(number);
     if (schedule) return scheduleQuery(schedule, date);
-    const raw = await lookupFlight(number);
-    const flight = raw && canonicalRoute(raw, await airports());
-    if (!flight) {
-      setManual(true, raw
-        ? `ADSBDB da la ruta ${raw.origin.iata} → ${raw.destination.iata}, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.`
-        : 'No encuentro ese vuelo, introdúcelo a mano.');
-      return null;
+    // Aena no publica el número: ¿lo asocia a otro que sí publica? ADSBDB se consulta a la vez (una sola vez) y sirve
+    // de veto si da otra ruta y de alternativa si el usuario no confirma el candidato.
+    const [adsb, offer] = await Promise.all([lookupFlightResult(number), aliasOffer(number, date)]);
+    if (offer && !adsbdbVetoes(adsb, offer.legs)) {
+      aliasState = { input, date, offer, adsb, accepted: false };
+      return { kind: 'alias', number: input, date, offer };
     }
-    showAdsbRoute(number, flight);
-    return null;
+    return adsbFallback(number, adsb);
   }
 
   if (!time) throw new Error('Indica la hora de salida.');
   const { origin, destination } = await typedAirports();
   return { number: '', airline: '', origin, destination, date, time };
+}
+
+// Sin horario de Aena: la ruta de ADSBDB para revisar o, si no hay ruta utilizable, la entrada manual.
+async function adsbFallback(number, adsb) {
+  const flight = adsb.flight && canonicalRoute(adsb.flight, await airports());
+  if (!flight) {
+    setManual(true, adsb.flight
+      ? `ADSBDB da la ruta ${adsb.flight.origin.iata} → ${adsb.flight.destination.iata}, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.`
+      : 'No encuentro ese vuelo, introdúcelo a mano.');
+    return null;
+  }
+  showAdsbRoute(number, flight);
+  return null;
 }
 
 // Origen y destino escritos en el formulario, resueltos en data/airports.json (con su zona horaria).
@@ -631,6 +679,7 @@ async function submit() {
   try {
     const q = await resolveFlight();
     if (q?.kind === 'choose') showLegChooser(q);
+    else if (q?.kind === 'alias') await showAliasOffer(q);
     else if (q) run(q);
     else show('query');
   } catch (err) {
@@ -649,6 +698,21 @@ els.result.addEventListener('click', e => {
   submit();
 });
 
+// Candidato de número comercial: confirmarlo abre el vuelo de Aena; si no, se sigue con ADSBDB (ya consultado).
+els.result.addEventListener('click', async e => {
+  const btn = e.target.closest('button[data-alias]');
+  if (!btn || !aliasState) return;
+  if (btn.dataset.alias === 'accept') {
+    aliasState.accepted = true;
+    submit();
+    return;
+  }
+  const { adsb } = aliasState;
+  aliasState = null;
+  show('query');
+  try { await adsbFallback(els.number.value.trim(), adsb); } catch (err) { showError(err.message); }
+});
+
 // Timeline: al tocar un tramo se muestra su detalle (otra vez para ocultarlo).
 els.result.addEventListener('click', e => {
   const btn = e.target.closest('button[data-seg]');
@@ -665,6 +729,7 @@ els.result.addEventListener('click', e => {
 els.toggleManual.addEventListener('click', () => setManual(Boolean(adsbRoute) || els.manual.hidden));
 // Otro número: la ruta de ADSBDB del anterior deja de valer.
 els.number.addEventListener('input', () => {
+  if (aliasState && aliasState.input !== numberKey(els.number.value)) aliasState = null;
   if (!adsbRoute || adsbRoute.input === numberKey(els.number.value)) return;
   setManual(false);
 });

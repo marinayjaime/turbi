@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { lookupFlight, canonicalRoute } from '../js/flight.js';
+import { lookupFlight, lookupFlightResult, canonicalRoute } from '../js/flight.js';
 
 const ADSBDB_OK = {
   response: { flightroute: {
@@ -67,5 +67,28 @@ describe('canonicalRoute', () => {
   it('origen o destino desconocido (o sin código) → null', () => {
     expect(canonicalRoute({ ...raw, destination: { ...raw.destination, iata: 'ZZZ' } }, db)).toBeNull();
     expect(canonicalRoute({ ...raw, origin: { ...raw.origin, iata: undefined } }, db)).toBeNull();
+  });
+});
+
+describe('lookupFlightResult: qué significa cada respuesta de ADSBDB', () => {
+  const status = code => vi.fn(async () => ({ ok: code >= 200 && code < 300, status: code, json: async () => ({ response: 'x' }) }));
+  it('ruta → found con los IATA', async () => {
+    expect(await lookupFlightResult('VY3902', ok(ADSBDB_OK))).toMatchObject({ status: 'found', iata: ['BCN', 'PMI'], flight: { number: 'VY3902' } });
+  });
+  it('ruta sin coordenadas → found, pero sin ruta utilizable', async () => {
+    const body = structuredClone(ADSBDB_OK);
+    delete body.response.flightroute.origin.latitude;
+    expect(await lookupFlightResult('VY3902', ok(body))).toEqual({ status: 'found', flight: null, iata: ['BCN', 'PMI'] });
+  });
+  it('404 o respuesta sin ruta → unknown', async () => {
+    expect(await lookupFlightResult('XX9999', status(404))).toEqual({ status: 'unknown' });
+    expect(await lookupFlightResult('VY3902', ok({ response: 'unknown callsign' }))).toEqual({ status: 'unknown' });
+  });
+  it('429, 5xx, red o tiempo límite → error (fallo temporal, no «desconocido»)', async () => {
+    expect(await lookupFlightResult('VY3902', status(429))).toEqual({ status: 'error' });
+    expect(await lookupFlightResult('VY3902', status(503))).toEqual({ status: 'error' });
+    expect(await lookupFlightResult('VY3902', vi.fn(async () => { throw new TypeError('Failed to fetch'); }))).toEqual({ status: 'error' });
+    const hang = vi.fn((url, opts) => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new DOMException('t', 'TimeoutError')))));
+    expect(await lookupFlightResult('VY3902', hang, 30)).toEqual({ status: 'error' });
   });
 });

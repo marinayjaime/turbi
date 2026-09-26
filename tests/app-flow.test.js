@@ -35,7 +35,7 @@ const RADAR_FLYING = { state: 'volando', callsign: 'IBE715', altM: 10668, altFt:
   seenS: 2, remainingKm: 300, source: 'adsb.lol' };
 
 let calls;
-function network({ flights, radar = null, openMeteo, adsbdb = {} }) {
+function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null }) {
   const radars = Array.isArray(radar) ? [...radar] : null;
   calls = [];
   return vi.fn(async url => {
@@ -47,7 +47,8 @@ function network({ flights, radar = null, openMeteo, adsbdb = {} }) {
     if (f && flights[`${f[1]}${f[2]}`]) return json(flights[`${f[1]}${f[2]}`]);
     if (url.startsWith(`${LIVE_BASE}/radar/`)) return radars ? json(radars.length > 1 ? radars.shift() : radars[0]) : radar ? json(radar) : notFound;
     const cs = url.match(/^https:\/\/api\.adsbdb\.com\/v0\/callsign\/(\w+)$/);
-    if (cs) return adsbdb[cs[1]] ? json(adsbdb[cs[1]]) : notFound;
+    if (cs) return typeof adsbdb[cs[1]] === 'function' ? adsbdb[cs[1]]() : adsbdb[cs[1]] ? json(adsbdb[cs[1]]) : notFound;
+    if (url === 'data/flights/_aliases.json') return aliases ? json(aliases) : notFound;
     if (url.startsWith('https://api.open-meteo.com/v1/forecast')) return openMeteo(url);
     if (url.startsWith('https://api.open-meteo.com/data/')) return json({ last_run_initialisation_time: Math.floor(Date.now() / 1000) - 6 * 3600 });
     return notFound; // Render, puntualidad, METAR, nombres de lugares: sin datos en la prueba
@@ -863,5 +864,101 @@ describe('vuelo de Aena sin nombre de aerolínea (fuera de su catálogo)', () =>
     expect($('#result .flight h2').textContent).toBe('JU 571');
     expect($('#result').textContent).not.toMatch(/JU\s+JU/);
     expect($('#result').textContent).not.toContain('null');
+  });
+});
+
+// C: número comercial que Aena publica con otro número (BA8462 → CJ8462, BA CityFlyer). Datos simulados con la forma
+// real de _aliases.json y de los horarios; nada del código depende de este número.
+describe('número comercial asociado por Aena: confirmación antes de usarlo', () => {
+  const tomorrow = () => dayOf(Date.now() + 24 * 3600000);
+  const ALIASES = { updated: new Date().toISOString(), aliases: {
+    BA8462: { al: 'CJ', n: '8462', name: 'BA CITYFLYER', routes: [['IBZ', 'LCY']], lastEvidence: dayOf(Date.now()) } } };
+  const cjLeg = (d, o = 'IBZ', a = 'LCY', sd = '10:45') => ({ d, o, a, sd, ed: `${d}T${sd}`, td: null, g: null, st: 'SCH', std: 'SCH', ac: 'E190', op: 'CJ' });
+  const CJ = d => ({ CJ8462: { name: 'BA CITYFLYER', updated: new Date().toISOString(), legs: [cjLeg(d), cjLeg(d, 'LCY', 'IBZ', '07:00')] } });
+  const offerText = () => $('.alias-offer')?.textContent.replace(/\s+/g, ' ').trim() ?? '';
+  const click = sel => $(sel).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const adsbCalls = () => calls.filter(u => u.includes('adsbdb.com'));
+
+  it('BA8462: se ofrece CJ 8462 con la ruta respaldada; «Ver CJ 8462» abre la ficha de Aena (solo IBZ → LCY)', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), aliases: ALIASES, adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'candidato');
+    expect(offerText()).toContain('Aena publica este vuelo como CJ 8462 · BA CITYFLYER');
+    expect(offerText()).toContain('Ibiza (Eivissa) → London IBZ → LCY');
+    expect(offerText()).not.toContain('LCY → IBZ');
+    expect($('[data-alias="accept"]').textContent).toBe('Ver CJ 8462');
+    expect($('[data-alias="reject"]').textContent).toBe('No es este vuelo');
+    expect(adsbCalls()).toEqual(['https://api.adsbdb.com/v0/callsign/BA8462']);
+    click('[data-alias="accept"]');
+    await until(() => $('#result .flight'), 'ficha de CJ 8462');
+    expect($('#result .flight h2').textContent).toBe('CJ 8462');
+    expect($('#result .flight').textContent).toContain('Ibiza (Eivissa) a London');
+    expect($('.leg-switch')).toBeNull(); // la otra ruta del número (LCY → IBZ) no se ofrece
+    expect(adsbCalls()).toHaveLength(1);
+    expect(calls.some(u => u.includes('/radar/') && !u.includes('/CJ/'))).toBe(false);
+  });
+
+  it('«No es este vuelo»: sigue con la ruta de ADSBDB ya consultada (sin otra consulta)', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), aliases: ALIASES, adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'candidato');
+    click('[data-alias="reject"]');
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    expect($('#notice').textContent).toContain('Ruta según ADSBDB (no oficial)');
+    expect($('#f-origin').value).toBe('IBZ');
+    expect(adsbCalls()).toHaveLength(1);
+    // Buscar otra vez con la ruta en pantalla no vuelve a ofrecer el candidato: sigue el camino de ADSBDB.
+    $('#f-time').value = '10:45';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === 'IBZ → LCY', 'pronóstico por ADSBDB');
+    expect($('.alias-offer')).toBeNull();
+  });
+
+  it('ADSBDB da otra ruta → veto absoluto: no se ofrece el candidato', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), aliases: ALIASES, adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'LHR', 'IBZ') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    expect($('.alias-offer')).toBeNull();
+    expect($('#f-origin').value).toBe('LHR');
+  });
+
+  it('ADSBDB no lo conoce (404) → el candidato se ofrece solo con la evidencia de Aena', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), aliases: ALIASES, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'candidato');
+    expect(offerText()).not.toContain('ADSBDB'); // ninguna corroboración atribuida a ADSBDB
+  });
+
+  it('ADSBDB con fallo temporal (503) → se ofrece; si no se confirma, entrada manual (no se inventa ruta)', async () => {
+    const d = tomorrow();
+    const unavailable = () => ({ ok: false, status: 503, headers: { get: () => null }, json: async () => ({}) });
+    await openApp(network({ flights: CJ(d), aliases: ALIASES, adsbdb: { BA8462: unavailable }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'candidato');
+    expect(offerText()).not.toContain('ADSBDB');
+    click('[data-alias="reject"]');
+    await until(() => !$('#manual').hidden, 'entrada manual');
+    expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+  });
+
+  it('fecha en la que el vuelo solo va por una ruta sin evidencia → ningún candidato (búsqueda normal)', async () => {
+    const d = tomorrow();
+    const flights = { CJ8462: { name: 'BA CITYFLYER', updated: new Date().toISOString(), legs: [cjLeg(d, 'LCY', 'IBZ', '07:00')] } };
+    await openApp(network({ flights, aliases: ALIASES, adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    expect($('.alias-offer')).toBeNull();
+  });
+
+  it('sin _aliases.json (primera publicación o fallo) → búsqueda normal por ADSBDB', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: CJ(d), adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    expect($('.alias-offer')).toBeNull();
   });
 });

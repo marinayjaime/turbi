@@ -3,4 +3,4 @@
 export const LIVE_BASE = 'https://turbi-9l31.onrender.com';
 
 // Identificador visible en el DOM y usado para controlar una única recarga al cambiar el Service Worker.
-export const BUILD_ID = '2026-09-26.12';
+export const BUILD_ID = '2026-09-26.13';

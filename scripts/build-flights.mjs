@@ -7,6 +7,7 @@ import { buildAviation } from './build-aviation.mjs';
 import { buildPunctuality } from './build-punctuality.mjs';
 import { readFile } from 'node:fs/promises';
 import { AIRPORTS, fetchJson, fetchAena, madridDate, pickMode } from './aena-fetch.mjs';
+import { buildAliases } from './aliases.mjs';
 
 const SITE = '_site';
 const PAGES_URL = process.env.PAGES_URL ?? 'https://marinayjaime.github.io/turbi/';
@@ -25,6 +26,15 @@ async function previousDeparted() {
     return await fetchJson(`${PAGES_URL}data/flights/_departed.json`, 2);
   } catch {
     return [];
+  }
+}
+
+// Publicación anterior de un archivo de data/flights (o null).
+async function previousFile(name) {
+  try {
+    return await fetchJson(`${PAGES_URL}data/flights/${name}`, 2);
+  } catch {
+    return null;
   }
 }
 
@@ -66,6 +76,19 @@ async function main() {
   await writeFile(`${out}/_legs.json`, JSON.stringify(legs));
   await writeFile(`${out}/_departed.json`, JSON.stringify(departedLegs(legs, madridDate(0))));
   await writeFile(`${out}/airlines.json`, JSON.stringify(airlines));
+  // Números comerciales asociados por Aena (BA8462 → CJ8462): solo en modo completo se recalculan y revalidan todas
+  // las condiciones; en modo live o sin Aena se conserva la publicación anterior tal cual.
+  const updatedAt = new Date().toISOString();
+  let aliases = await previousFile('_aliases.json'), evidence = await previousFile('_alias-evidence.json');
+  if (mode !== 'live' && aenaOk) {
+    const r = buildAliases(entries, legs, evidence, madridDate(0));
+    aliases = { updated: updatedAt, aliases: r.aliases };
+    evidence = { updated: updatedAt, evidence: r.evidence };
+    console.log(`Alias: ${Object.keys(r.aliases).length} números comerciales, ${r.evidence.length} evidencias, ${r.rejected.length} descartados`);
+    for (const x of r.rejected.filter(x => x.pair.includes('→'))) console.log(`  relación ${x.pair} descartada: ${x.reason}`);
+  }
+  await writeFile(`${out}/_aliases.json`, JSON.stringify(aliases ?? { updated: null, aliases: {} }));
+  await writeFile(`${out}/_alias-evidence.json`, JSON.stringify(evidence ?? { updated: null, evidence: [] }));
   await writeFile(`${out}/_meta.json`, JSON.stringify({ updated: new Date().toISOString(), mode, legs: legs.length, audit: { checked: audit.checked, mismatches: audit.mismatches.length, duplicates: audit.duplicates } }));
   for (const [path, body] of Object.entries(files)) {
     const dir = `${out}/${path.split('/')[0]}`;
