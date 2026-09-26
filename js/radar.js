@@ -148,6 +148,9 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
   if (radar.state === 'volando') return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
   if (radar.state === 'aterrizado') return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
+  // El servidor aún está buscando el avión (indicativos exactos, identificación por ruta o esperando a que adsb.lol
+  // levante una pausa): «Localizando…», también si Aena ya dice «Volando» (el estado de Aena se queda).
+  if (radar.identifying === true) return { ...card, radar: { state: 'localizando' } };
   // Aena ya dice «Volando» (FLY/FNL) y el radar no lo ve: se queda lo de Aena, sin panel ni avisos del radar.
   if (card.status?.flying) return card;
   const ageMin = Number.isFinite(lastSeenMs) ? Math.round((nowMs - lastSeenMs) / MIN) : null; // igual que la ETA
@@ -158,8 +161,6 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   // Aena aún no confirma la salida (p. ej. «Última llamada»): el avión puede seguir en tierra. Se queda el estado de
   // Aena, sin «Sin señal ADS-B» (no se asume que haya despegado).
   if (radar.departureConfirmed === false) return card;
-  // El servidor aún está buscando el avión (o esperando a que adsb.lol levante una pausa): no es «sin señal».
-  if (radar.identifying === true) return { ...card, radar: { state: 'localizando' } };
   return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal' } };
 }
 

@@ -43,18 +43,23 @@ const serverWith = legs => { const s = createState(); s.legs = legs; return s; }
 const ask = (state, path, fetchFn, nowMs = now) => radarResponse(state, path, { fetchFn, nowMs, pauseMs: 0, airports }).then(r => JSON.parse(r.body));
 
 describe('429: pausa global, sin reintentos y sin más consultas', () => {
-  it('sin Retry-After: 60 s de pausa; durante la pausa, cero llamadas y «no disponible»; después, el radar normal vuelve', async () => {
+  it('429 en el indicativo directo: pausa de 60 s, estado temporal (no definitivo), cero llamadas; después el servidor lo repite solo', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ now: T0 }); // también setTimeout: la repetición la programa el servidor
     const a = apis((kind, n) => (kind === 'callsign' && n === 1 ? tooMany() : null));
     const state = serverWith([ib]);
-    expect((await ask(state, '/radar/IB/715.json', a.fetchFn)).state).toBe('no-disponible');
-    expect(a.adsbCount()).toBe(1); // el 429 no se reintenta
-    vi.setSystemTime(T0 + ADSB_DEFAULT_COOLDOWN_MS - 1000);
+    const first = await ask(state, '/radar/IB/715.json', a.fetchFn);
+    expect(first).toMatchObject({ state: 'sin-datos', identifying: true, phase: 'pausa', temporary: true });
+    expect(first.retryAfterSec).toBeGreaterThanOrEqual(60);
+    expect(a.adsbCount()).toBe(1); // el 429 no se reintenta en el acto
+    await vi.advanceTimersByTimeAsync(ADSB_DEFAULT_COOLDOWN_MS - 1000);
     state.radar.clear(); // sin la caché de 60 s, para comprobar que tampoco se llama a adsb.lol
-    expect((await ask(state, '/radar/IB/715.json', a.fetchFn, now + 59000)).state).toBe('no-disponible');
+    expect(await ask(state, '/radar/IB/715.json', a.fetchFn, now + 59000)).toMatchObject({ identifying: true, phase: 'pausa' });
+    expect(await ask(state, '/radar/IB/715.json?poll=1', a.fetchFn, now + 59000)).toMatchObject({ identifying: true, phase: 'pausa' });
     expect(a.adsbCount()).toBe(1);
-    vi.setSystemTime(T0 + ADSB_DEFAULT_COOLDOWN_MS + 1);
-    state.radar.clear();
-    expect(await ask(state, '/radar/IB/715.json', a.fetchFn, now + 61000)).toMatchObject({ state: 'volando', callsign: 'IBE715' });
+    await vi.advanceTimersByTimeAsync(5000); // acaba la pausa: el servidor repite los indicativos sin que nadie pregunte
+    expect(a.count('callsign')).toBe(2);
+    expect(await ask(state, '/radar/IB/715.json?poll=1', a.fetchFn, now + 65000)).toMatchObject({ state: 'volando', callsign: 'IBE715' });
   });
   it('con Retry-After: se respeta su tiempo (30 s)', async () => {
     const a = apis((kind, n) => (n === 1 ? tooMany('30') : null));

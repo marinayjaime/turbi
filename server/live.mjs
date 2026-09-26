@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { fetchAena, madridDate, AIRPORTS } from '../scripts/aena-fetch.mjs';
 import { needsRadar, findOnRadar, radarGateFor, plannedMinFor } from './radar.mjs';
 import { canIdentify, identifyByZone, trackByHex, createHexRegistry, operatorIcaos } from './identify.mjs';
-import { adsbHealth } from './adsb.mjs';
+import { adsbHealth, adsbLimiter } from './adsb.mjs';
 import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
@@ -20,6 +20,7 @@ const SAFE_PATH = /^\/flights\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 const RADAR_PATH = /^\/radar\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 const RADAR_CACHE_MS = 60000;
 const DIRECT_MISS_MS = 2 * 60000;
+const DIRECT_RESUMES = 3; // repeticiones automáticas de los indicativos exactos tras un 429
 
 const freshRadarStats = () => ({ requests: 0, cacheHits: 0, directLookups: 0, directFound: 0,
   identificationStarted: 0, identificationBusyPolls: 0, identificationSucceeded: 0,
@@ -114,97 +115,152 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
     return { status: 200, headers: HEADERS, body: debug ? bodyOf(JSON.parse(shared.body)) : shared.body };
   }
   const origin = leg && coords(leg.o), dest = leg && coords(leg.a);
-  let result = null;
-  // 1) Avión ya identificado por su ruta (server/identify.mjs): se sigue por su hex. Una lectura rara no lo invalida.
-  const known = phys && hexes.get(phys);
-  if (known && origin && dest) {
-    const t = await trackByHex({ entry: known, leg, origin, dest, nowMs, fetchFn });
-    hexes.observe(phys, t.observation, nowMs);
-    result = t.result ?? { state: 'sin-datos' };
-  }
+  const noStore = { ...HEADERS, 'Cache-Control': 'no-store' };
+  const pending = gate && !gate.confirmed ? { departureConfirmed: false } : {};
+  // Respuesta «trabajando»: la app sigue sondeando y muestra «Localizando el avión en el radar…». phase: 'hex' |
+  // 'direct' (indicativos exactos) | 'identify' (por ruta) | 'pausa' (esperando a que adsb.lol levante un 429).
+  const working = (phase, resumeAt = null) => {
+    const st = phys ? hexes.status(phys, nowMs) : null;
+    const miss = phys && state.directMisses.get(phys)?.result;
+    const retryAfterSec = resumeAt !== null ? Math.max(0, Math.ceil((resumeAt - Date.now()) / 1000)) : st?.interrupted ? st.retryAfterSec : null;
+    return { status: 200, headers: noStore, body: bodyOf(miss ?? { state: 'sin-datos' }, { identifying: true,
+      phase: retryAfterSec !== null ? 'pausa' : phase, ...(retryAfterSec !== null ? { temporary: true, retryAfterSec } : {}), ...pending }) };
+  };
+  const respond = ({ result, identifying }) => {
+    const extra = { ...(identifying ? { identifying: true, phase: 'identify' } : {}), ...pending };
+    const payload = { ...result, ...extra, checked: new Date(nowMs).toISOString() };
+    const plainBody = JSON.stringify(payload);
+    const responseBody = debug ? JSON.stringify({ ...payload, diagnostic: diagnostic() }) : plainBody;
+    return { status: 200, headers: identifying ? noStore : HEADERS, body: responseBody };
+  };
 
-  // Mientras la identificación está en cola o consultando zonas, los sondeos solo leen su estado: nunca repiten el
-  // indicativo directo ni añaden otra llamada a ADS-B.
-  // Una identificación interrumpida por un fallo temporal (429…) también está «en curso»: el servidor la reanudará
-  // solo cuando acabe la pausa (temporary + retryAfterSec), y la app sigue sondeando.
+  // Trabajo de radar por vuelo físico (phys → { phase, promise }): seguimiento por hex, indicativos exactos y el
+  // arranque de la identificación por ruta. Mientras dura, un sondeo solo lee su fase y una consulta normal comparte
+  // el mismo resultado: dos usuarios (o un usuario cuyo navegador abandonó a los 20 s y vuelve a sondear) nunca
+  // lanzan dos búsquedas del mismo vuelo, y un sondeo nunca recibe «sin datos» mientras otro sigue probando.
+  const jobs = state.radarJobs ??= new Map();
+  const job = phys && jobs.get(phys);
+  if (job) {
+    state.radarStats.identificationBusyPolls++;
+    if (pollOnly || job.phase === 'pausa') return working(job.phase, job.phase === 'pausa' ? job.resumeAt : null);
+    const out = await job.promise;
+    return out.paused ? working('pausa', job.resumeAt) : out.identifying ? working('identify') : respond(out);
+  }
+  const known = phys && hexes.get(phys);
+  // Identificación en cola, consultando zonas o en pausa por un 429: los sondeos y las consultas solo leen su estado.
   if (!known && phys && hexes.busy(phys)) {
     state.radarStats.identificationBusyPolls++;
-    const miss = state.directMisses.get(phys)?.result ?? { state: 'sin-datos' };
-    const st = hexes.status(phys, nowMs);
-    return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: bodyOf(miss, { identifying: true,
-      ...(st.interrupted ? { temporary: true, retryAfterSec: st.retryAfterSec } : {}),
-      ...(gate && !gate.confirmed ? { departureConfirmed: false } : {}) }) };
+    return working('identify');
   }
-
-  // Un sondeo nunca inicia trabajo nuevo. Si el trabajo terminó con un hex, se ha seguido arriba; si no, devuelve el
-  // último fallo directo. Una consulta normal posterior sí puede reintentar una identificación temporalmente fallida.
+  // Un sondeo nunca inicia trabajo nuevo. Si el trabajo terminó con un hex, la caché de 60 s ya lo ha devuelto (o se
+  // sigue por hex en la siguiente consulta normal); si no, devuelve el último resultado directo.
   if (!known && pollOnly) {
     const miss = phys && state.directMisses.get(phys);
     const lastIdentity = phys ? hexes.status(phys, nowMs).diagnostic?.result : null;
     const polledResult = lastIdentity === 'no-disponible' ? { state: 'no-disponible' } : miss?.result ?? { state: 'sin-datos' };
-    return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: bodyOf(polledResult,
-      { ...(gate && !gate.confirmed ? { departureConfirmed: false } : {}) }) };
+    return { status: 200, headers: noStore, body: bodyOf(polledResult, pending) };
   }
 
-  // 2) Indicativo exacto (OACI + número, códigos compartidos). El resultado negativo se comparte brevemente para que
-  // refrescar o abrir un código compartido no repita el mismo trabajo mientras se identifica por ruta.
-  if (!result) {
-    const miss = phys && state.directMisses.get(phys);
-    if (miss && nowMs - miss.at < DIRECT_MISS_MS) result = miss.result;
-    else {
-      let directDiagnostic = null;
-      result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd),
-        fetchFn, pauseMs, nowMs, dest, origin, onDiagnostic: d => { directDiagnostic = d; } }) : { state: 'no-aplica' };
-      if (directDiagnostic) {
-        state.radarStats.directLookups += directDiagnostic.lookupsMade;
-        if (directDiagnostic.found) state.radarStats.directFound++;
-        if (directDiagnostic.rateLimited) state.radarStats.rateLimited++;
-        if (phys) state.radarDiagnostics.set(phys, { ...diagnostic(), direct: directDiagnostic,
-          identifiedBy: directDiagnostic.found ? 'direct' : null });
-      }
-      if (phys && result.state === 'sin-datos') state.directMisses.set(phys, { at: nowMs, result });
+  // now: reloj de esta ejecución (la de la petición y, al repetirla tras una pausa, esa hora más la pausa).
+  const work = async (now, current) => {
+    let result = null;
+    // 1) Avión ya identificado por su ruta (server/identify.mjs): se sigue por su hex. Una lectura rara no lo invalida.
+    if (known && origin && dest) {
+      const t = await trackByHex({ entry: known, leg, origin, dest, nowMs: now, fetchFn });
+      hexes.observe(phys, t.observation, now);
+      result = t.result ?? { state: 'sin-datos' };
     }
+    // 2) Indicativo exacto (OACI + número, códigos compartidos). El resultado negativo se comparte brevemente para que
+    // refrescar o abrir un código compartido no repita el mismo trabajo mientras se identifica por ruta.
+    let directRateLimited = false;
+    if (!result) {
+      current.phase = 'direct';
+      const miss = phys && state.directMisses.get(phys);
+      if (miss && now - miss.at < DIRECT_MISS_MS) result = miss.result;
+      else {
+        let directDiagnostic = null;
+        result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd),
+          fetchFn, pauseMs, nowMs: now, dest, origin, onDiagnostic: d => { directDiagnostic = d; } }) : { state: 'no-aplica' };
+        if (directDiagnostic) {
+          state.radarStats.directLookups += directDiagnostic.lookupsMade;
+          if (directDiagnostic.found) state.radarStats.directFound++;
+          if (directDiagnostic.rateLimited) { state.radarStats.rateLimited++; directRateLimited = true; }
+          if (phys) state.radarDiagnostics.set(phys, { ...diagnostic(), direct: directDiagnostic,
+            identifiedBy: directDiagnostic.found ? 'direct' : null });
+        }
+        if (phys && result.state === 'sin-datos') state.directMisses.set(phys, { at: now, result });
+      }
+    }
+    // 429 en los indicativos exactos: no se sabe si el avión emite con su indicativo. No es «sin datos» ni motivo para
+    // identificar por ruta: el trabajo se repite cuando acabe la pausa (ver más abajo).
+    if (directRateLimited) return { result: { state: 'sin-datos' }, directRateLimited: true };
+    // 3) No aparece con su indicativo: identificación por ruta EN
+    //    SEGUNDO PLANO, arrancada dentro de este trabajo para que no quede ningún hueco en el que un sondeo lea «sin
+    //    datos». Si adsb.lol entra en pausa durante la identificación, queda interrumpida y se reanuda sola (temporal).
+    const notFound = result.state === 'sin-datos';
+    const registryBefore = phys ? hexes.status(phys, now) : null;
+    if (notFound && gate?.mode === 'identify' && phys && !hexes.get(phys) && origin && dest
+      && !registryBefore.cooldownRemainingMs && canIdentify(leg, state.legs, { origin, dest, nowMs: now, ...gateOpts(leg) })) {
+      current.phase = 'identify';
+      state.radarStats.identificationStarted++;
+      const base = state.radarDiagnostics.get(phys) ?? diagnostic();
+      hexes.resolve(phys, async ({ queueWaitMs, sinceMs = queueWaitMs }) => {
+        let idDiagnostic = null;
+        // sinceMs: tiempo real desde esta petición (cola y, si se reanuda tras una pausa, la pausa).
+        // En una reanudación, el vuelo tal como lo publica Aena AHORA (puede haber aterrizado o cambiado de estado).
+        const currentLeg = state.legs.find(l => l.al === leg.al && l.n === leg.n && l.d === leg.d && l.o === leg.o && l.a === leg.a) ?? leg;
+        const identified = await identifyByZone({ leg: currentLeg, legs: state.legs, origin, dest, nowMs: now + sinceMs, fetchFn, coordsOf: coords,
+          onDiagnostic: d => { idDiagnostic = { ...d, queueWaitMs, sinceMs }; } });
+        const full = { ...base, identification: idDiagnostic, identifiedBy: idDiagnostic?.identifiedBy ?? null };
+        state.radarDiagnostics.set(phys, full);
+        if (identified.state === 'identificado') state.radarStats.identificationSucceeded++;
+        else if (identified.state === 'ambiguo') state.radarStats.identificationAmbiguous++;
+        else if (identified.state === 'no-disponible') state.radarStats.identificationUnavailable++;
+        if (identified.rateLimited) state.radarStats.rateLimited++;
+        return { ...identified, diagnostic: idDiagnostic };
+      }, now).catch(() => {});
+      if (hexes.busy(phys)) return { result, identifying: true };
+    } else if (result.state === 'sin-datos' && gate?.mode === 'identify' && leg) {
+      const reason = registryBefore?.cooldownRemainingMs ? 'cooldown-identidad' : !origin || !dest ? 'sin-coordenadas' : !leg.ac ? 'sin-tipo'
+        : !operatorIcaos(leg, state.legs ?? []).length ? 'sin-operadora' : 'no-identificable';
+      state.radarStats.blockedReasons[reason] = (state.radarStats.blockedReasons[reason] ?? 0) + 1;
+      if (phys) state.radarDiagnostics.set(phys, { ...diagnostic(), identificationBlockedReason: reason });
+    }
+    // Resultado definitivo de esta consulta: se guarda 60 s (por ruta y por vuelo físico) para sondeos y códigos compartidos.
+    const payload = { ...result, ...pending, checked: new Date(now).toISOString() };
+    if (state.radar.size > 500) state.radar.clear();
+    state.radar.set(pathname, { at: now, body: JSON.stringify(payload) });
+    if (phys) state.radar.set(phys, { at: now, body: JSON.stringify(payload) });
+    return { result, identifying: false };
+  };
+  if (!phys) {
+    const out = await work(nowMs, { phase: 'direct' });
+    return out.directRateLimited ? respond({ result: { state: 'no-disponible' } }) : respond(out);
   }
-  // 3) No aparece con su indicativo: identificación por ruta EN SEGUNDO PLANO (nunca se espera aquí). La respuesta
-  //    «identificando» no se guarda en caché, para que la app pueda volver a preguntar en unos segundos.
-  let identifying = false;
-  const registryBefore = phys ? hexes.status(phys, nowMs) : null;
-  if (result.state === 'sin-datos' && gate?.mode === 'identify' && phys && !hexes.get(phys) && origin && dest
-    && !registryBefore.cooldownRemainingMs && canIdentify(leg, state.legs, { origin, dest, nowMs, ...gateOpts(leg) })) {
-    state.radarStats.identificationStarted++;
-    const base = state.radarDiagnostics.get(phys) ?? diagnostic();
-    hexes.resolve(phys, async ({ queueWaitMs, sinceMs = queueWaitMs }) => {
-      let idDiagnostic = null;
-      // sinceMs: tiempo real desde esta petición (cola y, si se reanuda tras una pausa, la pausa).
-      // En una reanudación, el vuelo tal como lo publica Aena AHORA (puede haber aterrizado o cambiado de estado).
-      const current = state.legs.find(l => l.al === leg.al && l.n === leg.n && l.d === leg.d && l.o === leg.o && l.a === leg.a) ?? leg;
-      const identified = await identifyByZone({ leg: current, legs: state.legs, origin, dest, nowMs: nowMs + sinceMs, fetchFn, coordsOf: coords,
-        onDiagnostic: d => { idDiagnostic = { ...d, queueWaitMs, sinceMs }; } });
-      const full = { ...base, identification: idDiagnostic, identifiedBy: idDiagnostic?.identifiedBy ?? null };
-      state.radarDiagnostics.set(phys, full);
-      if (identified.state === 'identificado') state.radarStats.identificationSucceeded++;
-      else if (identified.state === 'ambiguo') state.radarStats.identificationAmbiguous++;
-      else if (identified.state === 'no-disponible') state.radarStats.identificationUnavailable++;
-      if (identified.rateLimited) state.radarStats.rateLimited++;
-      return { ...identified, diagnostic: idDiagnostic };
-    }, nowMs).catch(() => {});
-    identifying = hexes.busy(phys);
-  } else if (result.state === 'sin-datos' && gate?.mode === 'identify' && leg) {
-    const reason = registryBefore?.cooldownRemainingMs ? 'cooldown-identidad' : !origin || !dest ? 'sin-coordenadas' : !leg.ac ? 'sin-tipo'
-      : !operatorIcaos(leg, state.legs ?? []).length ? 'sin-operadora' : 'no-identificable';
-    state.radarStats.blockedReasons[reason] = (state.radarStats.blockedReasons[reason] ?? 0) + 1;
-    if (phys) state.radarDiagnostics.set(phys, { ...diagnostic(), identificationBlockedReason: reason });
-  }
-  // departureConfirmed: si Aena aún no confirma la salida, la app no muestra «Sin señal ADS-B» (puede seguir en tierra).
-  const extra = { ...(identifying ? { identifying: true } : {}), ...(gate && !gate.confirmed ? { departureConfirmed: false } : {}) };
-  const payload = { ...result, ...extra, checked: new Date(nowMs).toISOString() };
-  const plainBody = JSON.stringify(payload);
-  const responseBody = debug ? JSON.stringify({ ...payload, diagnostic: diagnostic() }) : plainBody;
-  if (identifying) return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: responseBody };
-  if (state.radar.size > 500) state.radar.clear();
-  state.radar.set(pathname, { at: nowMs, body: plainBody });
-  if (phys) state.radar.set(phys, { at: nowMs, body: plainBody });
-  return { status: 200, headers: HEADERS, body: responseBody };
+  // El trabajo vive en el servidor aunque el navegador que lo pidió abandone (timeout de 20 s): se guarda por phys y
+  // termina solo. Si los indicativos exactos reciben un 429, queda en pausa ('pausa', temporal) y el propio servidor
+  // lo repite al acabar la pausa de adsb.lol, como mucho DIRECT_RESUMES veces; los sondeos solo leen su estado.
+  const firstReal = Date.now();
+  const entry = { phase: known ? 'hex' : 'direct', resumeAt: null, resumes: 0, promise: null };
+  const finish = out => { if (jobs.get(phys) === entry) jobs.delete(phys); return out; };
+  const exec = async () => {
+    const out = await work(nowMs + (Date.now() - firstReal), entry);
+    if (!out.directRateLimited) return finish(out);
+    if (entry.resumes >= DIRECT_RESUMES) return finish({ result: { state: 'no-disponible' } });
+    entry.resumes++;
+    entry.phase = 'pausa';
+    entry.resumeAt = Math.max(adsbLimiter.blockedUntil + 2000, Date.now() + 5000);
+    setTimeout(() => {
+      entry.phase = 'direct';
+      entry.resumeAt = null;
+      entry.promise = exec().catch(() => finish({ result: { state: 'sin-datos' } }));
+    }, entry.resumeAt - Date.now());
+    return { result: { state: 'sin-datos' }, paused: true };
+  };
+  entry.promise = exec().catch(() => finish({ result: { state: 'sin-datos' } }));
+  jobs.set(phys, entry);
+  const out = await entry.promise;
+  return out.paused ? working('pausa', entry.resumeAt) : respond(out);
 }
 
 async function main() {

@@ -225,6 +225,38 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       expect(radarCalls()).toHaveLength(4);
     } finally { vi.useRealTimers(); }
   });
+  it('FR4586: la primera consulta agota los 20 s del navegador; el sondeo ve «fase direct» y el panel llega sin recargar', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    try {
+      const { d, leg } = ryanairLeg();
+      const flying = { ...leg, sta: 'FLY' }; // Aena ya dice «Volando», como en el caso real
+      const answers = [{ state: 'sin-datos', identifying: true, phase: 'direct' }, { state: 'sin-datos', identifying: true, phase: 'identify' },
+        { ...RADAR_FLYING, callsign: 'RYR12EV', hex: '4d221d', match: 'ruta' }];
+      const base = network({ flights: { FR4586: { name: 'Ryanair', updated: new Date().toISOString(), legs: [flying] } }, openMeteo: () => tooMany });
+      let radarN = 0;
+      const stub = vi.fn((url, o) => {
+        const u = String(url);
+        if (!u.startsWith(`${LIVE_BASE}/radar/`)) return base(url, o);
+        calls.push(u);
+        if (radarN++ === 0) return Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')); // abandono a los 20 s
+        return Promise.resolve(json(answers[Math.min(radarN - 2, answers.length - 1)]));
+      });
+      await openApp(stub);
+      await search('FR4586', d);
+      await until(() => radarCalls().length === 1 && $('#result .flight'), 'ficha y primera consulta (sin respuesta)');
+      expect(shell()).toEqual(SHELL_OK);
+      await advance(20000);
+      expect(radarCalls()).toHaveLength(2); // la app no se rinde por el timeout
+      expect(radarCalls()[1].endsWith('?poll=1')).toBe(true);
+      expect($('.radar.muted')?.textContent).toBe('Localizando el avión en el radar…'); // también con Aena en «Volando»
+      await advance(40000);
+      await until(() => $('.telemetry'), 'panel ADS-B');
+      expect($('.telemetry').textContent).toContain('RYR12EV');
+      expect(shell()).toEqual(SHELL_OK);
+      await advance(600000);
+      expect(radarCalls()).toHaveLength(4); // resultado definitivo: se acabó
+    } finally { vi.useRealTimers(); }
+  });
   it('identificación ambigua o fallida: el servidor deja de decir «identificando» y la app deja de preguntar', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {
