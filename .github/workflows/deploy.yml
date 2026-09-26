@@ -69,6 +69,12 @@ jobs:
           if git diff --cached --quiet; then echo "Sin cambios en el histórico"; exit 0; fi
           git -c user.name="turbi-bot" -c user.email="turbi-bot@users.noreply.github.com" \
             commit --quiet -m "Puntualidad $(date -u +%Y-%m-%dT%H:%MZ)"
+          # Render escribe en la misma rama (caché de AeroDataBox, carpeta adb/): si la rama avanzó mientras tanto, se
+          # rebasa este commit (carpetas distintas: no hay conflicto de contenido) y se vuelve a intentar.
+          for i in 1 2 3; do
+            git push --quiet origin data && exit 0
+            git -c user.name="turbi-bot" -c user.email="turbi-bot@users.noreply.github.com" pull --quiet --rebase origin data
+          done
           git push --quiet origin data
       - uses: actions/upload-pages-artifact@v3
         with:

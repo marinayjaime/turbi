@@ -13,12 +13,15 @@ import { canIdentify, identifyByZone, trackByHex, createHexRegistry, operatorIca
 import { adsbHealth, adsbLimiter } from './adsb.mjs';
 import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
 import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js';
+import { createAerodatabox } from './aerodatabox.mjs';
+import { createGithubStore } from './adb-store.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
 const EVERY_MS = 10 * 60000;
 const SAFE_PATH = /^\/flights\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 const RADAR_PATH = /^\/radar\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
+const SCHEDULE_PATH = /^\/schedule\/([A-Z0-9]{2,3}\d{1,4}[A-Z]?)\/(\d{4}-\d{2}-\d{2})\.json$/;
 const RADAR_CACHE_MS = 60000;
 const DIRECT_MISS_MS = 2 * 60000;
 const DIRECT_RESUMES = 3; // repeticiones automáticas de los indicativos exactos tras un 429
@@ -68,12 +71,23 @@ export function handle(state, path) {
   if (path === '/health') {
     return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' },
       body: JSON.stringify({ updated: state.updated, runs: state.runs, audit: state.audit, lastError: state.lastError, flights: state.flights.size,
-        adsb: adsbHealth(), radar: state.radarStats ?? freshRadarStats() }) }; // estado de adsb.lol sin consultarlo
+        adsb: adsbHealth(), radar: state.radarStats ?? freshRadarStats(), // estado de adsb.lol sin consultarlo
+        aerodatabox: state.adb?.health() ?? { configured: false } }) };
   }
   const m = path.match(SAFE_PATH);
   const body = m && state.flights.get(`${m[1]}/${m[2]}.json`);
   if (!body) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
   return { status: 200, headers: HEADERS, body: JSON.stringify(body) };
+}
+
+// Horario de AeroDataBox para un vuelo + fecha (solo cuando Aena no lo publica; lo decide la app). Nunca expone la clave:
+// la respuesta es la entrada normalizada. «unavailable» no se guarda en caché del navegador.
+export async function scheduleResponse(state, path) {
+  const m = path.match(SCHEDULE_PATH);
+  if (!m) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
+  const out = state.adb ? await state.adb.lookup(m[1], m[2]).catch(() => ({ status: 'unavailable', reason: 'error' }))
+    : { status: 'unavailable', reason: 'sin-configurar' };
+  return { status: 200, headers: { ...HEADERS, 'Cache-Control': out.status === 'unavailable' ? 'no-store' : 'public, max-age=300' }, body: JSON.stringify(out) };
 }
 
 // Radar de un vuelo (solo si Aena dice que ha salido y no informa de la llegada). Respuesta guardada 60 s.
@@ -278,6 +292,10 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
 
 async function main() {
   const state = createState();
+  // AeroDataBox: la clave y el token de la caché solo existen como variables de entorno de Render.
+  const adbKey = process.env.AERODATABOX_API_KEY, cacheToken = process.env.GITHUB_CACHE_TOKEN;
+  if (adbKey && cacheToken) state.adb = createAerodatabox({ key: adbKey, store: createGithubStore({ token: cacheToken }), log: m => console.log(m) });
+  else console.log('AeroDataBox desactivado: faltan AERODATABOX_API_KEY o GITHUB_CACHE_TOKEN');
   const airports = JSON.parse(readFileSync(new URL('../data/airports.json', import.meta.url), 'utf8'));
   // Tras un reinicio: las salidas ya despegadas que publicó GitHub (Aena las retira a las 2 h).
   try {
@@ -309,6 +327,10 @@ async function main() {
     const url = new URL(req.url, 'http://x');
     const path = url.pathname;
     const send = r => { res.writeHead(r.status, r.headers); res.end(r.body); };
+    if (path.startsWith('/schedule/')) {
+      scheduleResponse(state, path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"status":"unavailable","reason":"error"}' }));
+      return;
+    }
     if (path.startsWith('/radar/')) {
       radarResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
       return;

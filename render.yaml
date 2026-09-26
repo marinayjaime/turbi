@@ -11,3 +11,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Secretos: solo en el panel de Render (sync: false → nunca en el repositorio).
+      - key: AERODATABOX_API_KEY   # RapidAPI, plan gratuito de AeroDataBox
+        sync: false
+      - key: GITHUB_CACHE_TOKEN    # token de grano fino: solo «Contents: read and write» de este repositorio (caché adb/ en la rama data)
+        sync: false
