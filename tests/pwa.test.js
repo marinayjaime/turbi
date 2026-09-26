@@ -22,7 +22,7 @@ describe('actualización de la PWA', () => {
   });
 
   it('mantiene una copia sin conexión nueva y ofrece un aviso de actualización', () => {
-    expect(sw).toContain("const CACHE = 'turbi-v59'");
+    expect(sw).toContain("const CACHE = 'turbi-v60'");
     expect(sw).toContain("e.data?.type === 'SKIP_WAITING'");
     expect(html).toContain('id="update-notice"');
     expect(html).toContain('id="update-app"');

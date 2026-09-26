@@ -190,7 +190,8 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       expect($('.telemetry').textContent).toContain('Volando'); // con el radar volando, «Volando» va en el panel
       expect(shell()).toEqual(SHELL_OK); // actualizar .flight no se lleva la sección Turbulencias
       expect(area()).toContain(FORECAST_UNAVAILABLE);
-      expect(radarCalls().slice(1).every(u => u.endsWith('?poll=1'))).toBe(true);
+      expect(radarCalls().slice(1).every(u => new URL(u).searchParams.get('poll') === '1')).toBe(true);
+      expect(new Set(radarCalls().map(u => new URL(u).searchParams.get('leg'))).size).toBe(1); // siempre el mismo vuelo físico
       await advance(300000);
       expect(radarCalls()).toHaveLength(5); // resultado definitivo: no hay más consultas
     } finally { vi.useRealTimers(); }
@@ -247,7 +248,7 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       expect(shell()).toEqual(SHELL_OK);
       await advance(20000);
       expect(radarCalls()).toHaveLength(2); // la app no se rinde por el timeout
-      expect(radarCalls()[1].endsWith('?poll=1')).toBe(true);
+      expect(new URL(radarCalls()[1]).searchParams.get('poll')).toBe('1');
       expect($('.radar.muted')?.textContent).toBe('Localizando el avión en el radar…'); // también con Aena en «Volando»
       await advance(40000);
       await until(() => $('.telemetry'), 'panel ADS-B');
@@ -511,5 +512,36 @@ describe('un número con varios vuelos físicos la misma fecha (CA898: GRU → M
     await search('IB1668', tomorrow);
     await until(() => $('#result .flight'), 'ficha');
     expect($('.leg-switch')).toBeNull();
+  });
+});
+
+describe('radar por tramo: la app pide exactamente el vuelo físico que muestra', () => {
+  it('6) cada tramo sondea con su ?leg; cambiar de tramo cancela el sondeo del anterior', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: Date.parse('2026-09-26T12:00:00Z'), shouldAdvanceTime: true });
+    try {
+      const D = '2026-09-26';
+      // Los dos en curso a la vez: la app no elige sola; el usuario escoge por ruta.
+      const inbound = { d: D, o: 'GRU', a: 'MAD', sd: null, sa: '15:10', ea: `${D}T15:10`, st: 'FLY', sta: 'FLY', ac: '789' };
+      const outbound = { d: D, o: 'MAD', a: 'PEK', sd: '13:30', ed: `${D}T13:35`, st: 'BOR', std: 'BOR', ac: '789' };
+      await openApp(network({ flights: { CA898: { name: 'Air China', updated: new Date().toISOString(), legs: [inbound, outbound] } },
+        radar: { state: 'sin-datos', identifying: true }, openMeteo: () => tooMany }));
+      await search('CA898', D);
+      await until(() => $('.leg-switch') && !$('#result .flight'), 'pantalla para escoger tramo');
+      expect(radarCalls()).toHaveLength(0); // sin tramo escogido, ni una consulta al radar
+      [...document.querySelectorAll('.leg-option')].find(b => b.textContent.includes('GRU → MAD')).click();
+      await until(() => radarCalls().length === 1, 'radar del tramo GRU → MAD');
+      const legOf = u => new URL(u).searchParams.get('leg');
+      const kIn = legOf(radarCalls()[0]);
+      expect(kIn).toBe('2026-09-26|GRU|MAD|L15:10');
+      await advance(40000);
+      expect(radarCalls().every(u => legOf(u) === kIn)).toBe(true); // los sondeos conservan el mismo tramo
+      const before = radarCalls().length;
+      [...document.querySelectorAll('.leg-option')].find(b => b.textContent.includes('MAD → PEK')).click();
+      await until(() => radarCalls().length > before, 'radar del tramo MAD → PEK');
+      await advance(300000);
+      const after = radarCalls().slice(before);
+      expect(after.every(u => legOf(u) === '2026-09-26|MAD|PEK|13:30')).toBe(true); // ni un sondeo más del tramo anterior
+      expect(after.length).toBeGreaterThan(1);
+    } finally { vi.useRealTimers(); }
   });
 });

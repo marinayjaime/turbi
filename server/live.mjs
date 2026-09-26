@@ -92,27 +92,40 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
   const tzOf = iata => airports[iata]?.[4] ?? undefined;
   const gateOpts = l => ({ originTz: tzOf(l.o), destTz: tzOf(l.a), plannedMin: plannedMinFor(coords(l.o), coords(l.a)) });
-  const leg = (state.legs ?? []).find(l => l.al === m[1] && l.n === m[2] && needsRadar(l, nowMs, gateOpts(l)));
+  // Qué vuelo físico: un mismo número puede tener varios tramos la misma fecha (p. ej. GRU → MAD y MAD → PEK).
+  //  - ?leg=<physicalFlightKey>: la app dice cuál muestra. Se busca SOLO entre los tramos de este número y, si no
+  //    existe o no necesita radar, no se escoge otro: no aplica.
+  //  - Sin ?leg (clientes antiguos): solo si hay un único vuelo físico que necesite radar; con varios, no se escoge.
+  const legParam = requestUrl.searchParams.get('leg');
+  const sameNumber = (state.legs ?? []).filter(l => l.al === m[1] && l.n === m[2]);
+  let leg = null, legReason = null;
+  if (legParam !== null) {
+    const chosen = legParam.length <= 64 ? sameNumber.find(l => physicalFlightKey(l) === legParam) : null;
+    if (!chosen) legReason = 'tramo-desconocido';
+    else if (!needsRadar(chosen, nowMs, gateOpts(chosen))) legReason = 'tramo-sin-radar';
+    else leg = chosen;
+  } else {
+    const eligible = new Map();
+    for (const l of sameNumber) if (needsRadar(l, nowMs, gateOpts(l)) && !eligible.has(physicalFlightKey(l))) eligible.set(physicalFlightKey(l), l);
+    if (eligible.size === 1) [leg] = eligible.values();
+    else if (eligible.size > 1) legReason = 'varios-tramos-sin-elegir';
+  }
   const gate = leg ? radarGateFor(leg, nowMs, gateOpts(leg)) : null;
   // Mismo avión (códigos compartidos): una sola consulta por vuelo físico cada 60 s.
   const phys = leg && `phys|${physicalFlightKey(leg)}`;
   const hexes = state.hexes ??= createHexRegistry();
   if (phys) hexes.touch(phys); // alguien mira este vuelo: si su identificación se interrumpe, merece reanudarse
-  const diagnostic = extra => ({ gate: gate?.mode ?? 'none', gateReason: gate?.reason ?? 'vuelo-no-encontrado',
+  const diagnostic = extra => ({ gate: gate?.mode ?? 'none', gateReason: gate?.reason ?? legReason ?? 'vuelo-no-encontrado',
+    ...(legParam !== null ? { leg: legParam } : {}),
     departureConfirmed: gate?.confirmed ?? false, ...(phys ? state.radarDiagnostics.get(phys) : null), ...extra,
     ...(phys ? { registry: hexes.status(phys, nowMs) } : {}) });
   const bodyOf = (payload, extra = {}) => JSON.stringify({ ...payload, ...extra,
     checked: new Date(nowMs).toISOString(), ...(debug ? { diagnostic: diagnostic() } : {}) });
 
-  const cached = state.radar.get(pathname);
-  if (cached && nowMs - cached.at < RADAR_CACHE_MS) {
-    state.radarStats.cacheHits++;
-    return { status: 200, headers: HEADERS, body: debug ? bodyOf(JSON.parse(cached.body)) : cached.body };
-  }
+  // Caché de 60 s SOLO por vuelo físico (la compartan sus códigos compartidos; nunca dos tramos del mismo número).
   const shared = phys && state.radar.get(phys);
   if (shared && nowMs - shared.at < RADAR_CACHE_MS) {
     state.radarStats.cacheHits++;
-    state.radar.set(pathname, shared);
     return { status: 200, headers: HEADERS, body: debug ? bodyOf(JSON.parse(shared.body)) : shared.body };
   }
   const origin = leg && coords(leg.o), dest = leg && coords(leg.a);
@@ -230,7 +243,6 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
     // Resultado definitivo de esta consulta: se guarda 60 s (por ruta y por vuelo físico) para sondeos y códigos compartidos.
     const payload = { ...result, ...pending, checked: new Date(now).toISOString() };
     if (state.radar.size > 500) state.radar.clear();
-    state.radar.set(pathname, { at: now, body: JSON.stringify(payload) });
     if (phys) state.radar.set(phys, { at: now, body: JSON.stringify(payload) });
     return { result, identifying: false };
   };

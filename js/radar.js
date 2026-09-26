@@ -69,9 +69,11 @@ export function radarNote(radar) {
     ? 'El radar indica que el avión sigue en el aire: la previsión de turbulencias no se muestra con el vuelo en curso.' : null;
 }
 
-export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE, { poll = false, debug = false } = {}) {
+// leg: physicalFlightKey() del tramo que muestra la ficha (un número puede tener varios tramos la misma fecha); el
+// servidor consulta exclusivamente ese vuelo físico.
+export async function fetchRadar(al, n, fetchFn = fetch, liveBase = LIVE_BASE, { poll = false, debug = false, leg = null } = {}) {
   try {
-    const query = new URLSearchParams({ ...(poll ? { poll: '1' } : {}), ...(debug ? { debug: '1' } : {}) }).toString();
+    const query = new URLSearchParams({ ...(leg ? { leg } : {}), ...(poll ? { poll: '1' } : {}), ...(debug ? { debug: '1' } : {}) }).toString();
     const res = await fetchFn(`${liveBase}/radar/${al}/${n}.json${query ? `?${query}` : ''}`, { signal: AbortSignal.timeout(20000) });
     return res.ok ? await res.json() : null;
   } catch {

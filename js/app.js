@@ -258,7 +258,8 @@ async function showRadar(q, flight, stale, ctx = null) {
   stopRadarPoll();
   const cardVisible = () => Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]');
   const poll = pollRadar({
-    fetchOnce: ({ poll: isPoll }) => fetchRadar(q.schedule.al, q.schedule.n, undefined, undefined, { poll: isPoll }),
+    // El mismo vuelo físico en la primera consulta y en todos los sondeos.
+    fetchOnce: ({ poll: isPoll }) => fetchRadar(q.schedule.al, q.schedule.n, undefined, undefined, { poll: isPoll, leg: physicalFlightKey(q.leg) }),
     onResult: radar => paintRadar(q, flight, radar, ctx, stale),
     isActive: () => !stale() && cardVisible(),
   });
