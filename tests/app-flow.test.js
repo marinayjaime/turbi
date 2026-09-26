@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { LIVE_BASE } from '../js/config.js';
 import { formatLocal } from '../js/time.js';
 import { FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
+import { normalizeFlights } from '../server/aerodatabox.mjs';
 
 const MAD = 'Europe/Madrid';
 const dayOf = ms => new Intl.DateTimeFormat('en-CA', { timeZone: MAD }).format(ms);
@@ -35,7 +36,7 @@ const RADAR_FLYING = { state: 'volando', callsign: 'IBE715', altM: 10668, altFt:
   seenS: 2, remainingKm: 300, source: 'adsb.lol' };
 
 let calls;
-function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null }) {
+function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null, schedule = {} }) {
   const radars = Array.isArray(radar) ? [...radar] : null;
   calls = [];
   return vi.fn(async url => {
@@ -49,6 +50,8 @@ function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null
     const cs = url.match(/^https:\/\/api\.adsbdb\.com\/v0\/callsign\/(\w+)$/);
     if (cs) return typeof adsbdb[cs[1]] === 'function' ? adsbdb[cs[1]]() : adsbdb[cs[1]] ? json(adsbdb[cs[1]]) : notFound;
     if (url === 'data/flights/_aliases.json') return aliases ? json(aliases) : notFound;
+    const sch = url.match(new RegExp(`^${LIVE_BASE}/schedule/(\\w+)/([\\d-]+)\\.json$`));
+    if (sch) { const r = schedule[`${sch[1]}|${sch[2]}`]; return typeof r === 'function' ? r() : r ? json(r) : notFound; }
     if (url.startsWith('https://api.open-meteo.com/v1/forecast')) return openMeteo(url);
     if (url.startsWith('https://api.open-meteo.com/data/')) return json({ last_run_initialisation_time: Math.floor(Date.now() / 1000) - 6 * 3600 });
     return notFound; // Render, puntualidad, METAR, nombres de lugares: sin datos en la prueba
@@ -1019,5 +1022,133 @@ describe('controles de la ficha: nunca en pantallas de elección', () => {
     document.querySelectorAll('.leg-option')[1].click();
     await until(() => $('#result .flight'), 'ficha del tramo escogido');
     expect(controls()).toEqual({ refresh: true, changeTime: false });
+  });
+});
+
+// AeroDataBox (vía Render): Aena → alias → AeroDataBox → ADSBDB → manual. Respuestas con la forma real (normalizada).
+describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
+  const tomorrow = () => dayOf(Date.now() + 24 * 3600000);
+  // UO625 HND 10:00 (+09:00) → HKG 13:05 (+08:00): 4 h 05 min.
+  const raw = (d, over = {}) => ({ number: 'UO 625', callSign: 'HKE625', status: 'Expected', codeshareStatus: 'IsOperator', airline: { name: 'Hong Kong Express' },
+    departure: { airport: { iata: 'HND' }, scheduledTime: { utc: `${d} 01:00Z`, local: `${d} 10:00+09:00` } },
+    arrival: { airport: { iata: 'HKG' }, scheduledTime: { utc: `${d} 05:05Z`, local: `${d} 13:05+08:00` } }, aircraft: { model: 'Airbus A321neo' }, ...over });
+  const found = (d, legs) => ({ status: 'found', source: 'aerodatabox', number: 'UO625', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights(legs) });
+  const schCalls = () => calls.filter(u => u.includes('/schedule/'));
+  const adsbCalls = () => calls.filter(u => u.includes('adsbdb.com'));
+
+  it('UO625: sin pedir la hora, pronóstico con aeropuertos y horario del día; ni ADSBDB ni radar', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: found(d, [raw(d)]) }, adsbdb: { UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG') }, openMeteo: openMeteoOk }));
+    await search('UO625', d);
+    await until(() => $('#result .route')?.textContent === 'HND → HKG', 'pronóstico');
+    await networkIdle();
+    expect($('#time-field').hidden).toBe(true); // no se pidió la hora
+    expect($('#result .sub').textContent).toContain('UO625 · Hong Kong Express · horario según AeroDataBox · 10:00–13:05');
+    expect($('.source-info').textContent).toMatch(/^Horario según AeroDataBox \(consultado hace un momento\): Programado · salida 10:00 · llegada 13:05 · Airbus A321neo$/);
+    expect(calls).toContain('data/flights/UO/625.json'); // Aena primero
+    expect(schCalls()).toEqual([`${LIVE_BASE}/schedule/UO625/${d}.json`]);
+    expect(adsbCalls()).toEqual([]);
+    expect(calls.some(u => u.includes('/radar/') || u.includes('adsb.lol'))).toBe(false);
+    expect(document.getElementById('change-time').hidden).toBe(true);
+    // Open-Meteo con las coordenadas de data/airports.json y la duración real (4 h 05 min).
+    const meteo = calls.find(u => u.startsWith('https://api.open-meteo.com/v1/forecast'));
+    expect(Number(new URL(meteo).searchParams.get('latitude').split(',')[0])).toBeCloseTo(AIRPORTS_DB.HND[2], 3);
+    // «Actualizar» y una segunda búsqueda: ni Render ni ADSBDB (caché del navegador).
+    $('#refresh').click();
+    await networkIdle();
+    await search('UO625', d);
+    await until(() => $('#result .route')?.textContent === 'HND → HKG', 'segunda búsqueda');
+    await networkIdle();
+    expect(schCalls()).toHaveLength(1);
+    expect(adsbCalls()).toEqual([]);
+  });
+
+  it('varios tramos el mismo día → selector; al escoger, ese tramo', async () => {
+    const d = tomorrow();
+    const second = raw(d, { departure: { airport: { iata: 'HKG' }, scheduledTime: { utc: `${d} 07:00Z`, local: `${d} 15:00+08:00` } },
+      arrival: { airport: { iata: 'BKK' }, scheduledTime: { utc: `${d} 10:00Z`, local: `${d} 17:00+07:00` } } });
+    await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: found(d, [raw(d), second]) }, openMeteo: openMeteoOk }));
+    await search('UO625', d);
+    await until(() => $('.leg-switch'), 'selector');
+    const options = [...document.querySelectorAll('.leg-option')];
+    expect(options.map(o => o.querySelector('small').textContent)).toEqual(['HND → HKG · sale 10:00 · Programado', 'HKG → BKK · sale 15:00 · Programado']);
+    options[1].click();
+    await until(() => $('#result .route')?.textContent === 'HKG → BKK', 'pronóstico del tramo escogido');
+    expect(schCalls()).toHaveLength(1);
+  });
+
+  it('AeroDataBox sin el vuelo (not_found) → ruta de ADSBDB y hora manual, como antes', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: { status: 'not_found', legs: [], fetchedAt: new Date().toISOString() } },
+      adsbdb: { UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG') }, openMeteo: openMeteoOk }));
+    await search('UO625', d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    expect($('#notice').textContent).toContain('Ruta según ADSBDB (no oficial)');
+    expect(adsbCalls()).toHaveLength(1);
+  });
+
+  it('Render sin AeroDataBox (no disponible / error) → ADSBDB sin romper el flujo', async () => {
+    const d = tomorrow();
+    for (const r of [{ status: 'unavailable', reason: 'http-429' }, () => ({ ok: false, status: 500, headers: { get: () => null }, json: async () => ({}) })]) {
+      await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: r }, adsbdb: { UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG') }, openMeteo: openMeteoOk }));
+      await search('UO625', d);
+      await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+      expect($('#f-origin').value).toBe('HND');
+    }
+  });
+
+  it('aeropuerto de AeroDataBox que no está en data/airports.json → entrada manual', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: found(d, [raw(d, { arrival: { airport: { iata: 'ZZZ' }, scheduledTime: { utc: `${d} 05:05Z`, local: `${d} 13:05+08:00` } } })]) }, openMeteo: openMeteoOk }));
+    await search('UO625', d);
+    await until(() => !$('#manual').hidden, 'entrada manual');
+    expect($('#notice').textContent).toBe('AeroDataBox da la ruta HND → ZZZ, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.');
+  });
+
+  it('vuelo de Aena → nunca se consulta AeroDataBox', async () => {
+    const d = tomorrow();
+    const leg = { d, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${d}T17:55`, sa: '19:25', ea: `${d}T19:25`, st: 'SCH', ac: 'A21N' };
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany }));
+    await search('IB1668', d);
+    await until(() => $('#result .flight'), 'ficha de Aena');
+    await networkIdle();
+    expect(schCalls()).toEqual([]);
+  });
+
+  it('alias de Aena: primero la confirmación (sin AeroDataBox); «No es este vuelo» → AeroDataBox', async () => {
+    const d = tomorrow();
+    const ALIASES = { updated: new Date().toISOString(), aliases: { BA8462: { al: 'CJ', n: '8462', name: 'BA CITYFLYER', routes: [['IBZ', 'LCY']], lastEvidence: d } } };
+    const cj = { CJ8462: { name: 'BA CITYFLYER', updated: new Date().toISOString(), legs: [{ d, o: 'IBZ', a: 'LCY', sd: '10:45', ed: `${d}T10:45`, st: 'SCH', std: 'SCH', ac: 'E190', op: 'CJ' }] } };
+    const ba = raw(d, { number: 'BA 8462', airline: { name: 'British Airways' }, departure: { airport: { iata: 'IBZ' }, scheduledTime: { utc: `${d} 08:45Z`, local: `${d} 10:45+02:00` } },
+      arrival: { airport: { iata: 'LCY' }, scheduledTime: { utc: `${d} 11:20Z`, local: `${d} 12:20+01:00` } }, aircraft: { model: 'Embraer 190' } });
+    await openApp(network({ flights: cj, aliases: ALIASES, schedule: { [`BA8462|${d}`]: found(d, [ba]) },
+      adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'confirmación');
+    expect(schCalls()).toEqual([]);
+    $('[data-alias="reject"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await until(() => $('#result .route')?.textContent === 'IBZ → LCY', 'pronóstico por AeroDataBox');
+    expect($('#result .sub').textContent).toContain('BA8462 · British Airways · horario según AeroDataBox');
+    expect(schCalls()).toHaveLength(1);
+    expect(adsbCalls()).toHaveLength(1); // solo el veto del alias
+  });
+
+  it('tras «No es este vuelo», escoger un tramo de AeroDataBox no vuelve a ofrecer el alias', async () => {
+    const d = tomorrow();
+    const ALIASES = { updated: new Date().toISOString(), aliases: { BA8462: { al: 'CJ', n: '8462', name: 'BA CITYFLYER', routes: [['IBZ', 'LCY']], lastEvidence: d } } };
+    const cj = { CJ8462: { name: 'BA CITYFLYER', updated: new Date().toISOString(), legs: [{ d, o: 'IBZ', a: 'LCY', sd: '10:45', ed: `${d}T10:45`, st: 'SCH', std: 'SCH', ac: 'E190', op: 'CJ' }] } };
+    const leg = (o, a, h, oOff, aOff) => raw(d, { number: 'BA 8462', airline: { name: 'British Airways' },
+      departure: { airport: { iata: o }, scheduledTime: { utc: `${d} ${String(h - oOff).padStart(2, '0')}:00Z`, local: `${d} ${String(h).padStart(2, '0')}:00+0${oOff}:00` } },
+      arrival: { airport: { iata: a }, scheduledTime: { utc: `${d} ${String(h - oOff + 2).padStart(2, '0')}:00Z`, local: `${d} ${String(h - oOff + 2 + aOff).padStart(2, '0')}:00+0${aOff}:00` } } });
+    await openApp(network({ flights: cj, aliases: ALIASES, schedule: { [`BA8462|${d}`]: found(d, [leg('IBZ', 'LCY', 10, 2, 1), leg('LCY', 'EDI', 15, 1, 1)]) },
+      adsbdb: { BA8462: adsbdbRoute('BA8462', 'BAW8462', 'British Airways', 'IBZ', 'LCY') }, openMeteo: openMeteoOk }));
+    await search('BA8462', d);
+    await until(() => $('.alias-offer'), 'confirmación');
+    $('[data-alias="reject"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await until(() => $('.leg-switch'), 'selector de tramos de AeroDataBox');
+    document.querySelectorAll('.leg-option')[1].click();
+    await until(() => $('#result .route')?.textContent === 'LCY → EDI', 'tramo escogido');
+    expect($('.alias-offer')).toBeNull();
+    expect(schCalls()).toHaveLength(1);
   });
 });

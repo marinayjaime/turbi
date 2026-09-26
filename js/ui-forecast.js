@@ -206,7 +206,7 @@ function headHtml(view, nowMs) {
   const punct = view.punctuality ? `<section id="punctuality">${punctualityHtml(view.punctuality)}</section>` : '';
   const head = view.flight
     ? `${flightCardHtml(view.flight)}${punct}<h3 class="section">Turbulencias</h3>`
-    : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>`;
+    : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>${view.sourceInfo ? `<p class="note-small source-info">${esc(view.sourceInfo)}</p>` : ''}`;
   return `
     <div class="summary">
       ${view.saved ? offlineBanner(view.saved, nowMs) : ''}

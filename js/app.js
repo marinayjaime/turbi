@@ -2,8 +2,9 @@ import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
-import { lookupFlightResult, canonicalRoute, ADSBDB_NOTE } from './flight.js';
+import { lookupFlightResult, canonicalRoute } from './flight.js';
 import { aliasOffer, adsbdbVetoes } from './aliases.js';
+import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote } from './adb.js';
 import { fetchSchedule, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
@@ -95,6 +96,8 @@ function setManual(on, message = '') {
 // Número comercial que Aena publica con otro número (BA8462 → CJ8462): se ofrece y el usuario confirma.
 // { input: número normalizado, date, offer, adsb (resultado de ADSBDB, para seguir si no lo confirma), accepted }
 let aliasState = null;
+// «No es este vuelo» para un número y fecha: no se vuelve a ofrecer al seguir (p. ej. al escoger un tramo de AeroDataBox).
+let aliasDeclined = null;
 
 // Ruta que ADSBDB da para el número escrito (no oficial): se enseña con origen y destino editables antes de consultar.
 // { input: número normalizado, flight: ruta con aeropuertos canónicos }
@@ -228,14 +231,19 @@ async function resolveFlight() {
     }
     const schedule = await fetchSchedule(number);
     if (schedule) return scheduleQuery(schedule, date);
-    // Aena no publica el número: ¿lo asocia a otro que sí publica? ADSBDB se consulta a la vez (una sola vez) y sirve
-    // de veto si da otra ruta y de alternativa si el usuario no confirma el candidato.
-    const [adsb, offer] = await Promise.all([lookupFlightResult(number), aliasOffer(number, date)]);
-    if (offer && !adsbdbVetoes(adsb, offer.legs)) {
-      aliasState = { input, date, offer, adsb, accepted: false };
-      return { kind: 'alias', number: input, date, offer };
+    // Aena no publica el número: ¿lo asocia a otro que sí publica? Con candidato, ADSBDB (una sola vez) sirve de veto
+    // si da otra ruta y de alternativa si el usuario no lo confirma.
+    const declined = aliasDeclined?.input === input && aliasDeclined.date === date;
+    const offer = declined ? null : await aliasOffer(number, date);
+    let adsb = null;
+    if (offer) {
+      adsb = await lookupFlightResult(number);
+      if (!adsbdbVetoes(adsb, offer.legs)) {
+        aliasState = { input, date, offer, adsb, accepted: false };
+        return { kind: 'alias', number: input, date, offer };
+      }
     }
-    return adsbFallback(number, adsb);
+    return afterAena(number, date, adsb);
   }
 
   if (!time) throw new Error('Indica la hora de salida.');
@@ -243,7 +251,47 @@ async function resolveFlight() {
   return { number: '', airline: '', origin, destination, date, time };
 }
 
-// Sin horario de Aena: la ruta de ADSBDB para revisar o, si no hay ruta utilizable, la entrada manual.
+// Sin horario de Aena (ni alias confirmado): AeroDataBox (vía Render) → ADSBDB → entrada manual.
+// adsb: resultado de ADSBDB si ya se consultó (para el veto del alias); si no, solo se consulta si AeroDataBox no da el vuelo.
+async function afterAena(number, date, adsb = null) {
+  const adb = await fetchAdb(number, date);
+  if (adb.status === 'found' && adb.legs?.length) {
+    const q = await adbQuery(number, date, adb);
+    if (q !== undefined) return q;
+  }
+  return adsbFallback(number, adsb ?? await lookupFlightResult(number));
+}
+
+// Vuelo encontrado por AeroDataBox: sus aeropuertos y horarios del día (ADSBDB no manda sobre una instancia fechada).
+// Varios tramos → el selector de siempre. undefined = no se puede usar (sigue ADSBDB).
+async function adbQuery(number, date, adb) {
+  const db = await airports();
+  const legs = adb.legs;
+  const physical = legs.map(adbPhysical);
+  const keys = physical.map(physicalFlightKey);
+  const input = numberKey(number);
+  const picked = legPick?.number === input && legPick.date === date ? legs[keys.indexOf(legPick.key)] : null;
+  if (!picked && legs.length > 1) {
+    const city = iata => findAirport(db, iata)?.city ?? iata;
+    const options = legs.map((l, i) => ({ key: keys[i], route: `${city(l.o)} → ${city(l.a)}`, iata: `${l.o} → ${l.a}`,
+      when: `sale ${l.dep.sched.local.slice(11, 16)}`, status: adbStatusText(l.status) ?? '' }));
+    return { kind: 'choose', number: input, date, options, legKey: null };
+  }
+  const leg = picked ?? legs[0];
+  const origin = findAirport(db, leg.o), destination = findAirport(db, leg.a);
+  if (!origin || !destination) {
+    setManual(true, `AeroDataBox da la ruta ${leg.o} → ${leg.a}, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.`);
+    return null;
+  }
+  const { dep, durationMin } = adbTimes(leg);
+  return {
+    number: leg.number || input, airline: leg.airline ?? '', origin, destination,
+    date: dep.local.slice(0, 10), time: dep.local.slice(11, 16), depUtcMs: dep.utc, durationMin,
+    routeSource: 'aerodatabox', adbInfo: adbInfo(adb, leg),
+  };
+}
+
+// Sin horario: la ruta de ADSBDB para revisar o, si no hay ruta utilizable, la entrada manual.
 async function adsbFallback(number, adsb) {
   const flight = adsb.flight && canonicalRoute(adsb.flight, await airports());
   if (!flight) {
@@ -269,7 +317,8 @@ async function typedAirports() {
 
 // Salida en UTC y duración real (si el horario trae la llegada).
 function flightTimes(q, oTz, dTz) {
-  if (q.kind !== 'schedule') return { departureMs: localToUtcMs(q.date, q.time, oTz), durationMin: null };
+  // Sin horario de Aena: la hora escrita o la de AeroDataBox (con su duración real, si la da).
+  if (q.kind !== 'schedule') return { departureMs: q.depUtcMs ?? localToUtcMs(q.date, q.time, oTz), durationMin: q.durationMin ?? null };
   const dep = legDeparture(q.leg), arr = legArrival(q.leg);
   const arrMs = arr ? localToUtcMs(arr.date, arr.time, dTz) : null;
   if (!dep) {
@@ -485,7 +534,7 @@ async function run(q) {
     const { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
     const punct = flight ? punctualityState(q) : null;
-    els.changeTime.hidden = Boolean(flight);
+    els.changeTime.hidden = Boolean(flight) || q.routeSource === 'aerodatabox'; // con AeroDataBox la hora no es del usuario
     const rel = reliability(departureMs, Date.now());
     // Aviso de llegada: solo con la llegada que muestra la ficha (Aena o estimación Turbi visible), nunca con la
     // duración interna de buildProfile. En la consulta manual (sin horario de Aena) se usa la del perfil, como antes.
@@ -603,14 +652,15 @@ async function runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, sta
   const { segments, verdict } = analyze(route, weather);
   const view = {
     title: `${q.origin.iata} → ${q.destination.iata}`,
-    subtitle: [q.number, q.airline, q.routeSource === 'adsbdb' ? ADSBDB_NOTE : ''].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
+    subtitle: [q.number, q.airline, sourceNote(q)].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
     times: `${formatLocal(route.departureMs, oTz)}–${formatLocal(route.arrivalMs, dTz)}`,
     verdict, reliability: rel, durationMin: route.durationMin, segments, flight,
   };
   currentView = null;
   const paint = () => {
     renderResult(els.result, view);
-    els.result.insertAdjacentHTML('afterbegin', '<p class="note-small">Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.</p>');
+    els.result.insertAdjacentHTML('afterbegin', '<p class="note-small">Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.</p>'
+      + (q.adbInfo ? `<p class="note-small">${esc(q.adbInfo)}</p>` : ''));
   };
   paint();
   show('result');
@@ -711,10 +761,16 @@ els.result.addEventListener('click', async e => {
     submit();
     return;
   }
-  const { adsb } = aliasState;
+  const { adsb, date, input } = aliasState;
   aliasState = null;
-  show('query');
-  try { await adsbFallback(els.number.value.trim(), adsb); } catch (err) { showError(err.message); }
+  aliasDeclined = { input, date };
+  show('loading');
+  try {
+    const q = await afterAena(els.number.value.trim(), date, adsb);
+    if (q?.kind === 'choose') showLegChooser(q);
+    else if (q) run(q);
+    else show('query');
+  } catch (err) { showError(err.message); }
 });
 
 // Timeline: al tocar un tramo se muestra su detalle (otra vez para ocultarlo).
@@ -734,6 +790,7 @@ els.toggleManual.addEventListener('click', () => setManual(Boolean(adsbRoute) ||
 // Otro número: la ruta de ADSBDB del anterior deja de valer.
 els.number.addEventListener('input', () => {
   if (aliasState && aliasState.input !== numberKey(els.number.value)) aliasState = null;
+  if (aliasDeclined && aliasDeclined.input !== numberKey(els.number.value)) aliasDeclined = null;
   if (!adsbRoute || adsbRoute.input === numberKey(els.number.value)) return;
   setManual(false);
 });
