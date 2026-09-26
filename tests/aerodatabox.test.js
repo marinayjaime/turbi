@@ -1,6 +1,6 @@
 // AeroDataBox en Render (server/aerodatabox.mjs): consumo mínimo de unidades, caché persistente, errores y cupo.
 import { describe, it, expect, vi } from 'vitest';
-import { createAerodatabox, normalizeFlights, refreshDue, entryPath, RESERVE_UNITS } from '../server/aerodatabox.mjs';
+import { createAerodatabox, normalizeFlights, refreshDue, entryPath, RESERVE_UNITS, DAY_CAP, madridDay } from '../server/aerodatabox.mjs';
 import { createMemoryStore, createGithubStore } from '../server/adb-store.mjs';
 import { createState, scheduleResponse, handle } from '../server/live.mjs';
 
@@ -275,16 +275,6 @@ describe('cupo: reserva final de 20 unidades y reparto diario', () => {
     expect(await make({ fetchFn, store }).adb.lookup('TO3416', '2026-09-26')).toMatchObject({ status: 'unavailable', reason: 'reserva' });
     expect(fetchFn).not.toHaveBeenCalled();
   });
-  it('tope diario: lo restante repartido entre los días hasta la renovación', async () => {
-    // (60 − 20) / 2 = 20 llamadas en 10 días → 2 al día.
-    const store = createMemoryStore({ 'adb/_quota.json': { limit: 400, remaining: 60, resetAt: T0 + 10 * 86400000 } });
-    const fetchFn = vi.fn(async () => ok(TO3416, 58));
-    const { adb } = make({ fetchFn, store });
-    await adb.lookup('AA1', '2026-09-26'); await adb.lookup('AA2', '2026-09-26');
-    expect(await adb.lookup('AA3', '2026-09-26')).toMatchObject({ status: 'unavailable', reason: 'tope-diario' });
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(store.files.get('adb/_quota.json').data).toMatchObject({ remaining: 58, dayCalls: 2, dayBudget: 2 });
-  });
   it('health: estado y cupo sin la clave', async () => {
     const { adb } = make({ fetchFn: api(ok(TO3416, 300)) });
     await adb.lookup('TO3416', '2026-09-26');
@@ -372,18 +362,82 @@ describe('persistencia en producción (GitHub simulado): la consulta queda guard
     expect(gh.read('adb/2026-09-26/LH400.json')).toMatchObject({ status: 'found' });
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
-  it('tope diario: se calcula con la primera respuesta real (nunca null el primer día)', async () => {
-    const { adb, gh } = setup(api(ok(TO3416, 300))); // 300 restantes, renovación en 20 días
-    await adb.lookup('LH400', '2026-09-27');
-    expect(adb.health().quota.dayBudget).toBe(Math.floor((300 - RESERVE_UNITS) / 2 / 20)); // 7
-    expect(gh.read('adb/_quota.json')).toMatchObject({ remaining: 300, dayCalls: 1, dayBudget: 7 });
+});
+
+describe('tope de ráfaga: 15 llamadas reales al día (día de Europe/Madrid) + reserva de 20', () => {
+  const nums = n => Array.from({ length: n }, (_, i) => `ZZ${100 + i}`);
+  const many = (remaining = 300) => vi.fn(async () => ok(TO3416, remaining));
+  it('llamadas 1–15 permitidas; la 16 bloqueada (con 300 unidades: el saldo ya no se reparte)', async () => {
+    expect(DAY_CAP).toBe(15);
+    const fetchFn = many();
+    const { adb } = make({ fetchFn });
+    for (const n of nums(15)) expect((await adb.lookup(n, '2026-09-27')).status).toBe('found');
+    expect(await adb.lookup('ZZ999', '2026-09-27')).toMatchObject({ status: 'unavailable', reason: 'tope-diario' });
+    expect(fetchFn).toHaveBeenCalledTimes(15);
+    expect(adb.health().quota).toMatchObject({ dayCalls: 15, dayCap: 15, remaining: 300 });
+    expect(adb.health().quota.dayBudget).toBeUndefined();
   });
-  it('contador guardado sin tope ese mismo día (como el de producción): se calcula antes de la siguiente llamada', async () => {
-    const gh = fakeGithub();
-    gh.write('adb/_quota.json', { limit: 400, remaining: 306, resetAt: T0 + 30 * 86400000, day: '2026-09-26', dayCalls: 2, dayBudget: null });
-    const { adb } = setup(api(ok(TO3416, 304)), gh);
-    await adb.lookup('LH400', '2026-09-27');
-    expect(adb.health().quota.dayBudget).toBe(Math.floor((306 - RESERVE_UNITS) / 2 / 30)); // 4
+  it('lo que sale de caché (memoria o rama data) no suma', async () => {
+    const store = createMemoryStore();
+    const fetchFn = many();
+    const { adb } = make({ fetchFn, store }); // (fecha del vuelo simulado: sin refresco operativo en juego)
+    await adb.lookup('ZZ1', '2026-09-26');
+    for (let i = 0; i < 5; i++) await adb.lookup('ZZ1', '2026-09-26'); // memoria
+    await make({ fetchFn, store }).adb.lookup('ZZ1', '2026-09-26'); // rama data (otro proceso)
+    expect(adb.health()).toMatchObject({ memoryHits: 5, quota: { dayCalls: 1 } });
+    expect(store.files.get('adb/_quota.json').data).toMatchObject({ dayCalls: 1, dayCap: 15 });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+  it('los reintentos reales y las negativas cuentan', async () => {
+    const fetchFn = api(err(503), ok(TO3416), empty());
+    const { adb } = make({ fetchFn });
+    await adb.lookup('ZZ1', '2026-09-27'); // 503 + reintento
+    await adb.lookup('ZZ2', '2026-09-27'); // 204
+    expect(adb.health().quota.dayCalls).toBe(3);
+  });
+  it('reiniciar Render conserva el contador (adb/_quota.json)', async () => {
+    const store = createMemoryStore();
+    const fetchFn = many();
+    const first = make({ fetchFn, store }).adb;
+    for (const n of nums(10)) await first.lookup(n, '2026-09-27');
+    expect(store.files.get('adb/_quota.json').data).toMatchObject({ day: '2026-09-26', dayCalls: 10 });
+    const restarted = make({ fetchFn, store }).adb;
+    for (const n of nums(15).slice(10)) expect((await restarted.lookup(n, '2026-09-27')).status).toBe('found');
+    expect(await restarted.lookup('ZZ999', '2026-09-27')).toMatchObject({ status: 'unavailable', reason: 'tope-diario' });
+    expect(fetchFn).toHaveBeenCalledTimes(15);
+  });
+  it('cambio de día en Europe/Madrid (no en UTC): a las 00:00 de Madrid se reinicia', async () => {
+    // 26/09 23:59 en Madrid (CEST, UTC+2) = 21:59Z; 00:00 del 27 en Madrid = 22:00Z, aún 26 en UTC.
+    const store = createMemoryStore({ 'adb/_quota.json': { limit: 400, remaining: 300, resetAt: Date.parse('2026-10-26T13:15Z'), day: '2026-09-26', dayCalls: 15 } });
+    const fetchFn = many();
+    const { adb, setNow } = make({ fetchFn, store, nowMs: Date.parse('2026-09-26T21:59Z') });
+    expect(await adb.lookup('ZZ1', '2026-09-27')).toMatchObject({ status: 'unavailable', reason: 'tope-diario' });
+    setNow(Date.parse('2026-09-26T22:00Z'));
+    expect((await adb.lookup('ZZ2', '2026-09-27')).status).toBe('found');
+    expect(adb.health().quota).toMatchObject({ day: '2026-09-27', dayCalls: 1 });
+  });
+  it('horario de invierno y de verano: la medianoche de Madrid cambia de hora UTC', () => {
+    // 25/10/2026 fin del horario de verano: la medianoche del 26 en Madrid es 23:00Z (CET, UTC+1).
+    expect(madridDay(Date.parse('2026-10-25T22:30Z'))).toBe('2026-10-25'); // con +2 fijo sería ya el 26
+    expect(madridDay(Date.parse('2026-10-25T23:00Z'))).toBe('2026-10-26');
+    // 28/03/2027 inicio del horario de verano: la medianoche del 29 en Madrid es 22:00Z (CEST, UTC+2).
+    expect(madridDay(Date.parse('2027-03-28T21:59Z'))).toBe('2027-03-28');
+    expect(madridDay(Date.parse('2027-03-28T22:30Z'))).toBe('2027-03-29'); // con +1 fijo seguiría siendo el 28
+  });
+  it('cambio de día justo tras el cambio a horario de invierno: el contador se reinicia a las 23:00Z', async () => {
+    const store = createMemoryStore({ 'adb/_quota.json': { limit: 400, remaining: 300, resetAt: Date.parse('2026-11-20T00:00Z'), day: '2026-10-25', dayCalls: 15 } });
+    const { adb, setNow } = make({ fetchFn: many(), store, nowMs: Date.parse('2026-10-25T22:30Z') });
+    expect(await adb.lookup('ZZ1', '2026-10-26')).toMatchObject({ status: 'unavailable', reason: 'tope-diario' });
+    setNow(Date.parse('2026-10-25T23:00Z'));
+    expect((await adb.lookup('ZZ1', '2026-10-26')).status).toBe('found');
+  });
+  it('la reserva de 20 manda aunque el tope diario permita más', async () => {
+    const store = createMemoryStore({ 'adb/_quota.json': { limit: 400, remaining: 23, resetAt: Date.parse('2026-10-26T13:15Z'), day: '2026-09-26', dayCalls: 0 } });
+    const fetchFn = vi.fn(async () => ok(TO3416, 21));
+    const { adb } = make({ fetchFn, store });
+    expect((await adb.lookup('ZZ1', '2026-09-27')).status).toBe('found'); // 23 − 2 = 21 ≥ 20
+    expect(await adb.lookup('ZZ2', '2026-09-27')).toMatchObject({ status: 'unavailable', reason: 'reserva' }); // 21 − 2 < 20
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });
 

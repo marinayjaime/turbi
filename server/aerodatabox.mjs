@@ -9,7 +9,8 @@
 //   - 5xx o tiempo agotado → un solo reintento a los 2–3 s; si falla, «no disponible» (no se guarda: la app sigue con
 //     ADSBDB). 401/403/429 nunca se reintentan: AeroDataBox queda en pausa (401/403 hasta reiniciar con otra clave;
 //     429 hasta la renovación del cupo).
-//   - Reserva final de 20 unidades y reparto diario del cupo restante hasta la renovación.
+//   - Reserva final de 20 unidades y un tope de ráfaga de 15 llamadas reales al día (día de Europe/Madrid): frena fallos o
+//     abusos, no reparte el cupo del mes.
 //   - Fechas de −2 a +60 días. Si la caché persistente no responde, no se consulta (no se puede garantizar el máximo).
 
 import { refreshDue, REFRESH_WINDOW_MS } from '../js/adb.js';
@@ -20,6 +21,7 @@ const API = 'https://aerodatabox.p.rapidapi.com';
 const HOST = 'aerodatabox.p.rapidapi.com';
 export const UNITS_PER_CALL = 2;
 export const RESERVE_UNITS = 20;
+export const DAY_CAP = 15; // llamadas reales a AeroDataBox por día (base, refrescos, negativas y reintentos)
 export const RANGE_DAYS = { past: 2, future: 60 };
 const RETRY_DELAY_MS = 2500;
 const TIMEOUT_MS = 12000;
@@ -67,6 +69,9 @@ function estimatedMin(from, to) {
 }
 
 const today = nowMs => new Date(nowMs).toISOString().slice(0, 10);
+// Día del contador en la zona IANA Europe/Madrid (con su horario de verano e invierno), nunca con un desfase fijo.
+const MADRID_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' });
+export const madridDay = nowMs => MADRID_DAY.format(nowMs);
 const dayDiff = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY_MS);
 
 // store (adb-store.mjs): get(path) → { data, sha } | null (lanza si falla); update(path, next) → lo guardado (con la
@@ -76,7 +81,7 @@ const dayDiff = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(
 export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Date.now(), sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {} }) {
   const memory = new Map(); // número|fecha → entrada (encontrado o negativa)
   const inflight = new Map();
-  const quota = { limit: null, remaining: null, resetAt: null, day: null, dayCalls: 0, dayBudget: Infinity, loaded: false };
+  const quota = { limit: null, remaining: null, resetAt: null, day: null, dayCalls: 0, loaded: false };
   const stats = { lookups: 0, memoryHits: 0, storeHits: 0, calls: 0, retries: 0, found: 0, notFound: 0, refreshes: 0, unavailable: {}, disabledUntil: null, disabledReason: null,
     saved: 0, saveFailures: 0 };
   let writes = Promise.resolve(); // cola: una escritura en GitHub cada vez
@@ -90,13 +95,13 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     if (quota.loaded) return;
     const q = await store.get(QUOTA_PATH).catch(() => null);
     if (q?.data) Object.assign(quota, { limit: q.data.limit ?? null, remaining: q.data.remaining ?? null, resetAt: q.data.resetAt ?? null,
-      day: q.data.day ?? null, dayCalls: q.data.dayCalls ?? 0, dayBudget: q.data.dayBudget ?? Infinity });
+      day: q.data.day ?? null, dayCalls: q.data.dayCalls ?? 0 });
     quota.loaded = true;
   }
   // Siempre en la cola y después de guardar la consulta del vuelo.
   async function saveQuota() {
     const data = { limit: quota.limit, remaining: quota.remaining, resetAt: quota.resetAt, day: quota.day, dayCalls: quota.dayCalls,
-      dayBudget: Number.isFinite(quota.dayBudget) ? quota.dayBudget : null, updatedAt: new Date(now()).toISOString() };
+      dayCap: DAY_CAP, updatedAt: new Date(now()).toISOString() };
     try { await serial(() => store.update(QUOTA_PATH, () => data)); } catch { /* el contador es orientativo: nunca bloquea una respuesta */ }
   }
   // Guarda una entrada (en la cola). Si ya hay una guardada, manda la guardada, salvo que la nuestra traiga el único
@@ -114,23 +119,15 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     }
   }
 
-  // Cupo: reserva final y reparto diario de lo que queda hasta la renovación.
-  const budgetFor = t => Math.max(1, Math.floor((quota.remaining - RESERVE_UNITS) / UNITS_PER_CALL
-    / (quota.resetAt ? Math.max(1, Math.ceil((quota.resetAt - t) / DAY_MS)) : 30)));
+  // Cupo: reserva final de 20 unidades y tope de ráfaga diario (día de Europe/Madrid, persistido en adb/_quota.json).
   function canCall() {
     const t = now();
     if (stats.disabledUntil && t < stats.disabledUntil) return stats.disabledReason;
     if (quota.resetAt && t >= quota.resetAt) Object.assign(quota, { remaining: quota.limit, resetAt: null });
     if (quota.remaining !== null && quota.remaining - UNITS_PER_CALL < RESERVE_UNITS) return 'reserva';
-    const d = today(t);
-    if (quota.day !== d) {
-      quota.day = d;
-      quota.dayCalls = 0;
-      quota.dayBudget = quota.remaining === null ? Infinity : budgetFor(t);
-    } else if (!Number.isFinite(quota.dayBudget) && quota.remaining !== null) {
-      quota.dayBudget = budgetFor(t); // el cupo se conoció a mitad de día
-    }
-    return quota.dayCalls >= quota.dayBudget ? 'tope-diario' : null;
+    const d = madridDay(t);
+    if (quota.day !== d) Object.assign(quota, { day: d, dayCalls: 0 });
+    return quota.dayCalls >= DAY_CAP ? 'tope-diario' : null;
   }
   function readQuota(res) {
     const num = k => { const v = res.headers?.get?.(k); return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v); };
@@ -138,8 +135,6 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     if (remaining !== null) quota.remaining = remaining;
     if (limit !== null) quota.limit = limit;
     if (reset !== null) quota.resetAt = now() + reset * 1000;
-    // Primera respuesta con el cupo real: el tope del día se calcula ya (nunca se queda sin tope el primer día).
-    if (!Number.isFinite(quota.dayBudget) && quota.remaining !== null) quota.dayBudget = budgetFor(now());
   }
   function disable(reason, untilMs) {
     stats.disabledReason = reason;
@@ -226,8 +221,7 @@ export function createAerodatabox({ key, store, fetchFn = fetch, now = () => Dat
     // Para /health: sin clave ni datos sensibles.
     health() {
       return { configured: Boolean(key), ...stats, quota: { limit: quota.limit, remaining: quota.remaining,
-        resetAt: quota.resetAt ? new Date(quota.resetAt).toISOString() : null, day: quota.day, dayCalls: quota.dayCalls,
-        dayBudget: Number.isFinite(quota.dayBudget) ? quota.dayBudget : null } };
+        resetAt: quota.resetAt ? new Date(quota.resetAt).toISOString() : null, day: quota.day, dayCalls: quota.dayCalls, dayCap: DAY_CAP } };
     },
   };
 }
