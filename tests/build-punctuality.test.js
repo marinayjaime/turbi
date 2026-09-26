@@ -160,3 +160,16 @@ describe('salida sin llegada (falló la descarga de llegadas)', () => {
     expect([...store.values()][0]).toMatchObject({ dd: 15, ad: 6 });
   });
 });
+
+describe('observe: aerolíneas fuera del catálogo de Aena', () => {
+  const ju = over => S({ iataCompania: '', oaciCompania: '', nombreCompania: '', compania: 'ASL', codigosCompania: 'JU,ASL,JU,ASL,ASL,ASL',
+    numVuelo: '571', iataOtro: 'BEG', ...over });
+  it('una fila recuperada (JU571) entra en el histórico como en buildLegs', () => {
+    expect([...obsOf([ju()]).values()]).toMatchObject([{ o: 'PMI', a: 'BEG', f: ['JU571'], dd: 12, op: 'JU' }]);
+  });
+  it('con colisión IATA↔OACI en la descarga no se recupera ni entra en el histórico', () => {
+    const other = S({ iataCompania: '', oaciCompania: '', nombreCompania: '', compania: 'XJU', codigosCompania: 'JU,XJU,JU,XJU,XJU,XJU',
+      numVuelo: '200', iataOtro: 'LIS' });
+    expect([...obsOf([ju(), other]).values()]).toEqual([]);
+  });
+});

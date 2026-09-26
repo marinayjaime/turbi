@@ -12,8 +12,41 @@ const isoDate = ddmmyyyy => {
 const hhmm = t => (clean(t) ? t.slice(0, 5) : null);
 const naiveMin = (date, time) => Date.parse(`${date}T${time}:00Z`) / 60000;
 
-export function normalize({ airport, type, row }) {
-  const al = clean(row.iataCompania);
+// Aena deja vacíos iataCompania, oaciCompania y nombreCompania en aerolíneas que no están en su catálogo (JAL, Air Serbia,
+// Kenya Airways…), pero las nombra en `compania` (OACI) y en codigosCompania: [0] = IATA, [1] = OACI. Solo se recupera
+// el código IATA si Aena lo da de forma explícita y coherente ([1] === compania); si no, la fila se sigue descartando.
+function catalogGap(row) {
+  if (clean(row.iataCompania)) return null;
+  const [iata, icao] = String(row.codigosCompania ?? '').split(',').map(clean);
+  const compania = clean(row.compania);
+  return compania && icao === compania && /^[A-Z0-9]{2}$/.test(iata ?? '') ? { iata, icao } : null;
+}
+
+// Protección de colisiones: en toda la descarga, cada IATA y cada OACI que aparecen (en filas explícitas o recuperables)
+// deben ir siempre con la misma pareja. Si un IATA recuperable va con otro OACI en alguna fila (o su OACI con otro IATA),
+// es ambiguo y esas filas no se recuperan: dos aerolíneas distintas nunca acaban bajo el mismo código.
+// Devuelve el conjunto de parejas «IATA|OACI» que sí se pueden recuperar.
+export function recoverablePairs(entries) {
+  const byIata = new Map(), byIcao = new Map();
+  const add = (iata, icao) => {
+    (byIata.get(iata) ?? byIata.set(iata, new Set()).get(iata)).add(icao);
+    (byIcao.get(icao) ?? byIcao.set(icao, new Set()).get(icao)).add(iata);
+  };
+  const gaps = [];
+  for (const { row } of entries) {
+    const gap = catalogGap(row);
+    if (gap) { gaps.push(gap); add(gap.iata, gap.icao); continue; }
+    const iata = clean(row.iataCompania), icao = clean(row.oaciCompania);
+    if (iata && icao) add(iata, icao);
+  }
+  return new Set(gaps.filter(g => byIata.get(g.iata).size === 1 && byIcao.get(g.icao).size === 1).map(g => `${g.iata}|${g.icao}`));
+}
+
+// recoverable: parejas recuperables de la misma descarga (recoverablePairs); sin él no se recupera ninguna fila.
+export function normalize({ airport, type, row }, recoverable = null) {
+  const found = catalogGap(row);
+  const gap = found && recoverable?.has(`${found.iata}|${found.icao}`) ? found : null;
+  const al = clean(row.iataCompania) ?? gap?.iata ?? null;
   const n = clean(row.numVuelo);
   const date = clean(row.fecha);
   const sched = hhmm(row.horaProgramada);
@@ -23,7 +56,7 @@ export function normalize({ airport, type, row }) {
   return {
     type,
     al,
-    icao: clean(row.oaciCompania),
+    icao: clean(row.oaciCompania) ?? gap?.icao ?? null,
     name: clean(row.nombreCompania),
     n: n.replace(/^0+(?=\d)/, ''),
     here: airport,
@@ -37,6 +70,7 @@ export function normalize({ airport, type, row }) {
     ac: clean(row.tipoAeronave),
     // Primer código de codigosCompania distinto de la propia aerolínea = quien opera (IB1243 → YW, Air Nostrum).
     opx: (() => { const c = clean(String(row.codigosCompania ?? '').split(',')[0]); return c && c !== al ? c : null; })(),
+    ...(gap ? { rec: true } : {}),
   };
 }
 
@@ -58,12 +92,13 @@ function dedupeRows(rows) {
 }
 
 export function buildLegs(entries) {
-  const rows = dedupeRows(entries.map(normalize).filter(Boolean));
+  const recoverable = recoverablePairs(entries);
+  const rows = dedupeRows(entries.map(e => normalize(e, recoverable)).filter(Boolean));
   const legs = rows.filter(r => r.type === 'S').map(r => ({
     al: r.al, icao: r.icao, name: r.name, n: r.n,
     d: r.date, o: r.here, a: r.other, sd: r.sched, ed: r.est,
     sa: null, ea: null, td: r.term, ta: null, g: r.gate, st: r.st, std: r.st, sta: null, ac: r.ac,
-    ...(r.alt ? { edAlt: r.alt } : {}), opx: r.opx,
+    ...(r.alt ? { edAlt: r.alt } : {}), opx: r.opx, ...(r.rec ? { rec: true } : {}),
   }));
 
   const key = (al, n, o, a) => `${al}|${n}|${o}|${a}`;
@@ -97,7 +132,7 @@ export function buildLegs(entries) {
         al: r.al, icao: r.icao, name: r.name, n: r.n,
         d: r.date, o: r.other, a: r.here, sd: null, ed: null,
         sa: r.sched, ea: r.est, td: null, ta: r.term, g: null, st: r.st, std: null, sta: r.st, ac: r.ac,
-        ...(r.alt ? { eaAlt: r.alt } : {}), opx: r.opx,
+        ...(r.alt ? { eaAlt: r.alt } : {}), opx: r.opx, ...(r.rec ? { rec: true } : {}),
       });
     }
   }
@@ -106,6 +141,8 @@ export function buildLegs(entries) {
 
 // op = aerolínea que opera el vuelo físico, solo si es segura: la indica Aena (codigosCompania) o no hay códigos
 // compartidos. Si varios números comparten vuelo y ninguno lo indica, no se pone (no se adivina).
+// Las filas recuperadas del hueco de catálogo (rec) no cuentan para «un solo número»: así la operadora de los vuelos
+// que ya se publicaban no cambia, y un número recuperado solo tiene operadora si Aena la indica o si va solo.
 function assignOperators(legs) {
   const groups = new Map();
   for (const l of legs) {
@@ -114,9 +151,12 @@ function assignOperators(legs) {
   }
   for (const g of groups.values()) {
     const explicit = [...new Set(g.map(l => l.opx).filter(Boolean))];
-    const op = explicit.length === 1 ? explicit[0] : explicit.length ? null : g.length === 1 ? g[0].al : null;
+    const known = g.filter(l => !l.rec);
+    const single = known.length === 1 ? known[0] : g.length === 1 ? g[0] : null;
     for (const l of g) {
+      const op = explicit.length === 1 ? explicit[0] : explicit.length ? null : single && (l === single || !l.rec) ? single.al : null;
       delete l.opx;
+      delete l.rec;
       if (op) l.op = op;
     }
   }
@@ -199,8 +239,9 @@ export function auditLegs(entries, legs) {
   let checked = 0;
   const mismatches = [];
   const published = new Map();
+  const recoverable = recoverablePairs(entries);
   for (const e of entries) {
-    const r = normalize(e);
+    const r = normalize(e, recoverable);
     if (!r || !r.est) continue;
     (published.get(rowKey(r)) ?? published.set(rowKey(r), new Set()).get(rowKey(r))).add(r.est);
     const leg = r.type === 'S'

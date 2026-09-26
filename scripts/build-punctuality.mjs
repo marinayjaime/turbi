@@ -1,7 +1,7 @@
 // Histórico de puntualidad: observaciones finales de Aena → registros en la rama «data» → agregados por vuelo.
 // Diseño: docs/superpowers/specs/2026-09-24-turbi-punctuality-design.md
 import { mkdir, readdir, readFile, writeFile, rm, access } from 'node:fs/promises';
-import { normalize } from './aena.mjs';
+import { normalize, recoverablePairs } from './aena.mjs';
 import {
   delayMinutes, stats, lastFlights, withinDays, slotOf, dowOf, pack, unpack,
 } from '../js/punctuality.js';
@@ -38,8 +38,9 @@ export function observe(entries, legs) {
     return o;
   };
 
+  const recoverable = recoverablePairs(entries); // las mismas filas recuperadas que buildLegs
   for (const e of entries) {
-    const r = normalize(e);
+    const r = normalize(e, recoverable);
     if (!r) continue;
     const flight = `${r.al}${r.n}`;
     if (r.type === 'S') {

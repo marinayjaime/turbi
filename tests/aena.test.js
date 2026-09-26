@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildLegs, mergeLegs, shardLegs, patchFailed } from '../scripts/aena.mjs';
+import { buildLegs, mergeLegs, shardLegs, patchFailed, auditLegs } from '../scripts/aena.mjs';
 
 const row = over => ({
   iataCompania: 'IB', oaciCompania: 'IBE', nombreCompania: 'Iberia', numVuelo: '1668',
@@ -198,5 +198,94 @@ describe('aerolínea que opera el vuelo (para la foto real)', () => {
       dep({ iataCompania: 'VY', numVuelo: '5554', codigosCompania: 'VY,VLG,VY,VLG,VLG,VLG' }),
     ]);
     expect(legs.map(l => l.op)).toEqual(['YW', 'YW']);
+  });
+});
+
+// Filas reales de Aena (26/09/2026) de aerolíneas fuera de su catálogo: iataCompania, oaciCompania y nombreCompania
+// vacíos; la aerolínea solo aparece en `compania` (OACI) y en codigosCompania ([0] IATA, [1] OACI).
+describe('aerolíneas fuera del catálogo de Aena (iataCompania vacía)', () => {
+  const gap = over => ({ iataCompania: '', oaciCompania: '', nombreCompania: '', ...over });
+  const ju571 = gap({ compania: 'ASL', codigosCompania: 'JU,ASL,JU,ASL,ASL,ASL', numVuelo: '571', iataOtro: 'BEG', tipoAeronave: 'BCS3' });
+
+  it('JU571 MAD → BEG: se recupera con el IATA y el OACI explícitos de Aena, sin inventar el nombre', () => {
+    const legs = buildLegs([{ airport: 'MAD', type: 'S', row: row(ju571) }]);
+    expect(legs).toHaveLength(1);
+    expect(legs[0]).toMatchObject({ al: 'JU', icao: 'ASL', name: null, n: '571', o: 'MAD', a: 'BEG', op: 'JU' });
+    expect(legs[0]).not.toHaveProperty('rec');
+    const { files, airlines } = shardLegs(legs);
+    expect(Object.keys(files)).toEqual(['JU/571.json']);
+    expect(airlines).toEqual({ ASL: 'JU' }); // «ASL571» también lleva al vuelo
+  });
+  it('también en llegadas (el tramo de vuelta JU570 BEG → MAD)', () => {
+    const legs = buildLegs([{ airport: 'MAD', type: 'L', row: row({ ...ju571, numVuelo: '570', estado: 'IBK' }) }]);
+    expect(legs[0]).toMatchObject({ al: 'JU', icao: 'ASL', n: '570', o: 'BEG', a: 'MAD', sta: 'IBK' });
+  });
+  it('sin datos explícitos y coherentes se sigue descartando (no se deduce nada)', () => {
+    const cases = [
+      gap({ compania: 'FRO', codigosCompania: 'FRO,FRO,,EH,EH,FRO' }), // [0] no es un código IATA
+      gap({ compania: 'GSM', codigosCompania: 'GSM,GSM,GSM,GSM,GSM,GSM' }),
+      gap({ compania: 'ASL', codigosCompania: 'JU,XXX,JU,ASL,ASL,ASL' }), // [1] no coincide con compania
+      gap({ compania: '', codigosCompania: 'JU,ASL,JU,ASL,ASL,ASL' }),
+      gap({ compania: 'ASL', codigosCompania: '' }),
+      gap({ compania: 'null', codigosCompania: 'null' }),
+    ];
+    for (const r of cases) expect(buildLegs([dep(r)]), JSON.stringify(r)).toEqual([]);
+  });
+  it('código compartido recuperado: la operadora del vuelo que ya se publicaba no cambia y al recuperado no se le asigna', () => {
+    const legs = buildLegs([
+      dep({ iataCompania: 'IB', numVuelo: '731', codigosCompania: 'IB,IBE,IB,IBE,IBE,IBE' }),
+      dep(gap({ compania: 'JAL', codigosCompania: 'JL,JAL,JL,JAL,JAL,JAL', numVuelo: '7839' })),
+    ]);
+    expect(legs.map(l => [l.al, l.op])).toEqual([['IB', 'IB'], ['JL', undefined]]);
+  });
+  it('código compartido recuperado cuando Aena sí dice quién opera: lo hereda como los demás', () => {
+    const legs = buildLegs([
+      dep({ iataCompania: 'IB', numVuelo: '1243', codigosCompania: 'YW,ANE,IB,IBE,ANE,IBE' }),
+      dep(gap({ compania: 'JAL', codigosCompania: 'JL,JAL,JL,JAL,JAL,JAL', numVuelo: '9429' })),
+    ]);
+    expect(legs.map(l => [l.al, l.op])).toEqual([['IB', 'YW'], ['JL', 'YW']]);
+  });
+  it('colisión con una fila explícita: ese IATA con otro OACI en la descarga → no se recupera', () => {
+    const legs = buildLegs([
+      dep({ iataCompania: 'JU', oaciCompania: 'XJU', nombreCompania: 'Otra JU', numVuelo: '100', codigosCompania: 'JU,XJU,JU,XJU,XJU,XJU' }),
+      { airport: 'MAD', type: 'S', row: row(ju571) },
+    ]);
+    expect(legs.map(l => `${l.al}${l.n} ${l.icao}`)).toEqual(['JU100 XJU']); // la explícita sigue; la recuperable no
+  });
+  it('colisión con una fila explícita por el OACI: ese OACI con otro IATA → no se recupera', () => {
+    const legs = buildLegs([
+      dep({ iataCompania: 'J9', oaciCompania: 'ASL', nombreCompania: 'Otra', numVuelo: '100', codigosCompania: 'J9,ASL,J9,ASL,ASL,ASL' }),
+      { airport: 'MAD', type: 'S', row: row(ju571) },
+    ]);
+    expect(legs.map(l => `${l.al}${l.n}`)).toEqual(['J9100']);
+  });
+  it('colisión entre dos filas recuperables: mismo IATA con OACI distintos → ninguna se recupera', () => {
+    const legs = buildLegs([
+      { airport: 'MAD', type: 'S', row: row(ju571) },
+      dep(gap({ compania: 'XJU', codigosCompania: 'JU,XJU,JU,XJU,XJU,XJU', numVuelo: '200' })),
+    ]);
+    expect(legs).toEqual([]);
+  });
+  it('sin colisión: varias filas de la misma pareja (JU/ASL) y otras aerolíneas explícitas → se recuperan', () => {
+    const legs = buildLegs([
+      { airport: 'MAD', type: 'S', row: row(ju571) },
+      { airport: 'MAD', type: 'L', row: row({ ...ju571, numVuelo: '570' }) },
+      dep({ iataCompania: 'IB', numVuelo: '731', oaciCompania: 'IBE' }),
+    ]);
+    expect(legs.map(l => `${l.al}${l.n}`).sort()).toEqual(['IB731', 'JU570', 'JU571']);
+  });
+  it('la auditoría usa las mismas filas recuperadas que buildLegs', () => {
+    const conflict = [{ airport: 'MAD', type: 'S', row: row({ ...ju571, horaEstimada: '12:40:00' }) },
+      dep(gap({ compania: 'XJU', codigosCompania: 'JU,XJU,JU,XJU,XJU,XJU', numVuelo: '200' }))];
+    expect(auditLegs(conflict, buildLegs(conflict)).checked).toBe(0);
+    const ok = [{ airport: 'MAD', type: 'S', row: row({ ...ju571, horaEstimada: '12:40:00' }) }];
+    expect(auditLegs(ok, buildLegs(ok))).toMatchObject({ checked: 1, mismatches: [] });
+  });
+  it('dos recuperados solos en el mismo vuelo físico: nadie dice quién opera → sin operadora', () => {
+    const legs = buildLegs([
+      dep(gap({ compania: 'JAL', codigosCompania: 'JL,JAL,JL,JAL,JAL,JAL', numVuelo: '1' })),
+      dep(gap({ compania: 'ASA', codigosCompania: 'AS,ASA,AS,ASA,ASA,ASA', numVuelo: '2' })),
+    ]);
+    expect(legs.map(l => l.op)).toEqual([undefined, undefined]);
   });
 });
