@@ -12,6 +12,7 @@ import { needsRadar, findOnRadar, radarGateFor, plannedMinFor } from './radar.mj
 import { canIdentify, identifyByZone, trackByHex, createHexRegistry, operatorIcaos } from './identify.mjs';
 import { adsbHealth, adsbLimiter } from './adsb.mjs';
 import { buildLegs, shardLegs, auditLegs, patchFailed, keepDeparted } from '../scripts/aena.mjs';
+import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -94,7 +95,7 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
   const leg = (state.legs ?? []).find(l => l.al === m[1] && l.n === m[2] && needsRadar(l, nowMs, gateOpts(l)));
   const gate = leg ? radarGateFor(leg, nowMs, gateOpts(leg)) : null;
   // Mismo avión (códigos compartidos): una sola consulta por vuelo físico cada 60 s.
-  const phys = leg && `phys|${leg.d}|${leg.o}|${leg.a}|${leg.sd ?? `L${leg.sa}`}`;
+  const phys = leg && `phys|${physicalFlightKey(leg)}`;
   const hexes = state.hexes ??= createHexRegistry();
   if (phys) hexes.touch(phys); // alguien mira este vuelo: si su identificación se interrumpe, merece reanudarse
   const diagnostic = extra => ({ gate: gate?.mode ?? 'none', gateReason: gate?.reason ?? 'vuelo-no-encontrado',
@@ -179,7 +180,7 @@ export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date
       if (miss && now - miss.at < DIRECT_MISS_MS) result = miss.result;
       else {
         let directDiagnostic = null;
-        result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => l.d === leg.d && l.o === leg.o && l.a === leg.a && l.sd === leg.sd),
+        result = leg ? await findOnRadar({ leg, siblings: state.legs.filter(l => samePhysicalFlight(l, leg)),
           fetchFn, pauseMs, nowMs: now, dest, origin, onDiagnostic: d => { directDiagnostic = d; } }) : { state: 'no-aplica' };
         if (directDiagnostic) {
           state.radarStats.directLookups += directDiagnostic.lookupsMade;

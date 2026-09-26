@@ -1,5 +1,6 @@
 // Funciones puras para convertir los datos de Aena Infovuelos en horarios por vuelo.
 // Entrada: [{ airport, type: 'S' | 'L', row }] (row = objeto tal cual lo devuelve Aena).
+import { physicalFlightKey } from '../js/physical-flight.js';
 
 const MAX_FLIGHT_MIN = 20 * 60;
 
@@ -108,7 +109,7 @@ export function buildLegs(entries) {
 function assignOperators(legs) {
   const groups = new Map();
   for (const l of legs) {
-    const k = `${l.d}|${l.o}|${l.a}|${l.sd ?? `L${l.sa}`}`;
+    const k = physicalFlightKey(l); // la misma definición de vuelo físico que el radar y la identificación
     (groups.get(k) ?? groups.set(k, []).get(k)).push(l);
   }
   for (const g of groups.values()) {

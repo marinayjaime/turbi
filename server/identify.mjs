@@ -16,6 +16,7 @@
 import { adsbGet, adsbLimiter } from './adsb.mjs';
 import { estimatedDepartureMs, departureMs, distanceKm, airborne, landedAt, flyingResult, MAX_SEEN_S, radarGateFor, plannedMinFor } from './radar.mjs';
 import { aircraftName } from '../js/plain.js';
+import { samePhysicalFlight } from '../js/physical-flight.js';
 
 // HEURÍSTICAS AJUSTABLES (valores razonables, no demostrados; revisar con casos reales). Todas las funciones aceptan
 // un objeto `limits` para cambiarlas sin tocar el código.
@@ -96,9 +97,8 @@ export function typeCompatible(aena, adsb) {
 }
 
 const cancelled = leg => [leg.st, leg.std, leg.sta].some(f => f === 'CAN' || f === 'DES');
-// Mismo vuelo físico: misma salida de Aena o, sin ella (origen extranjero), misma llegada.
-const physOf = l => l.sd ?? `L${l.sa}`;
-const samePhysical = (a, b) => a.d === b.d && a.o === b.o && a.a === b.a && physOf(a) === physOf(b);
+// Mismo vuelo físico: definición única en js/physical-flight.js.
+const samePhysical = samePhysicalFlight;
 
 // Si Aena conoce la operadora, solo se admite su OACI. Si no, todos los OACI distintos del mismo vuelo físico
 // (códigos compartidos) se evalúan contra una única instantánea de zona. No se inventa ni se fija ninguna aerolínea.
