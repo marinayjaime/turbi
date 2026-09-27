@@ -1,7 +1,7 @@
 // Refresco ligero del estado oficial de Aena (js/status-refresh.js): cadencia según `updated` (el reloj real de los
 // datos de Render), siempre el mismo vuelo físico, y los fallos nunca cambian nada.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { startStatusRefresh, nextRefreshDelay, RETRY_MS, RETRY_FIRST_MS } from '../js/status-refresh.js';
+import { startStatusRefresh, nextRefreshDelay, refreshMode, isStale, RETRY_MS, RETRY_FIRST_MS, PREWATCH_MS, TOO_OLD_MS } from '../js/status-refresh.js';
 import { physicalFlightKey } from '../js/physical-flight.js';
 import { aenaFinal } from '../js/schedule.js';
 
@@ -84,5 +84,66 @@ describe('siempre el mismo vuelo físico y nada cambia por un fallo', () => {
     active = false;
     await vi.advanceTimersByTimeAsync(3600000);
     expect(b.at).toHaveLength(1); // solo la primera, antes de dejar la ficha
+  });
+});
+
+describe('qué vuelos se refrescan (refreshMode) y datos stale', () => {
+  const H = 3600000;
+  it('en curso → continuo (como hasta ahora)', () => {
+    expect(refreshMode({ phase: 'en-curso', depMs: T0 - H, updatedMs: T0, nowMs: T0 })).toBe('continuous');
+  });
+  it('programado a 2 h de la salida → continuo (con datos viejos o al día)', () => {
+    expect(refreshMode({ phase: 'pendiente', depMs: T0 + 2 * H, updatedMs: T0 - 4 * H, nowMs: T0 })).toBe('continuous');
+    expect(refreshMode({ phase: 'pendiente', depMs: T0 + 2 * H, updatedMs: T0, nowMs: T0 })).toBe('continuous');
+    expect(PREWATCH_MS).toBe(6 * H);
+    expect(refreshMode({ phase: 'pendiente', depMs: T0 + 6 * H, updatedMs: T0, nowMs: T0 })).toBe('continuous'); // borde
+  });
+  it('programado a 8 h → sin refresco continuo: nada con datos al día, un solo intento con datos stale', () => {
+    expect(refreshMode({ phase: 'pendiente', depMs: T0 + 8 * H, updatedMs: T0 - 5 * 60000, nowMs: T0 })).toBe('none');
+    expect(refreshMode({ phase: 'pendiente', depMs: T0 + 8 * H, updatedMs: T0 - 4 * H, nowMs: T0 })).toBe('once');
+  });
+  it('terminado o cancelado → nunca (Aena ya dio su estado final)', () => {
+    for (const phase of ['terminado', 'cancelado']) expect(refreshMode({ phase, depMs: T0 + H, updatedMs: T0 - 4 * H, nowMs: T0 })).toBe('none');
+  });
+  it('datos de más de 30 min (o sin fecha) → stale', () => {
+    expect(TOO_OLD_MS).toBe(30 * 60000);
+    expect(isStale(T0 - 31 * 60000, T0)).toBe(true);
+    expect(isStale(T0 - 29 * 60000, T0)).toBe(false);
+    expect(isStale(NaN, T0)).toBe(true);
+  });
+});
+
+describe('datos stale: primer intento enseguida y GitHub Pages si Render no responde', () => {
+  const OLD = T0 - 4 * 3600000;
+  it('primer intento a los 5 s (no a los 120 s) y aplica lo nuevo de Render', async () => {
+    const { at, got } = setup(() => ({ updated: iso(T0 - 60000), legs: [{ ...fly, sta: 'FNL' }] }), { initialUpdated: iso(OLD) });
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(at).toEqual([5]);
+    expect(got).toEqual([{ sta: 'FNL', upd: iso(T0 - 60000) }]);
+  });
+  it('Render no responde (dormido) → GitHub Pages en el mismo intento, si es más reciente y trae el mismo vuelo', async () => {
+    const fetchPages = vi.fn(async () => ({ updated: iso(T0 - 20 * 60000), legs: [{ ...fly, sta: 'FNL' }] }));
+    const { at, got } = setup(() => null, { initialUpdated: iso(OLD), fetchPages });
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(at).toEqual([5]);
+    expect(fetchPages).toHaveBeenCalledTimes(1);
+    expect(got).toEqual([{ sta: 'FNL', upd: iso(T0 - 20 * 60000) }]);
+  });
+  it('con datos al día, Render sin responder: GitHub Pages solo tras 3 fallos (como antes)', async () => {
+    const fetchPages = vi.fn(async () => null);
+    setup(() => null, { initialUpdated: iso(T0), fetchPages });
+    await vi.advanceTimersByTimeAsync(620000 + 2 * RETRY_MS - 1000);
+    expect(fetchPages).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetchPages).toHaveBeenCalledTimes(1);
+  });
+  it('modo «una vez»: un solo intento y nada más (ni reintentos ni ciclos)', async () => {
+    const { at, r } = setup(() => ({ updated: iso(T0 - 60000), legs: [fly] }), { initialUpdated: iso(OLD), once: true });
+    await vi.advanceTimersByTimeAsync(3 * 3600000);
+    expect(at).toEqual([5]);
+    expect(r.pending).toBe(false);
+    const failing = setup(() => null, { initialUpdated: iso(OLD), once: true });
+    await vi.advanceTimersByTimeAsync(3 * 3600000);
+    expect(failing.at).toHaveLength(1);
   });
 });

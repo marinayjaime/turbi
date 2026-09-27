@@ -1316,3 +1316,76 @@ describe('ADSBDB por indicativo OACI (catálogo de Aena) cuando no conoce el nú
     expect(catCalls()).toHaveLength(0);
   });
 });
+
+// Vuelos programados: refresco de Aena (puerta, estado, horas) desde 6 h antes de la salida, y datos stale (> 30 min,
+// p. ej. la copia de GitHub Pages mientras Render despertaba) → se busca una versión más reciente enseguida.
+describe('refresco de Aena para vuelos programados y datos stale', () => {
+  const T = Date.parse('2026-09-26T12:00:00Z'); // 14:00 en Madrid
+  const D = '2026-09-26';
+  const iso = ms => new Date(ms).toISOString();
+  const leg = (sd, over = {}) => ({ d: D, o: 'PMI', a: 'MAD', sd, ed: `${D}T${sd}`, sa: '23:30', ea: `${D}T23:30`, td: 'N', ta: 'T4', g: null, st: 'SCH', std: 'SCH', sta: null, ac: 'A21N', ...over });
+  // Pages: la copia publicada (updated = pagesUpdated). Render: `render` (fail = dormido / sin respuesta).
+  function app({ pagesLeg, pagesUpdated, render }) {
+    const base = network({ flights: { IB1668: { name: 'Iberia', updated: pagesUpdated, legs: [pagesLeg] } }, openMeteo: () => tooMany });
+    return vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/flights/`)) {
+        calls.push(u);
+        return render.fail ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(json({ name: 'Iberia', updated: render.updated, legs: render.legs }));
+      }
+      return base(url, o);
+    });
+  }
+  const renderCalls = () => calls.filter(u => u.startsWith(`${LIVE_BASE}/flights/`));
+  const card = () => $('#result .flight')?.textContent.replace(/\s+/g, ' ') ?? '';
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: T, shouldAdvanceTime: true });
+
+  it('programado a 2 h + datos de Aena de hace 4 h (Render dormido) → refresca enseguida: puerta, estado y «actualizados» nuevos', async () => {
+    fake();
+    try {
+      const render = { fail: true, updated: iso(T), legs: [leg('16:00', { g: 'D5', st: 'EMB', std: 'EMB' })] };
+      await openApp(app({ pagesLeg: leg('16:00'), pagesUpdated: iso(T - 4 * 3600000), render }));
+      await search('IB1668', D);
+      await until(() => $('#result .flight'), 'ficha');
+      expect(card()).toContain('hace 4 horas'); // la copia vieja de GitHub Pages, dicha como tal
+      expect(card()).toContain('Aún sin asignar');
+      render.fail = false; // Render ya despertó
+      await advance(6000);
+      await until(() => card().includes('D5'), 'puerta nueva');
+      expect(card()).toContain('Embarcando');
+      expect(card()).toContain('Datos actualizados hace un momento');
+      expect(card()).not.toContain('hace 4 horas');
+      expect(renderCalls().length).toBeGreaterThanOrEqual(2); // la carga inicial (sin respuesta) y el refresco
+    } finally { vi.useRealTimers(); }
+  });
+  it('programado a 8 h con datos al día → sin refresco continuo (ni una consulta más en 1 h)', async () => {
+    fake();
+    try {
+      const render = { fail: false, updated: iso(T - 5 * 60000), legs: [leg('22:00')] };
+      await openApp(app({ pagesLeg: leg('22:00'), pagesUpdated: iso(T - 5 * 60000), render }));
+      await search('IB1668', D);
+      await until(() => $('#result .flight'), 'ficha');
+      await networkIdle();
+      const before = renderCalls().length;
+      await advance(3600000);
+      expect(renderCalls()).toHaveLength(before);
+    } finally { vi.useRealTimers(); }
+  });
+  it('programado a 8 h con datos de hace 4 h → un solo intento de traer datos nuevos, y nada más', async () => {
+    fake();
+    try {
+      const render = { fail: true, updated: iso(T), legs: [leg('22:00', { g: 'C3' })] };
+      await openApp(app({ pagesLeg: leg('22:00'), pagesUpdated: iso(T - 4 * 3600000), render }));
+      await search('IB1668', D);
+      await until(() => $('#result .flight'), 'ficha');
+      await networkIdle();
+      const before = renderCalls().length;
+      render.fail = false;
+      await advance(6000);
+      await until(() => card().includes('C3'), 'datos nuevos');
+      expect(renderCalls()).toHaveLength(before + 1);
+      await advance(3600000);
+      expect(renderCalls()).toHaveLength(before + 1); // una sola vez
+    } finally { vi.useRealTimers(); }
+  });
+});

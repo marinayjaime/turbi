@@ -6,7 +6,7 @@ import { lookupFlightResult, canonicalRoute, icaoCallsign } from './flight.js';
 import { aliasOffer, adsbdbVetoes } from './aliases.js';
 import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate } from './adb.js';
 import { fetchSchedule, loadAirlines, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
-import { startStatusRefresh } from './status-refresh.js';
+import { startStatusRefresh, refreshMode } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
@@ -516,9 +516,17 @@ function paintRadar(q, flight, radar, ctx, stale) {
 let statusRefresh = null;
 function stopStatusRefresh() { statusRefresh?.stop(); statusRefresh = null; }
 
+// Refresco del estado de Aena (puerta, estado, horas) de la ficha: continuo en curso o desde 6 h antes de la salida;
+// un solo intento si los datos son de hace más de 30 min y el vuelo queda más lejos (refreshMode). Nunca terminado,
+// cancelado ni desviado, ni un vuelo del histórico.
 function watchAena(q, stale) {
   stopStatusRefresh();
-  if (q.kind !== 'schedule' || q.leg.past || !LIVE_BASE || legPhase(q.leg) !== 'en-curso') return;
+  if (q.kind !== 'schedule' || q.leg.past || !LIVE_BASE) return;
+  // Salida (estimada o programada) en UTC; sin salida publicada (origen extranjero), la llegada.
+  const dep = legDeparture(q.leg), arr = legArrival(q.leg);
+  const depMs = dep ? localToUtcMs(dep.date, dep.time, timezoneOf(q.origin)) : arr ? localToUtcMs(arr.date, arr.time, timezoneOf(q.destination)) : null;
+  const mode = refreshMode({ phase: legPhase(q.leg), depMs, updatedMs: Date.parse(q.schedule.updated ?? ''), nowMs: Date.now() });
+  if (mode === 'none') return;
   const { al, n } = q.schedule;
   const getJson = async url => {
     try { const res = await fetch(url, { signal: AbortSignal.timeout(10000), cache: 'no-store' }); return res.ok ? await res.json() : null; } catch { return null; }
@@ -531,6 +539,7 @@ function watchAena(q, stale) {
     isOver: aenaFinal,
     isActive: () => !stale() && Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]'),
     onLeg: (leg, updated) => { applyAenaLeg(q, leg, updated, stale).catch(() => {}); },
+    once: mode === 'once',
   });
 }
 
