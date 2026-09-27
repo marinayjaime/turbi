@@ -1389,3 +1389,132 @@ describe('refresco de Aena para vuelos programados y datos stale', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+// Pronóstico sobre la ventana EN EL AIRE (js/airtime.js); la ficha y lo oficial siguen con las horas de bloque.
+import { forecastWindow } from '../js/airtime.js';
+import { hourKey } from '../js/weather.js';
+import { distanceKm } from '../js/route.js';
+import { localToUtcMs } from '../js/time.js';
+describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
+  const tomorrow = () => dayOf(Date.now() + 24 * 3600000);
+  const ap = c => ({ lat: AIRPORTS_DB[c][2], lon: AIRPORTS_DB[c][3] });
+  const km = distanceKm(ap('MAD'), ap('PMI'));
+  // IB1667 simulado: MAD 15:45 → PMI 17:10 (85 min de bloque).
+  const leg = d => ({ d, o: 'MAD', a: 'PMI', sd: '15:45', ed: `${d}T15:45`, sa: '17:10', ea: `${d}T17:10`, td: 'T4', ta: 'T', g: null, st: 'SCH', std: 'SCH', sta: 'SCH', ac: 'A320' });
+  const flights = d => ({ IB1667: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg(d)] } });
+  const modelCalls = () => calls.filter(u => u.startsWith('https://api.open-meteo.com/v1/forecast') && u.includes('models='));
+  const legacyCalls = () => calls.filter(u => u.startsWith('https://api.open-meteo.com/v1/forecast') && !u.includes('models='));
+  const range = u => { const p = new URL(u).searchParams; return [p.get('start_hour'), p.get('end_hour')]; };
+  const ticks = () => [...document.querySelectorAll('#forecast-area .ticks span')].map(s => Number(s.textContent.replace('′', '')));
+  const windowFor = d => {
+    const dep = localToUtcMs(d, '15:45', 'Europe/Madrid'), arr = localToUtcMs(d, '17:10', 'Europe/Madrid');
+    return forecastWindow({ km, blockDepartureMs: dep, blockArrivalMs: arr });
+  };
+
+  it('IB1667 MAD → PMI: la ficha sigue en 15:45 → 17:10; ECMWF/GFS reciben la ventana en el aire (≈ 55 min) y los minutos del pronóstico también', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: flights(d), openMeteo: openMeteoOk }));
+    await search('IB1667', d);
+    await until(() => $('#forecast-area .summary'), 'pronóstico');
+    await networkIdle();
+    const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
+    expect(card).toContain('Salida 15:45');
+    expect(card).toContain('Llegada 17:10'); // hora oficial, no la del pronóstico
+    expect(card).not.toMatch(/Salida 1[56]:(0|5)[05] .*Llegada 16:5/);
+    const w = windowFor(d);
+    expect(w.forecastAirborneMin).toBeGreaterThan(54);
+    expect(w.forecastAirborneMin).toBeLessThan(60);
+    expect(modelCalls().length).toBeGreaterThan(0);
+    for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
+    expect(Math.max(...ticks())).toBeLessThanOrEqual(w.forecastAirborneMin); // la línea de tiempo del pronóstico: ≈ 55′, no 85′
+    expect(Math.max(...ticks())).toBeLessThan(60);
+  });
+
+  it('salida y llegada ESTIMADAS de Aena: la ficha las conserva (16:05 → 17:30) y el pronóstico encaja el aire en ese bloque', async () => {
+    const d = tomorrow();
+    const late = { ...leg(d), ed: `${d}T16:05`, ea: `${d}T17:30`, st: 'RET', std: 'RET' };
+    await openApp(network({ flights: { IB1667: { name: 'Iberia', updated: new Date().toISOString(), legs: [late] } }, openMeteo: openMeteoOk }));
+    await search('IB1667', d);
+    await until(() => $('#forecast-area .summary'), 'pronóstico');
+    await networkIdle();
+    const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
+    expect(card).toContain('Salida 16:05 Programada 15:45');
+    expect(card).toContain('Llegada 17:30 Programada 17:10');
+    const w = forecastWindow({ km, blockDepartureMs: localToUtcMs(d, '16:05', 'Europe/Madrid'), blockArrivalMs: localToUtcMs(d, '17:30', 'Europe/Madrid') });
+    for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
+  });
+
+  it('fallback legacy (ECMWF/GFS sin datos): la MISMA ventana en el aire', async () => {
+    const d = tomorrow();
+    const noData = url => { const r = openMeteoOk(url); const body = r.json; return { ...r, json: async () => {
+      const b = await body(); const strip = x => ({ ...x, hourly: Object.fromEntries(Object.entries(x.hourly).map(([k, v]) => [k, k === 'time' ? v : v.map(() => null)])) });
+      return Array.isArray(b) ? b.map(strip) : strip(b); } }; };
+    await openApp(network({ flights: flights(d), openMeteo: url => (url.includes('models=') ? noData(url) : openMeteoOk(url)) }));
+    await search('IB1667', d);
+    await until(() => area().includes('Cálculo simplificado'), 'cálculo simplificado');
+    const w = windowFor(d);
+    expect(legacyCalls().length).toBeGreaterThan(0);
+    for (const u of legacyCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
+    expect(Math.max(...ticks())).toBeLessThan(60);
+  });
+
+  it('AeroDataBox en el aire con hora de pista de salida: el pronóstico empieza en el despegue real (y la llegada real, al aterrizar, lo cierra)', async () => {
+    const d = dayOf(Date.now());
+    const dep = Date.now() - 30 * 60000, arr = dep + 85 * 60000; // bloque 85 min; salió de calzos hace 30 min
+    const rwyDep = dep + 20 * 60000; // despegó hace 10 min (real)
+    const t = (ms, off) => ({ utc: `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`,
+      local: `${new Date(ms + off * 3600000).toISOString().slice(0, 10)} ${new Date(ms + off * 3600000).toISOString().slice(11, 16)}+0${off}:00` });
+    const raw = over => ({ number: 'XX 100', status: 'EnRoute', airline: { name: 'Prueba' }, callSign: 'XXX100',
+      departure: { airport: { iata: 'MAD' }, scheduledTime: t(dep, 2), runwayTime: t(rwyDep, 2) },
+      arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr, 2) }, ...over });
+    const entry = r => ({ status: 'found', source: 'aerodatabox', number: 'XX100', date: dayOf(dep), fetchedAt: new Date().toISOString(), legs: normalizeFlights([r]) });
+    await openApp(network({ flights: {}, openMeteo: openMeteoOk, schedule: { [`XX100|${dayOf(dep)}`]: entry(raw()) } }));
+    await search('XX100', dayOf(dep));
+    await until(() => modelCalls().length, 'pronóstico');
+    await networkIdle();
+    const takeoff = Math.floor(rwyDep / 60000) * 60000; // la hora de pista, al minuto
+    const w = forecastWindow({ km, blockDepartureMs: Math.floor(dep / 60000) * 60000, blockArrivalMs: Math.floor(arr / 60000) * 60000, runwayDepartureMs: takeoff });
+    expect(w.source).toBe('pista-salida');
+    for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(takeoff - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
+    await until(() => ticks().length, 'línea de tiempo');
+    expect(Math.max(...ticks())).toBeLessThanOrEqual(w.forecastAirborneMin); // ≈ 55′ de vuelo, no los 65′ que quedaban de bloque
+    // Con hora de pista de llegada ya ha aterrizado: sin pronóstico (la ventana con las dos pistas está en tests/airtime.test.js).
+    localStorage.clear(); // otra consulta de AeroDataBox (la caché del navegador guardaría la anterior)
+    const landed = raw({ status: 'Arrived', arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr, 2), runwayTime: t(rwyDep + 48 * 60000, 2) } });
+    await openApp(network({ flights: {}, openMeteo: openMeteoOk, schedule: { [`XX100|${dayOf(dep)}`]: entry(landed) } }));
+    await search('XX100', dayOf(dep));
+    await until(() => $('#forecast-area .note'), 'nota');
+    expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+  });
+
+  it('AeroDataBox sin horas de pista: estimación en el aire (no el bloque completo)', async () => {
+    const d = tomorrow();
+    const dep = localToUtcMs(d, '10:00', 'Europe/Madrid'), arr = dep + 85 * 60000;
+    const t = (ms, off) => ({ utc: `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`,
+      local: `${new Date(ms + off * 3600000).toISOString().slice(0, 10)} ${new Date(ms + off * 3600000).toISOString().slice(11, 16)}+0${off}:00` });
+    const raw = { number: 'XX 101', status: 'Expected', airline: { name: 'Prueba' },
+      departure: { airport: { iata: 'MAD' }, scheduledTime: t(dep, 2) }, arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr, 2) } };
+    await openApp(network({ flights: {}, openMeteo: openMeteoOk,
+      schedule: { [`XX101|${d}`]: { status: 'found', source: 'aerodatabox', number: 'XX101', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) } } }));
+    await search('XX101', d);
+    await until(() => $('#forecast-area .summary'), 'pronóstico');
+    await networkIdle();
+    const w = forecastWindow({ km, blockDepartureMs: dep, blockArrivalMs: arr });
+    for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
+    expect($('#result .flight').textContent.replace(/\s+/g, ' ')).toContain('Salida 10:00'); // la ficha, con su hora
+    expect(Math.max(...ticks())).toBeLessThanOrEqual(w.forecastAirborneMin); // ≈ 55′, no los 85′ del bloque
+  });
+
+  it('consulta manual: sigue funcionando; se muestran las horas escritas y el pronóstico va sobre la ventana en el aire', async () => {
+    const d = tomorrow();
+    await openApp(network({ flights: {}, adsbdb: { XX200: adsbdbRoute('XX200', 'XXX200', 'Prueba', 'MAD', 'PMI') }, openMeteo: openMeteoOk }));
+    await search('XX200', d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB');
+    $('#f-time').value = '10:00';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === 'MAD → PMI', 'pronóstico');
+    await networkIdle();
+    expect($('#result .sub').textContent).toMatch(/· 10:00–/); // la hora escrita (bloque), no la del despegue estimado
+    expect(Math.max(...ticks())).toBeLessThan(60);
+  });
+});

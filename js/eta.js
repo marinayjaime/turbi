@@ -7,6 +7,7 @@
 // Prioridad: estabilidad y prudencia; se muestra redondeada a 5 min (sin precisión falsa).
 import { legArrival, legDeparture } from './schedule.js';
 import { localToUtcMs } from './time.js';
+import { PLAN_KMH, airMinutesForKm } from './airtime.js';
 
 const MIN = 60000;
 
@@ -14,10 +15,7 @@ const MIN = 60000;
 // TODOS son HEURÍSTICAS razonables, NO valores demostrados. Se validarán con el histórico (ETA predicha frente a
 // llegada real) y se ajustarán. No presentarlos como exactos.
 const VALID_KMH = [250, 1150]; // heurística: fuera de aquí (rodando, dato imposible) la velocidad ADS-B no se usa
-const PLAN_KMH = 800; // heurística: velocidad de crucero supuesta si la medida no sirve (la misma que route.js)
-const DESCENT_KM = 150; // heurística: los últimos ~150 km son descenso y aproximación
-const DESCENT_MIN = 23; // heurística: …que llevan unos 23 min, con tráfico
-const ROUTE_FACTOR = 1.05; // heurística: la ruta real es algo más larga que la línea recta
+// PLAN_KMH, DESCENT_KM, DESCENT_MIN y ROUTE_FACTOR: en js/airtime.js (la misma física para el perfil del pronóstico).
 const APPROACH_FACTOR = 1.3, APPROACH_KMH = 400, APPROACH_MIN = 5; // heurística: < 100 km (vectores, aproximación)
 const WEIGHTS = { far: 0.4, mid: 0.7, near: 0.9 }; // heurística: peso del radar a > 500 km, 100–500 km y < 100 km
 // Sin observación ADS-B nueva, la última ETA en vuelo NUNCA se sustituye por la previa al vuelo (es mejor dato):
@@ -56,7 +54,7 @@ function radarRemainingMin({ remainingKm, kmh }, phase) {
   if (remainingKm < 100) return (remainingKm * APPROACH_FACTOR) / APPROACH_KMH * 60 + APPROACH_MIN; // vectores y aproximación
   const speedOk = kmh >= VALID_KMH[0] && kmh <= VALID_KMH[1];
   const v = phase === 'cruise' && speedOk ? kmh : PLAN_KMH;
-  return Math.max(0, remainingKm * ROUTE_FACTOR - DESCENT_KM) / v * 60 + DESCENT_MIN;
+  return airMinutesForKm(remainingKm, v);
 }
 
 // Antigüedad de la señal ADS-B (s): una posición de hace 2–3 min no vale lo mismo que una de hace 5 s.

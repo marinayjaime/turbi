@@ -13,6 +13,7 @@ import { nameSegments } from './places.js';
 import { renderResult, esc, flightCardHtml, missingDateText, thousands } from './ui.js';
 import { distanceReference, startRemainingTicker } from './radar-distance.js';
 import { buildProfile } from './altitude.js';
+import { forecastWindow } from './airtime.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
 import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner,
@@ -582,7 +583,14 @@ async function loadPunctualityHistory(q, punct, stale) {
 async function buildFlight(q) {
   const oTz = timezoneOf(q.origin), dTz = timezoneOf(q.destination);
   const { departureMs, durationMin } = flightTimes(q, oTz, dTz);
+  // profile: horario de BLOQUE (oficial o estimado). Lo usan la ficha, la ETA, el radar y los avisos: no se toca.
   const profile = buildProfile(q.origin, q.destination, departureMs, durationMin);
+  // forecastProfile: solo para el pronóstico de turbulencias, sobre la ventana EN EL AIRE (js/airtime.js). Con AeroDataBox,
+  // sus horas de pista (reales) mandan.
+  const runway = q.kind === 'adb' ? q.adbLeg : null;
+  const air = forecastWindow({ km: profile.km, blockDepartureMs: profile.departureMs, blockArrivalMs: profile.arrivalMs,
+    runwayDepartureMs: runway?.dep?.runway?.utc ?? null, runwayArrivalMs: runway?.arr?.runway?.utc ?? null });
+  const forecastProfile = buildProfile(q.origin, q.destination, air.forecastTakeoffMs, air.forecastAirborneMin);
   // Llegada: la de Aena si la publica; si no, estimación Turbi (salida + duración estimada, en la hora del destino).
   const etaCtx = { depUtcMs: departureMs, plannedMin: profile.durationMin, tz: dTz };
   const eta = turbiEta(q, etaCtx);
@@ -596,7 +604,7 @@ async function buildFlight(q) {
     ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
       departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg)
     : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin), landedAt, {}) : null;
-  return { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight };
+  return { oTz, dTz, departureMs, durationMin, profile, forecastProfile, air, etaCtx, eta, officialMs, landedAt, flight };
 }
 
 async function run(q) {
@@ -608,7 +616,7 @@ async function run(q) {
   els.refresh.hidden = false;
   show('loading');
   try {
-    const { oTz, dTz, departureMs, durationMin, profile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
+    const { oTz, dTz, departureMs, durationMin, profile, forecastProfile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
     const punct = flight && q.kind === 'schedule' ? punctualityState(q) : null; // la puntualidad es de Aena
     els.changeTime.hidden = Boolean(flight) || q.routeSource === 'aerodatabox'; // con AeroDataBox la hora no es del usuario
@@ -640,7 +648,7 @@ async function run(q) {
       els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight, punctuality: punct });
       show('result');
       watchAena(q, stale);
-      const ctx = { q, profile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
+      const ctx = { q, profile, forecastProfile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
       lastForecastCtx = ctx;
       await Promise.all([
         safely(() => loadPunctualityHistory(q, punct, stale)),
@@ -651,16 +659,16 @@ async function run(q) {
     }
 
     // Consulta manual (sin horario de Aena): no hay ficha; el pronóstico es todo el resultado, como antes.
-    const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`;
+    const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`; // horas de bloque
     let view;
     try {
-      view = await forecastView({ q, profile, flight, times, nowMs: Date.now() });
+      view = await forecastView({ q, profile: forecastProfile, flight, times, nowMs: Date.now() });
     } catch (err) {
       // Sin red o sin cupo, el cálculo simplificado tampoco podría: se muestra el error.
       // (getJson ya convierte los fallos de red en errores en español; un TypeError aquí sería un fallo de código.)
       if (/No se pudo conectar|Demasiadas consultas/.test(err.message)) throw err;
       if (stale()) return;
-      return await runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale);
+      return await runLegacy(q, forecastProfile, times, flight, rel, stale);
     }
     if (stale()) return;
     Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
@@ -680,20 +688,21 @@ const isWeatherUnavailable = err => err?.rateLimited || err instanceof TypeError
 // Sección de turbulencias de la ficha: pronóstico (o cálculo simplificado si los modelos no dan datos). Si Open-Meteo
 // falla (429, red…), solo esta sección lo dice, con «Reintentar»; la ficha no se toca.
 async function loadForecastSection(ctx) {
-  const { q, profile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale } = ctx;
+  const { q, profile, forecastProfile, flight, punct, oTz, dTz, etaCtx, rel, stale } = ctx;
   const area = () => $in('forecast-area');
   if (!area()) return;
   area().innerHTML = '<p class="forecast-loading">Calculando la previsión de turbulencias…</p>';
-  const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`;
+  const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`; // horas de bloque
   let view;
   try {
-    view = await forecastView({ q, profile, flight, times, nowMs: Date.now() });
+    view = await forecastView({ q, profile: forecastProfile, flight, times, nowMs: Date.now() });
   } catch (err) {
     if (stale() || !area()) return;
     if (!isWeatherUnavailable(err)) {
       // Los modelos ECMWF/GFS no dan datos: cálculo simplificado (v1), también dentro de la sección.
       try {
-        const route = buildRoute(q.origin, q.destination, departureMs, durationMin);
+        // La MISMA ventana en el aire que el pronóstico v2.
+        const route = buildRoute(q.origin, q.destination, forecastProfile.departureMs, forecastProfile.durationMin);
         const { segments, verdict } = analyze(route, await fetchRouteWeather(route));
         if (stale() || !area()) return;
         const legacy = { verdict, reliability: rel, durationMin: route.durationMin, segments, sectionOnly: true };
@@ -723,15 +732,16 @@ async function loadForecastSection(ctx) {
 }
 
 // Cálculo v1 (una capa, modelo automático de Open-Meteo): respaldo si los modelos ECMWF/GFS no dan datos.
-async function runLegacy(q, departureMs, durationMin, flight, rel, oTz, dTz, stale) {
-  const route = buildRoute(q.origin, q.destination, departureMs, durationMin);
+// air: el perfil en el aire (forecastProfile), el mismo que el pronóstico v2; times: horas de bloque que se muestran.
+async function runLegacy(q, air, times, flight, rel, stale) {
+  const route = buildRoute(q.origin, q.destination, air.departureMs, air.durationMin);
   const weather = await fetchRouteWeather(route);
   if (stale()) return;
   const { segments, verdict } = analyze(route, weather);
   const view = {
     title: `${q.origin.iata} → ${q.destination.iata}`,
     subtitle: [q.number, q.airline, sourceNote(q)].filter(Boolean).join(' · ') || `${q.origin.city} → ${q.destination.city}`,
-    times: `${formatLocal(route.departureMs, oTz)}–${formatLocal(route.arrivalMs, dTz)}`,
+    times,
     verdict, reliability: rel, durationMin: route.durationMin, segments, flight,
   };
   currentView = null;
