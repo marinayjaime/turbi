@@ -2,10 +2,10 @@ import { buildRoute } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
-import { lookupFlightResult, canonicalRoute } from './flight.js';
+import { lookupFlightResult, canonicalRoute, icaoCallsign } from './flight.js';
 import { aliasOffer, adsbdbVetoes } from './aliases.js';
 import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate } from './adb.js';
-import { fetchSchedule, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
+import { fetchSchedule, loadAirlines, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
@@ -260,7 +260,22 @@ async function afterAena(number, date, adsb = null) {
     const q = await adbQuery(number, date, adb);
     if (q !== undefined) return q;
   }
-  return adsbFallback(number, adsb ?? await lookupFlightResult(number));
+  let route = adsb ?? await lookupFlightResult(number);
+  if (route.status === 'unknown') route = (await adsbdbByIcao(number)) ?? route;
+  return adsbFallback(number, route);
+}
+
+// ADSBDB no conoce el número comercial tal cual (404), pero quizá sí su indicativo OACI: su catálogo de aerolíneas puede
+// estar desactualizado (p. ej. un IATA reasignado). Traducción con el catálogo de Aena (airlines.json, OACI única para
+// ese IATA) y UNA consulta con OACI + el mismo número. Solo vale si ADSBDB devuelve exactamente esa aerolínea (OACI) y
+// ese indicativo; su IATA (y su nombre de aerolínea) se ignoran, porque pueden estar desactualizados. El número que se
+// muestra sigue siendo el que escribió el usuario. null = nada (entrada manual, como siempre).
+async function adsbdbByIcao(number) {
+  const target = icaoCallsign(number, await loadAirlines());
+  if (!target) return null;
+  const r = await lookupFlightResult(target.callsign);
+  if (r.status !== 'found' || r.airlineIcao !== target.icao || r.callsignIcao !== target.callsign) return null;
+  return { ...r, flight: r.flight && { ...r.flight, number: numberKey(number), airline: '' } };
 }
 
 // Vuelo encontrado por AeroDataBox: sus aeropuertos y horarios del día (ADSBDB no manda sobre una instancia fechada).

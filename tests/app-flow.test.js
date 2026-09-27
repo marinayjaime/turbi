@@ -36,7 +36,7 @@ const RADAR_FLYING = { state: 'volando', callsign: 'IBE715', altM: 10668, altFt:
   seenS: 2, remainingKm: 300, source: 'adsb.lol' };
 
 let calls;
-function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null, schedule = {}, radarAdb = null }) {
+function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null, schedule = {}, radarAdb = null, airlines = null }) {
   const radars = Array.isArray(radar) ? [...radar] : null;
   calls = [];
   return vi.fn(async url => {
@@ -51,6 +51,7 @@ function network({ flights, radar = null, openMeteo, adsbdb = {}, aliases = null
     const cs = url.match(/^https:\/\/api\.adsbdb\.com\/v0\/callsign\/(\w+)$/);
     if (cs) return typeof adsbdb[cs[1]] === 'function' ? adsbdb[cs[1]]() : adsbdb[cs[1]] ? json(adsbdb[cs[1]]) : notFound;
     if (url === 'data/flights/_aliases.json') return aliases ? json(aliases) : notFound;
+    if (url === 'data/flights/airlines.json') return airlines ? json(airlines) : notFound;
     const sch = url.match(new RegExp(`^${LIVE_BASE}/schedule/(\\w+)/([\\d-]+)\\.json$`));
     if (sch) { const r = schedule[`${sch[1]}|${sch[2]}`]; return typeof r === 'function' ? r() : r ? json(r) : notFound; }
     if (url.startsWith('https://api.open-meteo.com/v1/forecast')) return openMeteo(url);
@@ -1235,5 +1236,83 @@ describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
     $('#refresh').click();
     await until(() => radarCalls().length === 2, 'radar de nuevo');
     expect(calls.filter(u => u.includes('/schedule/'))).toHaveLength(1);
+  });
+});
+
+// ADSBDB no conoce el número comercial (404) pero sí su indicativo OACI, traducido con el catálogo de Aena.
+describe('ADSBDB por indicativo OACI (catálogo de Aena) cuando no conoce el número comercial', () => {
+  const tomorrow = () => dayOf(Date.now() + 24 * 3600000);
+  const CAT = { JAF: 'TB', VLG: 'VY', IBE: 'IB' };
+  // Respuesta real de ADSBDB para JAF2632 (27/09/2026): aerolínea con IATA desactualizado (JF, «Jetairfly»).
+  const jaf = (over = {}) => { const b = adsbdbRoute('JF2632', 'JAF2632', 'Jetairfly', 'OUD', 'BRU'); Object.assign(b.response.flightroute.airline, { icao: 'JAF', iata: 'JF' }); Object.assign(b.response.flightroute, over); return b; };
+  const unknown = () => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({ response: 'unknown callsign' }) });
+  const adsbCalls = () => calls.filter(u => u.includes('adsbdb.com'));
+  const catCalls = () => calls.filter(u => u === 'data/flights/airlines.json');
+  const schCalls = () => calls.filter(u => u.includes('/schedule/'));
+  const open = async (number, { adsbdb, airlines = CAT }) => {
+    const d = tomorrow();
+    await openApp(network({ flights: {}, airlines, adsbdb, openMeteo: openMeteoOk,
+      schedule: { [`${number}|${d}`]: { status: 'not_found', legs: [], fetchedAt: new Date().toISOString() } } }));
+    await search(number, d);
+    await until(() => !$('#time-field').hidden, 'ruta de ADSBDB o entrada manual');
+    await networkIdle();
+    return d;
+  };
+
+  it('traducción única: TB2632 → JAF2632 → OUD → BRU; número del usuario, ruta no oficial y editable, hora manual · ADSBDB 2, AeroDataBox 0', async () => {
+    const d = await open('TB2632', { adsbdb: { TB2632: unknown, JAF2632: jaf() } });
+    expect($('#notice').textContent).toContain('Ruta según ADSBDB (no oficial): Ahl Angad (OUD) → Zaventem (BRU)');
+    expect([$('#f-origin').value, $('#f-destination').value]).toEqual(['OUD', 'BRU']);
+    expect($('#number-field').hidden).toBe(false);
+    expect(adsbCalls()).toEqual(['https://api.adsbdb.com/v0/callsign/TB2632', 'https://api.adsbdb.com/v0/callsign/JAF2632']);
+    expect(catCalls()).toHaveLength(1);
+    expect(schCalls()).toEqual([`${LIVE_BASE}/schedule/TB2632/${d}.json`]); // la única, servida de la caché (not_found)
+    $('#f-time').value = '09:00';
+    submitForm();
+    await until(() => $('#result .route')?.textContent === 'OUD → BRU', 'pronóstico');
+    expect($('#result .sub').textContent).toContain('TB2632 · ruta según ADSBDB (no oficial)');
+    expect($('#result .sub').textContent).not.toMatch(/JF2632|Jetairfly/);
+    expect(adsbCalls()).toHaveLength(2);
+    expect(schCalls()).toHaveLength(1);
+    expect(calls.some(u => u.includes('/radar') || u.includes('adsb.lol'))).toBe(false);
+  });
+  it('IATA sin traducción en el catálogo → entrada manual · ADSBDB 1', async () => {
+    await open('TB2632', { adsbdb: { TB2632: unknown, JAF2632: jaf() }, airlines: { VLG: 'VY' } });
+    expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+    expect(adsbCalls()).toHaveLength(1);
+  });
+  it('IATA con dos OACI → no se intenta · ADSBDB 1', async () => {
+    await open('TB2632', { adsbdb: { TB2632: unknown, JAF2632: jaf() }, airlines: { ...CAT, XTB: 'TB' } });
+    expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+    expect(adsbCalls()).toHaveLength(1);
+  });
+  it('primera consulta con error temporal (503 / timeout) → sin traducción ni segundo intento · ADSBDB 1', async () => {
+    for (const first of [() => ({ ok: false, status: 503, headers: { get: () => null }, json: async () => ({}) }), () => { throw new DOMException('t', 'TimeoutError'); }]) {
+      await open('TB2632', { adsbdb: { TB2632: first, JAF2632: jaf() } });
+      expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+      expect(adsbCalls()).toEqual(['https://api.adsbdb.com/v0/callsign/TB2632']);
+      expect(catCalls()).toHaveLength(0);
+    }
+  });
+  it('respuesta con otra aerolínea (airline.icao distinto) → rechazada · ADSBDB 2', async () => {
+    const other = jaf(); other.response.flightroute.airline.icao = 'XXX';
+    await open('TB2632', { adsbdb: { TB2632: unknown, JAF2632: other } });
+    expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+    expect(adsbCalls()).toHaveLength(2);
+  });
+  it('respuesta con otro indicativo (callsign_icao distinto) → rechazada · ADSBDB 2', async () => {
+    await open('TB2632', { adsbdb: { TB2632: unknown, JAF2632: jaf({ callsign_icao: 'JAF2633' }) } });
+    expect($('#notice').textContent).toBe('No encuentro ese vuelo, introdúcelo a mano.');
+    expect(adsbCalls()).toHaveLength(2);
+  });
+  it('sufijo conservado: TB2632A → JAF2632A (nunca JAF2632) · ADSBDB 2', async () => {
+    await open('TB2632A', { adsbdb: { TB2632A: unknown, JAF2632A: jaf({ callsign_icao: 'JAF2632A', callsign: 'JAF2632A' }), JAF2632: jaf() } });
+    expect(adsbCalls()).toEqual(['https://api.adsbdb.com/v0/callsign/TB2632A', 'https://api.adsbdb.com/v0/callsign/JAF2632A']);
+    expect($('#f-origin').value).toBe('OUD');
+  });
+  it('el número original sí lo conoce ADSBDB → no se traduce nada · ADSBDB 1, catálogo 0', async () => {
+    await open('TB2632', { adsbdb: { TB2632: adsbdbRoute('TB2632', 'JAF2632', 'TUI fly Belgium', 'OUD', 'BRU') } });
+    expect(adsbCalls()).toHaveLength(1);
+    expect(catCalls()).toHaveLength(0);
   });
 });

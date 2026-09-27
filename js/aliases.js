@@ -1,6 +1,6 @@
 // Números comerciales que Aena no publica pero asocia a un vuelo que sí publica (data/flights/_aliases.json, generado
 // por scripts/aliases.mjs). Nunca se usan en silencio: la app ofrece el vuelo de Aena y el usuario lo confirma.
-import { parseFlightNumber, fetchSchedule } from './schedule.js';
+import { parseFlightNumber, fetchSchedule, loadAirlines } from './schedule.js';
 
 const BASE = 'data/flights/';
 
@@ -19,7 +19,7 @@ export async function findAlias(number, fetchFn = fetch) {
   if (!parsed) return null;
   let prefix = parsed.prefix;
   if (prefix.length === 3) {
-    prefix = (await getJson(`${BASE}airlines.json`, fetchFn))?.[prefix];
+    prefix = (await loadAirlines(fetchFn))?.[prefix];
     if (!prefix) return null;
   }
   const alias = (await getJson(`${BASE}_aliases.json`, fetchFn))?.aliases?.[`${prefix}${parsed.n}`];

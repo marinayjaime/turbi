@@ -6,7 +6,7 @@ const FLIGHT_RE = /^[A-Z0-9]{2,3}\d{1,4}[A-Z]?$/;
 const toAirport = a => ({ iata: a.iata_code, name: a.name, city: a.municipality, lat: a.latitude, lon: a.longitude });
 
 // Resultado de ADSBDB para un número, distinguiendo lo que significa cada fallo:
-//   { status: 'found', flight, iata: [origen, destino] }  flight es null si faltan coordenadas (ruta inutilizable)
+//   { status: 'found', flight, iata: [origen, destino], airlineIcao, callsignIcao }  flight es null si faltan coordenadas
 //   { status: 'unknown' }  ADSBDB no conoce ese número (404 o respuesta sin ruta)
 //   { status: 'error' }    fallo temporal (red, tiempo límite, 429, 5xx…): no dice nada sobre el vuelo
 // timeoutMs: adsbdb a veces no responde; mejor pasar a la entrada manual que esperar sin fin.
@@ -32,7 +32,17 @@ export async function lookupFlightResult(number, fetchFn = fetch, timeoutMs = 80
     origin: toAirport(route.origin),
     destination: toAirport(route.destination),
   } : null;
-  return { status: 'found', flight, iata };
+  return { status: 'found', flight, iata, airlineIcao: route.airline?.icao ?? null, callsignIcao: route.callsign_icao ?? null };
+}
+
+// Indicativo OACI de un número comercial IATA (prefijo de 2 caracteres + número, con su sufijo si lo tiene), usando el
+// catálogo de Aena (data/flights/airlines.json, OACI → IATA). Solo si ese IATA corresponde a EXACTAMENTE una OACI; si no,
+// null. No se transforma nada: ni ceros, ni sufijos, ni variantes. TB2632 → (catálogo: JAF → TB) → JAF2632.
+export function icaoCallsign(number, airlines) {
+  const m = String(number ?? '').toUpperCase().replace(/\s+/g, '').match(/^([A-Z0-9]{2})(\d{1,4}[A-Z]?)$/);
+  if (!m || !airlines) return null;
+  const icaos = Object.entries(airlines).filter(([, iata]) => iata === m[1]).map(([icao]) => icao);
+  return icaos.length === 1 && /^[A-Z]{3}$/.test(icaos[0]) ? { icao: icaos[0], callsign: `${icaos[0]}${m[2]}` } : null;
 }
 
 // La ruta de ADSBDB, o null si no la hay (desconocido, fallo o sin coordenadas).

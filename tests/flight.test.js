@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { lookupFlight, lookupFlightResult, canonicalRoute } from '../js/flight.js';
+import { lookupFlight, lookupFlightResult, canonicalRoute, icaoCallsign } from '../js/flight.js';
 
 const ADSBDB_OK = {
   response: { flightroute: {
@@ -78,7 +78,7 @@ describe('lookupFlightResult: qué significa cada respuesta de ADSBDB', () => {
   it('ruta sin coordenadas → found, pero sin ruta utilizable', async () => {
     const body = structuredClone(ADSBDB_OK);
     delete body.response.flightroute.origin.latitude;
-    expect(await lookupFlightResult('VY3902', ok(body))).toEqual({ status: 'found', flight: null, iata: ['BCN', 'PMI'] });
+    expect(await lookupFlightResult('VY3902', ok(body))).toEqual({ status: 'found', flight: null, iata: ['BCN', 'PMI'], airlineIcao: null, callsignIcao: null });
   });
   it('404 o respuesta sin ruta → unknown', async () => {
     expect(await lookupFlightResult('XX9999', status(404))).toEqual({ status: 'unknown' });
@@ -90,5 +90,24 @@ describe('lookupFlightResult: qué significa cada respuesta de ADSBDB', () => {
     expect(await lookupFlightResult('VY3902', vi.fn(async () => { throw new TypeError('Failed to fetch'); }))).toEqual({ status: 'error' });
     const hang = vi.fn((url, opts) => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new DOMException('t', 'TimeoutError')))));
     expect(await lookupFlightResult('VY3902', hang, 30)).toEqual({ status: 'error' });
+  });
+});
+
+describe('icaoCallsign: número comercial IATA → indicativo OACI con el catálogo de Aena', () => {
+  const CAT = { JAF: 'TB', VLG: 'VY', IBE: 'IB', CFE: 'CJ' };
+  it('OACI única para ese IATA → OACI + el mismo número', () => {
+    expect(icaoCallsign('TB2632', CAT)).toEqual({ icao: 'JAF', callsign: 'JAF2632' });
+    expect(icaoCallsign(' tb 2632 ', CAT)).toEqual({ icao: 'JAF', callsign: 'JAF2632' });
+  });
+  it('conserva el sufijo y no toca ceros ni genera variantes', () => {
+    expect(icaoCallsign('TB2632A', CAT).callsign).toBe('JAF2632A');
+    expect(icaoCallsign('TB0632', CAT).callsign).toBe('JAF0632');
+    expect(icaoCallsign('TB12', CAT).callsign).toBe('JAF12');
+  });
+  it('IATA sin traducción, con dos OACI, formato no IATA o sin catálogo → null', () => {
+    expect(icaoCallsign('XX123', CAT)).toBeNull();
+    expect(icaoCallsign('TB2632', { ...CAT, XTB: 'TB' })).toBeNull();
+    expect(icaoCallsign('JAF2632', CAT)).toBeNull(); // ya es OACI (3 letras): no es un prefijo IATA
+    expect(icaoCallsign('TB2632', null)).toBeNull();
   });
 });

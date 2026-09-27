@@ -23,6 +23,18 @@ async function getJson(url, fetchFn) {
 
 const quiet = p => p.catch(() => null);
 
+// Catálogo de aerolíneas de Aena publicado por el pipeline (data/flights/airlines.json: OACI → IATA). Una sola descarga
+// por sesión y por fetchFn, compartida por todo lo que lo usa (búsqueda por OACI, alias, traducción IATA → OACI).
+// Un fallo no se guarda: se vuelve a intentar la próxima vez.
+const airlinesCache = new WeakMap();
+export function loadAirlines(fetchFn = fetch) {
+  if (!airlinesCache.has(fetchFn)) {
+    const p = quiet(getJson(`${BASE}airlines.json`, fetchFn)).then(v => { if (!v) airlinesCache.delete(fetchFn); return v; });
+    airlinesCache.set(fetchFn, p);
+  }
+  return airlinesCache.get(fetchFn);
+}
+
 // Hoy y mañana llegan de Render (cada 10 min); el resto de los 14 días, de GitHub Pages.
 // Si Render no responde o sus datos son más antiguos que los de GitHub Pages, se usa GitHub Pages
 // (con su hora de actualización, que la ficha muestra): siempre gana la descarga de Aena más reciente.
@@ -32,7 +44,7 @@ export async function fetchSchedule(number, fetchFn = fetch, liveBase = LIVE_BAS
   try {
     let al = parsed.prefix;
     if (al.length === 3) {
-      al = (await getJson(`${BASE}airlines.json`, fetchFn))?.[al];
+      al = (await loadAirlines(fetchFn))?.[al];
       if (!al) return null;
     }
     const path = `${al}/${parsed.n}.json`;

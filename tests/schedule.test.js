@@ -152,3 +152,19 @@ describe('flightTitle', () => {
     expect(flightTitle({ al: 'JU', n: '571' })).toBe('JU 571');
   });
 });
+
+describe('loadAirlines: una sola descarga del catálogo, compartida', () => {
+  it('búsqueda por OACI, alias y traducción usan la misma descarga; un fallo no se guarda', async () => {
+    const { loadAirlines } = await import('../js/schedule.js');
+    const { findAlias } = await import('../js/aliases.js');
+    const f = vi.fn(async url => (url === 'data/flights/airlines.json' ? { ok: true, json: async () => ({ JAF: 'TB' }) } : { ok: false, json: async () => null }));
+    await fetchSchedule('JAF2632', f, null);
+    await findAlias('JAF2632', f);
+    expect(await loadAirlines(f)).toEqual({ JAF: 'TB' });
+    expect(f.mock.calls.filter(([u]) => u === 'data/flights/airlines.json')).toHaveLength(1);
+    const broken = vi.fn(async () => ({ ok: false, json: async () => null }));
+    expect(await loadAirlines(broken)).toBeNull();
+    expect(await loadAirlines(broken)).toBeNull();
+    expect(broken).toHaveBeenCalledTimes(2);
+  });
+});
