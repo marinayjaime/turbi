@@ -13,21 +13,21 @@
 }
 
 * { box-sizing: border-box; }
-/* Fondo. La foto va en una capa fija del alto del viewport más grande (100lvh: las barras de Safari recogidas), así que
-   cubre toda la pantalla, zonas seguras incluidas, se muestren o no las barras.
-   El html pinta debajo la misma foto con el mismo tamaño (3:4, 1170 × 1560: 75lvh de ancho = 100lvh de alto) para lo que
-   iOS dibuja fuera de la capa fija (la franja inferior de la app instalada), y el tono del borde inferior de la foto para
-   el rebote del scroll: sin él, iOS pinta ahí el azul liso del manifest. */
-html { background: #939ba1 url('../img/sky.jpg') center top / max(100vw, 75vh) auto no-repeat;
+/* Fondo. La foto (3:4, 1170 × 1560) se pinta con el tamaño que le daría cover en el viewport más grande:
+   al menos 100vw de ancho y 75lvh de ancho (= 100lvh de alto). Y se REPITE: donde termine una copia empieza otra.
+   - Capa fija (body::before): sobresale medio viewport por arriba y por abajo, más que cualquier desplazamiento del
+     viewport visual (barras de Safari, teclado); la copia central queda centrada en la pantalla.
+   - html: la misma foto repetida en todo el lienzo, para lo que iOS muestre fuera de la capa fija.
+   El color solo tiñe las barras de Safari: debajo de la foto nunca queda lienzo sin foto. */
+html { background: #939ba1 url('../img/sky.jpg') center top / max(100vw, 75vh) auto repeat;
   background-size: max(100vw, 75lvh) auto; }
 body { margin: 0; background: transparent; color: var(--text); }
-/* Overscan: la capa sobresale un 20 % del viewport más grande por arriba y por abajo, para que haya foto detrás de
-   cualquier franja que iOS muestre de más. Es fija: no alarga el documento ni crea scroll. */
 body::before {
   content: ''; position: fixed; left: 0; right: 0; z-index: -1;
-  top: -20vh; bottom: -20vh;
-  top: -20lvh; bottom: -20lvh;
-  background: url('../img/sky.jpg') center / cover no-repeat;
+  top: -50vh; bottom: -50vh;
+  top: -50lvh; bottom: -50lvh;
+  background: url('../img/sky.jpg') center / max(100vw, 75vh) auto repeat;
+  background-size: max(100vw, 75lvh) auto;
 }
 .panel {
   background: var(--glass);
@@ -56,6 +56,10 @@ main {
   display: grid; align-content: center;
   padding-block: calc(max(env(safe-area-inset-top), env(safe-area-inset-bottom)) + 16px);
 }
+/* Con el teclado abierto (un campo con el foco), el alto mínimo es 100svh: una unidad estática que no cambia con el
+   teclado ni con las barras. Así el panel no se vuelve a centrar en la caja reducida; iOS solo desplaza lo justo para
+   que el campo quede visible. Con el teclado cerrado, en la pantalla inicial 100dvh = 100svh: sin salto al cerrar. */
+.screen:focus-within { min-height: 100vh; min-height: 100svh; }
 .screen > .panel { margin-bottom: 0; }
 /* La ficha del vuelo conserva su flujo y su scroll normales. */
 #result-view { padding: calc(env(safe-area-inset-top) + 16px) 0 calc(env(safe-area-inset-bottom) + 32px); }

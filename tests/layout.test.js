@@ -44,8 +44,10 @@ describe('pantallas centradas (inicio y carga)', () => {
     expect(values('main', 'padding')).toEqual(['0 20px']);
   });
 
-  it('sin 100svh (el viewport pequeño deja el centro por encima del visible)', () => {
-    expect(css).not.toMatch(/100svh/);
+  it('100svh solo con el teclado abierto (:focus-within): con el teclado cerrado manda 100dvh', () => {
+    expect(values('.screen:focus-within', 'min-height')).toEqual(['100vh', '100svh']);
+    const svh = [...css.matchAll(/([^{}]+)\{[^{}]*100svh[^{}]*\}/g)].map(m => m[1].trim());
+    expect(svh).toEqual(['.screen:focus-within']);
   });
 
   it('el error, que siempre se muestra con la pantalla de inicio, va dentro de ella (visible bajo el panel)', () => {
@@ -61,19 +63,21 @@ describe('la ficha del vuelo conserva su flujo', () => {
 });
 
 describe('fondo a pantalla completa', () => {
-  it('capa fija con overscan: sobresale por arriba y por abajo (20lvh, respaldo 20vh), foto con cover y centrada', () => {
+  const SIZE = ['max(100vw, 75lvh) auto'];   // 3:4 → 75lvh de ancho = 100lvh de alto: lo que daría cover en el viewport
+  it('capa fija con overscan de medio viewport por arriba y por abajo (50lvh, respaldo 50vh)', () => {
     expect(values('body::before', 'position')).toEqual(['fixed']);
-    expect(values('body::before', 'top')).toEqual(['-20vh', '-20lvh']);
-    expect(values('body::before', 'bottom')).toEqual(['-20vh', '-20lvh']);
+    expect(values('body::before', 'top')).toEqual(['-50vh', '-50lvh']);
+    expect(values('body::before', 'bottom')).toEqual(['-50vh', '-50lvh']);
     expect(values('body::before', 'height')).toEqual([]);
-    expect(values('body::before', 'background')).toEqual(["url('../img/sky.jpg') center / cover no-repeat"]);
   });
 
-  it('el html pinta la misma foto y el tono de su borde inferior: nunca el azul liso del manifest', () => {
+  it('la foto se repite en la capa fija y en el html: donde acaba una copia empieza otra, nunca el color', () => {
+    expect(values('body::before', 'background')).toEqual(["url('../img/sky.jpg') center / max(100vw, 75vh) auto repeat"]);
+    expect(values('body::before', 'background-size')).toEqual(SIZE);
     const [bg] = values('html', 'background');
-    expect(bg).toMatch(/^#939ba1 url\('\.\.\/img\/sky\.jpg'\)/);
+    expect(bg).toMatch(/url\('\.\.\/img\/sky\.jpg'\) center top \/ max\(100vw, 75vh\) auto repeat$/);
+    expect(values('html', 'background-size')).toEqual(SIZE);
+    expect(css).not.toMatch(/no-repeat[^;]*sky\.jpg|sky\.jpg[^;]*no-repeat/);
     expect(bg).not.toMatch(/#6f9cc4/i);
-    // mismo tamaño que la capa fija: 3:4, 75lvh de ancho = 100lvh de alto
-    expect(values('html', 'background-size')).toEqual(['max(100vw, 75lvh) auto']);
   });
 });
