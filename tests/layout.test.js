@@ -61,9 +61,11 @@ describe('la ficha del vuelo conserva su flujo', () => {
 });
 
 describe('fondo a pantalla completa', () => {
-  it('capa fija del alto del viewport más grande (100lvh, respaldo 100vh), foto con cover y centrada', () => {
+  it('capa fija con overscan: sobresale por arriba y por abajo (20lvh, respaldo 20vh), foto con cover y centrada', () => {
     expect(values('body::before', 'position')).toEqual(['fixed']);
-    expect(values('body::before', 'height')).toEqual(['100vh', '100lvh']);
+    expect(values('body::before', 'top')).toEqual(['-20vh', '-20lvh']);
+    expect(values('body::before', 'bottom')).toEqual(['-20vh', '-20lvh']);
+    expect(values('body::before', 'height')).toEqual([]);
     expect(values('body::before', 'background')).toEqual(["url('../img/sky.jpg') center / cover no-repeat"]);
   });
 

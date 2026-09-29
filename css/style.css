@@ -21,9 +21,12 @@
 html { background: #939ba1 url('../img/sky.jpg') center top / max(100vw, 75vh) auto no-repeat;
   background-size: max(100vw, 75lvh) auto; }
 body { margin: 0; background: transparent; color: var(--text); }
+/* Overscan: la capa sobresale un 20 % del viewport más grande por arriba y por abajo, para que haya foto detrás de
+   cualquier franja que iOS muestre de más. Es fija: no alarga el documento ni crea scroll. */
 body::before {
-  content: ''; position: fixed; top: 0; left: 0; right: 0; z-index: -1;
-  height: 100vh; height: 100lvh;
+  content: ''; position: fixed; left: 0; right: 0; z-index: -1;
+  top: -20vh; bottom: -20vh;
+  top: -20lvh; bottom: -20lvh;
   background: url('../img/sky.jpg') center / cover no-repeat;
 }
 .panel {
