@@ -34,14 +34,15 @@ describe('fetchAdb', () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
   it('negativa también se guarda; «no disponible» no (se volverá a intentar en otra búsqueda)', async () => {
+    const nowMs = Date.parse('2026-09-26T12:00Z');   // reloj fijo: la caché no caduca según el día en que corra la suite
     const nf = { status: 'not_found', legs: [], fetchedAt: '2026-09-26T11:00:00.000Z' };
     const f = vi.fn(async () => res(nf));
-    await fetchAdb('XX1', '2026-09-26', { fetchFn: f, liveBase: LIVE });
-    await fetchAdb('XX1', '2026-09-26', { fetchFn: f, liveBase: LIVE });
+    await fetchAdb('XX1', '2026-09-26', { fetchFn: f, liveBase: LIVE, nowMs });
+    await fetchAdb('XX1', '2026-09-26', { fetchFn: f, liveBase: LIVE, nowMs });
     expect(f).toHaveBeenCalledTimes(1);
     const u = vi.fn(async () => res({ status: 'unavailable', reason: 'http-429' }));
-    expect(await fetchAdb('XX2', '2026-09-26', { fetchFn: u, liveBase: LIVE })).toEqual({ status: 'unavailable', reason: 'http-429' });
-    await fetchAdb('XX2', '2026-09-26', { fetchFn: u, liveBase: LIVE });
+    expect(await fetchAdb('XX2', '2026-09-26', { fetchFn: u, liveBase: LIVE, nowMs })).toEqual({ status: 'unavailable', reason: 'http-429' });
+    await fetchAdb('XX2', '2026-09-26', { fetchFn: u, liveBase: LIVE, nowMs });
     expect(u).toHaveBeenCalledTimes(2);
   });
   it('Render caído, lento o con error → «no disponible» sin lanzar', async () => {
