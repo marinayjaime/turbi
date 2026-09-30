@@ -13,22 +13,13 @@
 }
 
 * { box-sizing: border-box; }
-/* Fondo. La foto (3:4, 1170 × 1560) se pinta con el tamaño que le daría cover en el viewport más grande:
-   al menos 100vw de ancho y 75lvh de ancho (= 100lvh de alto). Y se REPITE: donde termine una copia empieza otra.
-   - Capa fija (body::before): sobresale medio viewport por arriba y por abajo, más que cualquier desplazamiento del
-     viewport visual (barras de Safari, teclado); la copia central queda centrada en la pantalla.
-   - html: la misma foto repetida en todo el lienzo, para lo que iOS muestre fuera de la capa fija.
-   El color solo tiñe las barras de Safari: debajo de la foto nunca queda lienzo sin foto. */
-html { background: #939ba1 url('../img/sky.jpg') center top / max(100vw, 75vh) auto repeat;
-  background-size: max(100vw, 75lvh) auto; }
-body { margin: 0; background: transparent; color: var(--text); }
-body::before {
-  content: ''; position: fixed; left: 0; right: 0; z-index: -1;
-  top: -50vh; bottom: -50vh;
-  top: -50lvh; bottom: -50lvh;
-  background: url('../img/sky.jpg') center / max(100vw, 75vh) auto repeat;
-  background-size: max(100vw, 75lvh) auto;
+/* Fondo: la foto es el fondo del propio documento (el lienzo), una sola vez, estirada al 100 % del ancho y del alto
+   del documento (sea cual sea su altura). Sin capas fijas, repeticiones ni color de relleno. */
+html {
+  min-height: 100%;
+  background: url('../img/sky.jpg') center top / 100% 100% no-repeat;
 }
+body { margin: 0; min-height: 100%; background: transparent; color: var(--text); }
 .panel {
   background: var(--glass);
   -webkit-backdrop-filter: blur(22px) saturate(160%);
