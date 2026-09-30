@@ -351,3 +351,10 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
   font: inherit; cursor: pointer; }
 .leg-option small { color: var(--muted); }
 .leg-option.selected { border-color: var(--accent, #0a84ff); box-shadow: 0 0 0 1px var(--accent, #0a84ff) inset; }
+
+/* Experimento solo móvil: el documento mide al menos el viewport grande (lienzo real detrás de las barras de Safari)
+   y sin la capa fija del fondo; la foto la pinta el html (misma imagen, center top y la misma escala). */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  body, main { min-height: 100vh; min-height: 100lvh; }
+  body::before { display: none; }
+}
