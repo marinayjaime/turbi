@@ -1,6 +1,11 @@
 [
 ["2026-10-19","AHO","BCN",null,null,"01:15",null,1,["FR6832"],"738W","FR"],
+["2026-10-19","BCN","FRA","08:00",null,null,null,1,["DE4326"],"A21N",null],
+["2026-10-19","BCN","TRN","19:55",null,null,null,1,["VY6512"],"A20N","VY"],
+["2026-10-19","BCN","ZRH","06:00",null,null,null,1,["LX1951"],"A21N","LX"],
 ["2026-10-19","GLA","PMI",null,null,"01:30",null,1,["EC7358"],"A32A","EC"],
 ["2026-10-19","LIS","PMI",null,null,"00:30",null,1,["VY3437","QR5518"],"A320",null],
+["2026-10-19","LJU","BCN",null,null,"00:30",null,1,["VY2623","LL5420","IB5683"],"A320",null],
+["2026-10-19","STR","BCN",null,null,"23:50",null,1,["VY1869","IB5387","LL5160","QR3764"],"A20N",null],
 ["2026-10-19","TNG","MAD",null,null,"14:40",0,0,["IB1362","QR5077","BA7271","AT5309","VY5438","AA8589"],"CRJX","YW"]
 ]
