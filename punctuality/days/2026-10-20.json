@@ -1,7 +1,13 @@
 [
 ["2026-10-20","ALC","GLA","07:40",null,null,null,1,["EC5509"],"A319","EC"],
+["2026-10-20","BER","BCN",null,null,"00:45",null,1,["VY1887","LL5170","IB5029","QR4695"],"A321",null],
 ["2026-10-20","DBV","BCN",null,null,"00:35",null,1,["VY7721","IB5599","QR8128","LL5575"],"A20N",null],
 ["2026-10-20","GLA","ALC",null,null,"00:20",null,1,["EC5532"],"A319","EC"],
+["2026-10-20","HAM","BCN",null,null,"00:35",null,1,["VY1823","IB5379","QR3795","LL5152"],"A321",null],
+["2026-10-20","LCY","PMI",null,null,"14:20",null,1,["CJ8485"],"E190","CJ"],
+["2026-10-20","LGW","AGP",null,null,"00:10",null,1,["EC8077"],"A32A","EC"],
 ["2026-10-20","MAN","BCN",null,null,"01:15",null,1,["VY8749","LL5730","LA5830","IB5667","BA8101"],"A20N",null],
-["2026-10-20","NAP","BCN",null,null,"00:05",null,1,["VY6503","LL5523","IB5557","QR3652"],"A20N",null]
+["2026-10-20","NAP","BCN",null,null,"00:05",null,1,["VY6503","LL5523","IB5557","QR3652"],"A20N",null],
+["2026-10-20","NTE","BCN",null,null,"00:50",null,1,["VY2973","IB5442","QR3674","LL5274"],"A20N",null],
+["2026-10-20","PMI","LCY","15:00",null,null,null,1,["CJ8486"],"E190","CJ"]
 ]
