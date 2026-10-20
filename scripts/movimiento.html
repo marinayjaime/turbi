@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Turbi · prueba del movimiento del avión</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    body { background: var(--bg); }
+    main { padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+    .demo-note { font-size: 13px; color: var(--muted); margin: 0 4px 12px; line-height: 1.4; }
+    .demo-btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .demo-btns button { border: 0; border-radius: 999px; padding: 10px 14px; background: var(--card); color: var(--accent);
+      box-shadow: var(--shadow); font: inherit; font-size: 14px; }
+    #log { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin: 8px 4px; min-height: 3em; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="demo-note"><strong>Página de prueba, no es la app.</strong> Usa el mismo mapa de Turbi (js/map.js) con
+      posiciones simuladas a lo largo de PMI → MAD, para ver el movimiento entre dos lecturas. En la app solo se mueve
+      con lecturas ADS-B reales.</p>
+    <section class="card map-card" id="map-card">
+      <h3 class="card-head"><span class="card-title">Radar</span></h3>
+      <div id="map" class="map"></div>
+    </section>
+    <div class="demo-btns">
+      <button type="button" id="next">Nueva lectura</button>
+      <button type="button" id="auto">Automático (cada 8 s)</button>
+      <button type="button" id="lose">Perder la posición (&gt; 60 s)</button>
+      <button type="button" id="other">Otro avión</button>
+    </div>
+    <p id="log"></p>
+  </main>
+  <script type="module">
+    import { createRouteMap } from '../js/map.js';
+    const PMI = { iata: 'PMI', lat: 39.5517, lon: 2.7388 }, MAD = { iata: 'MAD', lat: 40.4719, lon: -3.5626 };
+    const at = f => ({ lat: PMI.lat + (MAD.lat - PMI.lat) * f, lon: PMI.lon + (MAD.lon - PMI.lon) * f });
+    const route = [0, 0.25, 0.5, 0.75, 1].map(at);
+    const map = await createRouteMap(document.getElementById('map'), { origin: PMI, destination: MAD, route });
+    let f = 0.1, aircraft = 'demo|4d225e', timer = null;
+    const log = t => { document.getElementById('log').textContent = `${new Date().toLocaleTimeString('es-ES')} · ${t}`; };
+    // ~8 s de vuelo a 800 km/h son unos 1,8 km: se exagera el paso (×6) para que el desplazamiento se vea en la prueba.
+    const next = () => { f = Math.min(0.95, f + 0.012); const p = at(f); map.setPlane(p, { identity: aircraft }); log(`lectura ${p.lat.toFixed(4)}, ${p.lon.toFixed(4)} (${aircraft})`); };
+    next();
+    document.getElementById('next').onclick = next;
+    document.getElementById('auto').onclick = e => {
+      if (timer) { clearInterval(timer); timer = null; e.target.textContent = 'Automático (cada 8 s)'; return; }
+      timer = setInterval(next, 8000); e.target.textContent = 'Parar automático'; next();
+    };
+    document.getElementById('lose').onclick = () => { map.setPlane(null); log('posición de más de 60 s: sin avión (solo ruta y aeropuertos)'); };
+    document.getElementById('other').onclick = () => { aircraft = aircraft.endsWith('4d225e') ? 'demo|3c6754' : 'demo|4d225e'; f = Math.min(0.95, f + 0.05); next(); };
+  </script>
+</body>
+</html>
