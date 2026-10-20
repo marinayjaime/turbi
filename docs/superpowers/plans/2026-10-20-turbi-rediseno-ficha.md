@@ -46,8 +46,9 @@ de este plan se refieren a él).
 
 1. **Repintado con un desplegable abierto**: una lectura del radar o un refresco de Aena mientras el usuario tiene
    abierto «Horario» o «Detalles avanzados» no lo cierra ni borra el historial de puntualidad ya cargado (Tarea 8).
-2. **Ficha que se queda abierta mucho tiempo en vuelo**: tras 6 y 13 min sin lecturas nuevas, la señal pasa a ámbar,
-   la telemetría se atenúa y el avión del mapa queda hueco. Nada aparenta ser actual (Tareas 2 y 8).
+2. **Ficha que se queda abierta mucho tiempo en vuelo**: pasados 60 s desde la posición, el avión desaparece del mapa;
+   tras 6 y 13 min sin lecturas nuevas, la señal pasa a ámbar y la telemetría se atenúa. Nada aparenta ser actual
+   (Tareas 2 y 8).
 3. **Vuelo que aterriza con el pronóstico en pantalla**: el pronóstico se queda con «Previsión mostrada antes del
    aterrizaje». Si el vuelo se cancela o se desvía, se ve la nota (Tarea 8).
 4. **Datos parciales**: vuelo de AeroDataBox sin foto, sin puntualidad y sin confianza; respuesta del radar del
@@ -86,6 +87,15 @@ de este plan se refieren a él).
 
 ### Tarea 2: modelo de presentación (`js/card-model.js`)
 
+> **Regla (Jaime, 20/10/2026): `card-model.js` es estrictamente presentación.** Recibe los resultados de la lógica
+> actual y decide **cómo mostrarlos**, nunca otra fuente de verdad. No recalcula la ETA (la da `eta.js`), no crea otra
+> confianza (usa `eta.confidence` tal cual), no redefine estados (usa `legPhase`, `flightStatus`/`presentStatus`,
+> `withRadar`, `withLanding` y el `status` de AeroDataBox), no cambia la prioridad Aena / ETA Turbi / AeroDataBox (la hora
+> que muestra es la que ya trae `card.dep`/`card.arr`), no decide por su cuenta si un avión ha aterrizado (lo dice
+> `status.landing` o `legPhase`) y no duplica reglas del radar (los umbrales se importan de `eta.js` y
+> `radar-distance.js`). Solo hace cálculos visuales o derivados: elegir qué bloques mostrar, ordenar hitos, generar
+> barras, etiquetas y formatos. El revisor de cada tarea comprueba esta regla.
+
 **Ficheros:**
 - Crear: `js/card-model.js`
 - Modificar: `js/app.js`: `flightCard()` y `adbCard()` añaden campos al `card` (abajo)
@@ -93,9 +103,9 @@ de este plan se refieren a él).
 
 **Interfaces** (todas puras, con `nowMs` inyectable):
 - Campos nuevos del `card` (los rellena `app.js`; los tests usan objetos literales):
-  - `phase`: `legPhase(leg)` → `'pendiente' | 'en-curso' | 'terminado' | 'cancelado'`. En AeroDataBox:
-    `Arrived` → `terminado`; `Canceled*` / `Diverted` → `cancelado`; con salida real (`leg.dep.runway` o
-    `leg.dep.actual`) → `en-curso`; si no, `pendiente`.
+  - `phase`: `legPhase(leg)` → `'pendiente' | 'en-curso' | 'terminado' | 'cancelado'`. En AeroDataBox,
+    traducción directa de su `status` (sin deducir nada de las horas): `Arrived` → `terminado`; `Canceled*` /
+    `Diverted` → `cancelado`; `Departed` / `EnRoute` / `Approaching` → `en-curso`; el resto → `pendiente`.
   - `depFinal` y `arrFinal`: booleanos. En Aena, de `currentPunctuality(leg).dep/arr.final`; en AeroDataBox, si hay hora
     real o de pista.
   - `timeConfidence`: `eta?.confidence ?? null` (`'high' | 'medium' | 'low' | 'very-low'`). En AeroDataBox, siempre
@@ -140,8 +150,9 @@ de este plan se refieren a él).
   `distanceReference(radar, receivedAtMs).ageAtReceiptS + (nowMs − receivedAtMs) / 1000`. `live` si `ageS < 300`
   (`MAX_EXTRAPOLATION_S`); `stale` si `ageS ≥ STALE_MIN * 60`; si no, `old`. `text` es «X s» por debajo de 60 s y
   «X min» por encima. Devuelve `null` si `radar.state !== 'volando'`.
-- `planeOnMap(radar, receivedAtMs, nowMs) → { lat, lon, stale: boolean, ageMin } | null`. Devuelve `null` sin
-  `lat`/`lon` finitos o si el estado no es `volando`. `stale` si la antigüedad (la misma cuenta que arriba) supera 60 s.
+- `planeOnMap(radar, receivedAtMs, nowMs) → { lat, lon } | null`. Devuelve `null` sin `lat`/`lon` finitos, si el
+  estado no es `volando` o si la antigüedad de la lectura (la misma cuenta que `signalState`) **supera 60 s**. Una
+  posición antigua nunca se pinta: sin avión, solo la ruta y los aeropuertos. No interpola ni extrapola.
 - `turbulenceBars(view, maxBars = 56) → [{ level: 0..3 | null, seg: number }]`: muestreo uniforme de `view.route`
   (un punto por paso de tiempo). `level = null` significa sin datos. `seg` es el índice del tramo de `view.segments`
   que contiene el minuto del punto (`i * durationMin / (n − 1)`). Con más puntos que `maxBars`, se coge uno de cada
@@ -172,7 +183,8 @@ de este plan se refieren a él).
     - 6 min después → `old`;
     - 13 min después → `stale`;
     - `checked` 50 s antes de recibir suma 50 s.
-  - `planeOnMap`: sin `lat` → `null`; a los 61 s → `stale: true`.
+  - `planeOnMap`: sin `lat` → `null`; con `seenS: 5` recibido ahora → `{ lat, lon }` iguales a los recibidos; a los 61 s
+    de antigüedad → `null`; con `state: 'reciente'` → `null`.
   - `turbulenceBars`: 120 puntos → ≤ 56 barras con `seg` correcto en los extremos; punto con `level: null` →
     `level: null`.
   - `roughestSpan`: misma zona → «18:35 – 18:48» con un `view` construido en el test; zonas distintas → «min 35–48»;
@@ -362,8 +374,9 @@ de este plan se refieren a él).
 - `createRouteMap(el, { origin: { iata, lat, lon }, destination: {…}, route: [{ lat, lon }] }) → Promise<RouteMap>`.
   `RouteMap` tiene:
   - `setForecast(view)`: colorea la ruta por nivel (`routeLines`, ya existe) y añade SIGMET y PIREP como hoy;
-  - `setPlane(plane)`: recibe `planeOnMap(...)` o `null`. Crea, mueve o quita un `L.marker` con `divIcon` (icono
-    `plane`); clase `.plane-stale` y *tooltip* «Última posición · hace X min» si `stale`;
+  - `setPlane(plane)`: recibe `planeOnMap(...)` (`{ lat, lon }`) o `null`. Crea, mueve (`setLatLng`) o quita un
+    `L.marker` con `divIcon` (icono `plane`). Con `null`, sin marcador: solo ruta y aeropuertos. No hay marcador de
+    «última posición»;
   - `invalidate()`: `invalidateSize` tras ampliar;
   - `destroy()`.
 - La ruta inicial sale de `buildRoute(origin, destination, 0)` (sin meteorología); `app.js` se la pasa.
@@ -374,7 +387,6 @@ de este plan se refieren a él).
 - [ ] **Paso 1: tests:**
   - `setPlane(null)` no crea un marcador;
   - `setPlane({ lat, lon, stale: false })` crea uno; una segunda llamada lo mueve (`setLatLng`) sin crear otro;
-  - `stale: true` añade `.plane-stale` y el *tooltip* con «hace»;
   - `setPlane(null)` después lo quita;
   - `mapCardHtml('en-curso')` contiene «Radar»;
   - `routeLines` sigue con sus casos.
@@ -444,7 +456,8 @@ de este plan se refieren a él).
   cosas:
   - repinta `.signal` y la celda «Última señal» con `signalState`;
   - añade `.aged` a `.flight .now` si `stale`;
-  - llama a `routeMap.setPlane(...)` cuando cambia `stale`.
+  - llama a `routeMap.setPlane(planeOnMap(...))` cuando el resultado pasa a `null` (posición de más de 60 s): el avión
+    desaparece y queda la ruta.
 
   Se para como `stopDistance`. Ninguna petición.
 - **Confianza en vuelo**: en `paintRadar`, el `base` con ETA nueva lleva `timeConfidence: eta.confidence`, y el `card`
@@ -462,7 +475,8 @@ de este plan se refieren a él).
   - *repintado conserva desplegables*: abrir `details[data-card="schedule"]`, cargar el historial, llegar una lectura
     `volando` → sigue `open` y `#punctuality` conserva el historial;
   - *señal envejece*: lectura `volando` con `seenS: 5` y el reloj simulado que avanza 6 min → `[data-signal-level="old"]`;
-    13 min → `stale` y `.now.aged`; ni una sola petición nueva por el contador (cuenta de `fetch`);
+    13 min → `stale` y `.now.aged`; con `lat`/`lon`, el avión está en el mapa al principio y se quita
+    (`setPlane(null)`) pasados 60 s de antigüedad; ni una sola petición nueva por el contador (cuenta de `fetch`);
   - *aterriza con pronóstico*: pronóstico pintado y después Aena con `sta: 'LND'` → sigue `[data-card="turbulence"]`
     con «Previsión mostrada antes del aterrizaje», sin ninguna petición nueva a Open-Meteo;
   - *cancelado con pronóstico*: Aena con `CAN` → `.note` «Vuelo cancelado.» y ningún `[data-card="turbulence"]`;
@@ -487,6 +501,9 @@ de este plan se refieren a él).
   `sin-senal`, `localizando`, `turb-fuerte`, `conf-baja`, `incompleto`, `aena-antigua`, `solo-adb`, `retrasado`,
   `cancelado`, `desviado`, `tramos`, `alias`, `aterrizado-adsb`, `aterrizado-oficial`, `prev-no-disponible`,
   `simplificado`, `semana`, `consulta`, `carga` y `sin-conexion`.
+- Las capturas de Chrome **no sustituyen** la validación en un iPhone real (Safari y PWA). Lo que dependa de
+  `viewport-fit`, la barra de estado `default`, las zonas seguras, el teclado o las barras de Safari se deja preparado
+  y anotado en la lista de comprobación de la Tarea 10.
 - `scripts/capturas.sh` sirve con `python3 -m http.server` y captura cada estado con Chrome sin interfaz a 390×844 y
   2× (más `programado` y `en-curso` a 1280×900) en `$TMPDIR/turbi-capturas/`.
 
@@ -518,6 +535,11 @@ de este plan se refieren a él).
   `finalizado`.
 - [ ] **Paso 4:** commit `chore: BUILD_ID 2026-10-20.1 y caché turbi-v82 (rediseño claro)`. **No se hace push ni
   deploy.**
-- [ ] **Paso 5:** informar a Jaime de lo pendiente: el *Manual Deploy* de Render (lat/lon) y la prueba en un iPhone
+- [ ] **Paso 5:** añadir a `docs/turbi-roadmap.md` una lista de comprobación para el iPhone real (Safari y PWA
+  instalada): las zonas seguras arriba y abajo con la barra de estado `default`; la consulta centrada con el teclado
+  abierto y cerrado; sin franjas de otro color con las barras de Safari al hacer *scroll*; el mapa ampliado respeta las
+  zonas seguras; los desplegables y el *scroll* de la ficha; y la actualización desde la PWA instalada (aviso de
+  versión nueva).
+- [ ] **Paso 6:** informar a Jaime de lo pendiente: el *Manual Deploy* de Render (lat/lon) y la prueba en un iPhone
   real, en Safari y con la PWA instalada (zonas seguras con la barra de estado `default`, teclado en la consulta,
   *scroll* de la ficha y mapa ampliado).

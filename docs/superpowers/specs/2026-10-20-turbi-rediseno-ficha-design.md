@@ -316,9 +316,10 @@ Cada uno tiene un caso en una página de prueba local (§11).
      (300 s, el umbral existente a partir del cual la distancia deja de moverse); después, ámbar («Sin señal
      reciente»). A partir de `STALE_MIN` (12 min, de `eta.js`), las celdas de telemetría se atenúan y llevan «hace X
      min».
-   - **Avión en el mapa**: se pinta solo con coordenadas de 60 s o menos al recibirlas. Cuando su antigüedad en
-     pantalla supera 60 s, el marcador pasa a gris y hueco, con «Última posición · hace X min». Nunca se mueve sin una
-     lectura nueva.
+   - **Avión en el mapa**: se pinta solo mientras la posición tenga 60 s o menos. Pasado ese tiempo sin una lectura
+     nueva, el avión **desaparece** y quedan la ruta y los aeropuertos; la ficha sigue diciendo que la señal está
+     desactualizada. No hay marcador de «última posición» y la posición no se interpola ni se extrapola (Jaime,
+     20/10/2026).
    Estos umbrales son constantes existentes (o la regla de 60 s aprobada): no se crea lógica nueva de radar.
 
 ## 11. Verificación
@@ -335,3 +336,10 @@ Los valores exactos de espaciado, radios, sombras y tamaños dentro de los rango
 número de barras de la gráfica; el filtro CSS del mapa; cómo se reparten los cambios entre `ui.js`,
 `ui-forecast.js`, `ui-punctuality.js` y módulos nuevos de presentación (`js/icons.js`, `js/ui-card.js`…); y el
 mecanismo de los desplegables (`<details>` o propio), siempre que se cumpla el contrato del DOM del §3.
+
+## 13. Regla de la capa de presentación (Jaime, 20/10/2026)
+`js/card-model.js` es estrictamente presentación: recibe los resultados de la lógica actual (`eta.js`, `legPhase`,
+`presentStatus`, `withRadar`, `withLanding`, `currentPunctuality`, el pronóstico) y decide cómo mostrarlos. No recalcula
+la ETA, no crea otra confianza, no redefine estados, no cambia prioridades entre fuentes, no decide aterrizajes y no
+duplica reglas del radar. Solo hace derivaciones visuales: qué bloques se muestran, orden de hitos, barras, etiquetas y
+formatos.
