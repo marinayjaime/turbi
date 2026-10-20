@@ -1,6 +1,6 @@
 import { LEVELS, CAUSES } from './turbulence.js';
 import { icon } from './icons.js';
-import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars } from './card-model.js';
+import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL } from './card-model.js';
 import { formatLocal } from './time.js';
 
 // dot: el punto de color que sustituye al emoji de antes (verde, ámbar, rojo = ligera, moderada, fuerte).
@@ -102,15 +102,18 @@ function heroHtml(c) {
       </header>`;
 }
 
-// Códigos grandes y la ciudad debajo (findAirport); sin ciudad conocida, solo el código.
+// Códigos grandes y la ciudad debajo (findAirport); sin ciudad conocida, solo el código. Bajo el avión, la duración
+// prevista del vuelo (card.duration), con «≈» si es un cálculo de Turbi (durationEstimated); sin duración, solo el avión.
 function routeHtml(c) {
   const end = (code, city) => `<div class="rc"><strong>${esc(code)}</strong>${city ? `
           <span>${esc(city)}</span>` : ''}
         </div>`;
+  const dur = Number.isFinite(c.duration) ? formatCountdown(c.duration * 60000) : null;
   return `
       <div class="route-codes">
         ${end(c.o, c.cities?.o)}
-        <span class="rc-arrow" aria-hidden="true">${icon('plane', { size: 22 })}</span>
+        <div class="rc-mid"><span class="rc-arrow" aria-hidden="true">${icon('plane', { size: 22 })}</span>${dur ? `
+          <span class="rc-dur">${c.durationEstimated ? '≈ ' : ''}${esc(dur)}</span>` : ''}</div>
         ${end(c.a, c.cities?.a)}
       </div>`;
 }
@@ -245,10 +248,12 @@ function nowHtml(c, phase, nowMs, open) {
 const SIDES = { 'dep-sched': 'Salida', 'dep-real': 'Salida', 'arr-sched': 'Llegada', 'arr-best': 'Llegada' };
 function scheduleHtml(c, mt, open, punctualityBody) {
   const nextDay = Boolean(c.dep && c.arr && c.arr.date > c.dep.date);
+  // La terminal de llegada (Aena), en pequeño bajo el último hito: la de salida ya va en «Ahora».
+  const arrTerminal = c.arr?.terminal ? ` <span class="ms-term">Terminal ${esc(c.arr.terminal)}</span>` : '';
   const items = milestones(c).map(m => `
             <li class="ms ms-${m.kind}"><span class="ms-dot"></span> <span class="ms-time">${esc(m.time)}${
   nextDay && m.kind !== 'pending' && m.key.startsWith('arr') ? '<small>+1</small>' : ''}</span> <span class="ms-cap">${
-  esc(m.caption)}</span> <span class="ms-side">${SIDES[m.key]}</span></li>`).join('');
+  esc(m.caption)}</span> <span class="ms-side">${SIDES[m.key]}</span>${m.key === 'arr-best' ? arrTerminal : ''}</li>`).join('');
   // Nota de una hora estimada por Turbi, si la hora principal no la dice ya.
   const notes = [c.dep, c.arr].filter(s => s?.estimated && s.note && s.note !== mt?.note)
     .map(s => `\n          <p class="ms-note">${esc(s.note)}</p>`).join('');
@@ -296,7 +301,7 @@ function flightSummaryHtml(c) {
   const real = c.depFinal && c.arrFinal ? formatCountdown(c.arrMs - c.depMs) : null;
   const items = [
     Number.isFinite(c.km) && ['distance', 'Distancia en ruta directa', `${thousands(Math.round(c.km))} km`],
-    real && ['clock', c.source === 'aerodatabox' ? 'Tiempo en el aire' : 'Duración real', real],
+    real && ['clock', c.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración real', real],
   ].filter(Boolean);
   if (!items.length) return '';
   return `
@@ -487,8 +492,9 @@ const SIMPLIFIED = 'Cálculo simplificado: los modelos ECMWF y GFS no han dado d
 
 // Cálculo simplificado (v1): respaldo si los modelos ECMWF/GFS no dan datos, y consulta manual. Misma tarjeta de
 // Turbulencias que el pronóstico v2, con la línea que dice que es el cálculo simplificado. sectionOnly: sin la ficha,
-// para #forecast-area.
-export function renderResult(el, view) {
+// para #forecast-area. preLanding (§10.2) y open: como en el pronóstico v2 (la etiqueta tras el aterrizaje y los
+// desplegables abiertos al repintar).
+export function renderResult(el, view, { preLanding = false, open = new Set() } = {}) {
   if (view.note) {
     el.innerHTML = `${flightCardHtml(view.flight)}${turbPlainCardHtml(`<p class="note">${esc(view.note)}</p>`)}`;
     return;
@@ -506,8 +512,9 @@ export function renderResult(el, view) {
         <p class="turb-lead">${v.text}</p>
         <div class="pills">${explainHtml(view.verdict)}${reliabilityHtml(view.reliability)}</div>
         <section id="segments">${segListHtml(rows)}</section>`;
-  const card = turbCardHtml({ summary, body });
-  if (view.sectionOnly) { el.innerHTML = `${card}${DISCLAIMER}`; return; }
+  const card = turbCardHtml({ open, preLanding, summary, body });
+  // En la ficha el aviso legal va al final de la ficha (afterForecastHtml), fuera de #forecast-area.
+  if (view.sectionOnly) { el.innerHTML = card; return; }
   const head = view.flight
     ? flightCardHtml(view.flight)
     : `<div class="summary card query-head"><p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p></div>`;

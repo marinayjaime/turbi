@@ -22,14 +22,18 @@ export function flightPhase(card) {
   return 'programado';
 }
 
-// «42 min», «2 h 15 min», «1 h». null si ya pasó (≤ 0). Por debajo del minuto, «1 min» (nunca «0 min»).
+// «42 min», «2 h 15 min», «1 h»; desde 24 h, días y horas sin minutos («2 d 3 h», «1 d»). null si ya pasó (≤ 0). Por
+// debajo del minuto, «1 min» (nunca «0 min»).
 export function formatCountdown(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return null;
   const total = Math.max(1, Math.round(ms / MIN));
   const h = Math.floor(total / 60), m = total % 60;
+  if (h >= 24) return `${Math.floor(h / 24)} d${h % 24 ? ` ${h % 24} h` : ''}`;
   return h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
 }
 
+// Rótulo de la duración con las horas de pista de AeroDataBox (hora principal y Resumen del vuelo).
+export const AIRBORNE_LABEL = 'Tiempo en el aire';
 const shown = side => side.est ?? side.time; // la hora que ya muestra la ficha en ese lado
 const aside = (label, value) => (value ? { label, value } : null);
 
@@ -51,16 +55,20 @@ export function mainTime(card, nowMs) {
   const base = { time: shown(arr), plusDay: Boolean(card.dep && arr.date > card.dep.date), note: arr.note ?? null };
   if (phase === 'en-curso') return { ...base, label: flying, aside: aside('Llega en', formatCountdown(card.arrMs - nowMs)) };
   const label = card.arrFinal ? 'Llegada final' : card.status?.landing === 'confirmed-landed' ? 'Aterrizado · radar ADS-B' : flying;
-  // Duración solo con salida y llegada reales: con una de las dos prevista sería una cuenta sobre una estimación.
-  return { ...base, label, aside: card.depFinal && card.arrFinal ? aside('Duración', formatCountdown(card.arrMs - card.depMs)) : null };
+  // Duración solo con salida y llegada reales: con una de las dos prevista sería una cuenta sobre una estimación. Con
+  // las horas de pista de AeroDataBox es el tiempo en el aire (la misma etiqueta que el Resumen del vuelo).
+  const durLabel = card.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración';
+  return { ...base, label, aside: card.depFinal && card.arrFinal ? aside(durLabel, formatCountdown(card.arrMs - card.depMs)) : null };
 }
 
 // De dónde salen la hora y el estado que se ven (§5.4). Derivación directa: el radar suma si ve el avión (volando o
-// aterrizado); en curso, sin llegada de Aena (estimación Turbi) y sin radar, la hora es solo de Turbi.
+// aterrizado); en curso o finalizado, sin llegada de Aena (estimación Turbi) y sin radar, la hora es solo de Turbi.
 export function sourceLabel(card) {
   const base = card.source === 'aerodatabox' ? 'AeroDataBox' : 'Aena';
   const radar = ['volando', 'aterrizado'].includes(card.radar?.state);
-  if (card.source !== 'aerodatabox' && card.arr?.estimated && flightPhase(card) === 'en-curso') return radar ? 'Radar + Aena' : 'Estimación Turbi';
+  if (card.source !== 'aerodatabox' && card.arr?.estimated && ['en-curso', 'finalizado'].includes(flightPhase(card))) {
+    return radar ? 'Radar + Aena' : 'Estimación Turbi';
+  }
   return radar ? `Radar + ${base}` : base;
 }
 
@@ -145,8 +153,9 @@ export function planeOnMap(radar, receivedAtMs, nowMs) {
 }
 
 // Barras de la gráfica de turbulencias: muestreo uniforme de view.route (un punto por paso de tiempo, sobre el tiempo
-// en el aire del view). level null = sin datos. seg: el tramo de view.segments que contiene el minuto del punto (el
-// último que empieza antes o en ese minuto; los límites de los tramos están redondeados), para data-seg.
+// en el aire del view). seg: el tramo de view.segments que contiene el minuto del punto (el último que empieza antes o
+// en ese minuto; los límites de los tramos están redondeados), para data-seg. level: el de ese tramo (§9 bis), así la
+// barra dice lo mismo que el detalle que abre; null (rayada) si el punto no tiene datos. Sin tramos, el del punto.
 export function turbulenceBars(view, maxBars = 56) {
   const route = view?.route ?? [];
   const n = route.length;
@@ -158,7 +167,8 @@ export function turbulenceBars(view, maxBars = 56) {
     const min = n > 1 ? (i * view.durationMin) / (n - 1) : 0;
     let seg = 0;
     segs.forEach((s, k) => { if (s.startMin <= min) seg = k; });
-    bars.push({ level: Number.isFinite(route[i].level) ? route[i].level : null, seg });
+    const level = !Number.isFinite(route[i].level) ? null : Number.isFinite(segs[seg]?.level) ? segs[seg].level : route[i].level;
+    bars.push({ level, seg });
   }
   return bars;
 }

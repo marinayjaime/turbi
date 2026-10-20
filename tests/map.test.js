@@ -1,7 +1,7 @@
 // Tarjeta del mapa (js/map.js): título por fase, marcador del avión solo con posición real y Leaflet prescindible.
 // Leaflet se simula con un `L` falso en globalThis: se cuentan marcadores creados, movidos y quitados.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { routeLines, mapCardHtml, createRouteMap } from '../js/map.js';
+import { routeLines, mapCardHtml, mapFactsHtml, createRouteMap } from '../js/map.js';
 
 function fakeLeaflet() {
   const log = { markers: [], moved: [], removed: 0, invalidated: 0, tileOpts: null, mapRemoved: 0 };
@@ -39,6 +39,31 @@ describe('mapCardHtml', () => {
       expect(html).toContain('data-map="expand"');
       expect(html).toContain('<svg');
     });
+});
+
+describe('mapFactsHtml (§5.8, datos bajo el mapa)', () => {
+  const flying = over => ({ phase: 'en-curso', status: { text: 'En vuelo', tone: 'ok' }, aircraft: 'Airbus A320',
+    radar: { state: 'volando', callsign: 'IBE123', match: 'indicativo', ...over } });
+  const facts = html => [...html.matchAll(/<span class="k">([^<]+)<\/span><span class="v">([^<]+)<\/span>/g)].map(m => [m[1], m[2]]);
+  it('en el aire con el radar volando: Indicativo, Avión e Identificación «Directa» (por indicativo)', () => {
+    expect(facts(mapFactsHtml(flying()))).toEqual([['Indicativo', 'IBE123'], ['Avión', 'Airbus A320'], ['Identificación', 'Directa']]);
+  });
+  it('por ruta → «Por ruta»; por transpondedor → el texto de Detalles avanzados', () => {
+    expect(facts(mapFactsHtml(flying({ match: 'ruta' }))).at(-1)).toEqual(['Identificación', 'Por ruta']);
+    expect(facts(mapFactsHtml(flying({ match: 'transpondedor' }))).at(-1)).toEqual(['Identificación', 'Por transpondedor']);
+  });
+  it('solo los datos que existen (sin «—» ni valores por defecto) y escapados', () => {
+    expect(facts(mapFactsHtml({ ...flying({ callsign: null, match: undefined }), aircraft: null }))).toEqual([]);
+    expect(mapFactsHtml({ ...flying(), aircraft: '<b>' })).toContain('&lt;b&gt;');
+  });
+  it('vacío fuera del aire o sin radar «volando»', () => {
+    expect(mapFactsHtml(null)).toBe('');
+    expect(mapFactsHtml({ ...flying(), radar: { state: 'reciente', callsign: 'IBE123' } })).toBe('');
+    expect(mapFactsHtml({ ...flying(), radar: { state: 'localizando' } })).toBe('');
+    expect(mapFactsHtml({ phase: 'pendiente', status: { text: 'Programado' }, aircraft: 'Airbus A320' })).toBe('');
+    // Aterrizado (finalizado) aunque la última lectura fuera «volando»: sin datos bajo el mapa.
+    expect(mapFactsHtml({ ...flying(), status: { text: 'Aterrizado', landing: 'confirmed-landed' } })).toBe('');
+  });
 });
 
 describe('createRouteMap', () => {

@@ -3,6 +3,8 @@
 
 import { esc } from './ui.js';
 import { icon } from './icons.js';
+import { flightPhase } from './card-model.js';
+import { MATCH } from './ui-advanced.js';
 
 const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const SRI = {
@@ -45,9 +47,26 @@ function loadLeaflet() {
 // cancela, la ruta prevista; en vuelo, el radar; ya aterrizado, la ruta realizada.
 const TITLES = { programado: 'Ruta prevista', cancelado: 'Ruta prevista', 'en-curso': 'Radar', finalizado: 'Ruta realizada' };
 
-// Tarjeta del mapa, independiente del pronóstico. #map-facts nace vacío (lo rellena la integración si hay datos);
-// el botón de cerrar solo se ve ampliada (CSS) y ocupa el sitio del de ampliar.
+// Tarjeta del mapa, independiente del pronóstico. #map-facts nace vacío (lo rellena repintado de la ficha con
+// mapFactsHtml); el botón de cerrar solo se ve ampliada (CSS) y ocupa el sitio del de ampliar.
 export const mapTitle = phase => TITLES[phase] ?? TITLES.programado;
+
+// Identificación debajo del mapa (§5.8): «Directa» si el radar lo encontró por su indicativo; por ruta o por
+// transpondedor, el mismo texto que en Detalles avanzados. Otro valor (o ninguno): sin fila.
+const IDENTIFICATION = { ...MATCH, indicativo: 'Directa' };
+
+// Datos bajo el mapa (§5.8), solo en el aire con el radar «volando»: Indicativo (radar.callsign), Avión (modelo) e
+// Identificación. Cada dato solo si existe; en cualquier otro caso, vacío (#map-facts se oculta con :empty).
+export function mapFactsHtml(card) {
+  const r = card?.radar;
+  if (!card || r?.state !== 'volando' || flightPhase(card) !== 'en-curso') return '';
+  const facts = [
+    r.callsign && ['Indicativo', r.callsign],
+    card.aircraft && ['Avión', card.aircraft],
+    IDENTIFICATION[r.match] && ['Identificación', IDENTIFICATION[r.match]],
+  ].filter(Boolean);
+  return facts.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
+}
 
 export function mapCardHtml(phase) {
   const title = mapTitle(phase);

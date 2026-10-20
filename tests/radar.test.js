@@ -187,6 +187,9 @@ describe('posición del avión en la respuesta', () => {
     expect(r.lat).toBe(39.1235);
     expect(r.lon).toBe(2.9877);
   });
+  it('con seen_pos de 60 s exactos (el límite) sí hay lat/lon', () => {
+    expect(flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 60 }, 'IBE1', dest)).toMatchObject({ lat: 39.1, lon: 2.9 });
+  });
   it('con seen_pos de 61 s no hay claves lat/lon', () => {
     const r = flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 61 }, 'IBE1', dest);
     expect(r).not.toHaveProperty('lat');

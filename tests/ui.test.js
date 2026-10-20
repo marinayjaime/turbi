@@ -103,7 +103,8 @@ describe('cálculo v1: misma tarjeta y barras', () => {
     expect(body.querySelector('.explain')).not.toBeNull();
     expect([...body.querySelectorAll('.seg-card strong')].map(s => s.textContent)).toEqual(['Min 30–45 · Moderada', 'Min 45–150 · Ligera']);
     expect(el.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
-    expect(doc.querySelector('.disclaimer')).not.toBeNull();
+    // sectionOnly (#forecast-area): sin aviso legal; lo pone el armazón al final de la ficha (§5.7), una sola vez.
+    expect(doc.querySelector('.disclaimer')).toBeNull();
   });
   it('con la ficha (respaldo a pantalla completa): ficha y después la tarjeta', () => {
     const full = { innerHTML: '' };
@@ -112,6 +113,9 @@ describe('cálculo v1: misma tarjeta y barras', () => {
     const d = dom(full.innerHTML);
     const flight = d.querySelector('.flight'), turb = d.querySelector('[data-card="turbulence"]');
     expect(flight.compareDocumentPosition(turb) & 4).toBe(4); // DOCUMENT_POSITION_FOLLOWING
+    // Pantalla completa: el aviso legal, una vez y al final del resultado.
+    expect(d.querySelectorAll('.disclaimer')).toHaveLength(1);
+    expect(d.body.lastElementChild.className).toBe('disclaimer');
   });
 });
 
@@ -232,6 +236,14 @@ describe('ruta', () => {
     expect(h).toMatch(/<strong>MAD<\/strong>\s*<span>Madrid<\/span>/);
     const none = html(card({ cities: { o: null, a: 'Madrid' } }));
     expect(none).toMatch(/<strong>PMI<\/strong>\s*<\/div>/);
+  });
+  it('la duración prevista entre los códigos, junto al avión; «≈» si la calcula Turbi; sin duración, solo el avión', () => {
+    const mid = h => h.slice(h.indexOf('class="rc-mid"'), h.indexOf('</div>', h.indexOf('class="rc-mid"')));
+    expect(mid(html(card()))).toMatch(/rc-arrow[\s\S]*<span class="rc-dur">1 h 30 min<\/span>/);
+    expect(mid(html(card({ duration: 157, durationEstimated: true })))).toContain('<span class="rc-dur">≈ 2 h 37 min</span>');
+    const none = html(card({ duration: null }));
+    expect(none).toContain('class="rc-arrow"');
+    expect(none).not.toContain('rc-dur');
   });
 });
 
@@ -417,10 +429,21 @@ describe('Horario', () => {
     expect(h).toMatch(/ms-pending[\s\S]*?--:--[\s\S]*?Pendiente/);
   });
   it('llegada estimada por Turbi: «Estimada», sin programada ni «prevista», y su nota visible', () => {
-    const h = block(html(card({ arr: { date: '2026-09-24', time: '18:30', estimated: true, note: 'Estimación Turbi' } })), 'schedule');
+    const whole = html(card({ arr: { date: '2026-09-24', time: '18:30', estimated: true, note: 'Estimación Turbi' } }));
+    const h = block(whole, 'schedule');
     expect(h).toMatch(/ms-turbi[\s\S]*?18:30[\s\S]*?Estimada/);
     expect(h).toContain('Estimación Turbi');
     expect(h).not.toMatch(/[Pp]revista/);
+    // Antes del despegue, en toda la ficha (hora principal, resumen, Horario, Avión): nada se llama «prevista».
+    expect(whole).not.toMatch(/[Pp]revista/);
+  });
+  it('terminal de llegada en pequeño bajo el último hito; sin terminal (o estimación Turbi), nada', () => {
+    const h = block(html(card()), 'schedule');
+    const last = h.slice(h.lastIndexOf('<li class="ms '), h.indexOf('</ol>'));
+    expect(last).toMatch(/<span class="ms-side">Llegada<\/span> <span class="ms-term">Terminal 4<\/span><\/li>/);
+    expect(h.match(/ms-term/g)).toHaveLength(1);
+    expect(block(html(card({ arr: { ...card().arr, terminal: null } })), 'schedule')).not.toContain('ms-term');
+    expect(block(html(card({ arr: { date: '2026-09-24', time: '18:30', estimated: true, note: 'x' } })), 'schedule')).not.toContain('Terminal');
   });
   it('avisos de Aena (otra hora, llegada antes del despegue) visibles sin desplegar', () => {
     const punctuality = { state: 'puntual', band: 'ok', basis: 'arr', dep: { sched: '17:55', time: '17:55', delay: 0, alt: ['18:02'] },
@@ -450,6 +473,23 @@ describe('Horario', () => {
       .toContain('<p class="foot">Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.</p>');
     expect(html({ ...c, dep: { date: '2026-09-24', time: '08:30', estimated: true, note: 'x' } }))
       .toContain('<p class="foot">Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.</p>');
+  });
+});
+
+describe('aterrizado estimado (estimated-landed)', () => {
+  it('chip «Aterrizado», la nota «Según la llegada estimada por Turbi» y la llegada estimada visible', () => {
+    const h = html(card({ phase: 'en-curso', durationEstimated: true, depFinal: true,
+      status: { text: 'Aterrizado', tone: 'ok', note: 'Según la llegada estimada por Turbi', landing: 'estimated-landed' },
+      dep: { ...card().dep, est: '18:12', late: true },
+      arr: { date: '2026-09-24', time: '20:32', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' },
+      arrMs: NOW - 60 * MIN }));
+    expect(h).toContain('data-phase="finalizado"');
+    expect(h).toMatch(/<span class="chip status tone-ok">Aterrizado<\/span>\s*<p class="status-note">Según la llegada estimada por Turbi<\/p>/);
+    expect(h).toMatch(/class="mt-time turbi">20:32/); // la llegada estimada, en azul (no es un dato oficial)
+    expect(h).toContain('Llegada estimada');
+    expect(block(h, 'schedule')).toMatch(/ms-turbi[\s\S]*?20:32[\s\S]*?Estimada/);
+    expect(h).toMatch(/Fuente<\/span><span class="v">Estimación Turbi<\/span>/);
+    expect(h).not.toMatch(/Aterrizado · radar|Llegada final|telemetry/);
   });
 });
 

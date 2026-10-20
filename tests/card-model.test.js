@@ -47,6 +47,13 @@ describe('formatCountdown', () => {
     expect(formatCountdown(0)).toBeNull();
     expect(formatCountdown(-5 * MIN)).toBeNull();
   });
+  it('desde 24 h, días y horas sin minutos; con horas exactas, solo los días', () => {
+    expect(formatCountdown((23 * 60 + 59) * MIN)).toBe('23 h 59 min');
+    expect(formatCountdown(24 * 60 * MIN)).toBe('1 d');
+    expect(formatCountdown((27 * 60 + 40) * MIN)).toBe('1 d 3 h');
+    expect(formatCountdown((50 * 60 + 5) * MIN)).toBe('2 d 2 h');
+    expect(formatCountdown(72 * 60 * MIN)).toBe('3 d');
+  });
 });
 
 describe('mainTime', () => {
@@ -78,6 +85,11 @@ describe('mainTime', () => {
     expect(t).toMatchObject({ time: '11:05', label: 'Llegada final' });
     expect(t.aside).toEqual({ label: 'Duración', value: '1 h 25 min' });
   });
+  it('AeroDataBox con horas de pista reales → el dato se rotula «Tiempo en el aire», como en el Resumen del vuelo', () => {
+    const t = mainTime(card({ source: 'aerodatabox', phase: 'terminado', depFinal: true, arrFinal: true, timeConfidence: null,
+      depMs: NOW - 120 * MIN, arrMs: NOW - 35 * MIN }), NOW);
+    expect(t.aside).toEqual({ label: 'Tiempo en el aire', value: '1 h 25 min' });
+  });
   it('aterrizado por ADS-B sin llegada final de Aena → «Aterrizado · radar ADS-B», sin duración', () => {
     const t = mainTime(card({ phase: 'en-curso', depFinal: true, status: { text: 'Aterrizado', tone: 'ok', landing: 'confirmed-landed' },
       radar: { state: 'aterrizado' }, arr: arr({ est: '11:10' }), arrMs: NOW - 5 * MIN }), NOW);
@@ -98,6 +110,13 @@ describe('sourceLabel', () => {
     expect(sourceLabel(card({ source: 'aerodatabox', radar: { state: 'aterrizado' }, status: { text: 'Aterrizado', landing: 'confirmed-landed' } })))
       .toBe('Radar + AeroDataBox');
     expect(sourceLabel(card({ phase: 'en-curso', arr: turbiArr }))).toBe('Estimación Turbi');
+  });
+  it('finalizado con la llegada estimada por Turbi (estimated-landed) → «Estimación Turbi», no «Aena»', () => {
+    const landed = card({ phase: 'en-curso', arr: turbiArr, status: { text: 'Aterrizado', tone: 'ok', landing: 'estimated-landed' } });
+    expect(sourceLabel(landed)).toBe('Estimación Turbi');
+    expect(sourceLabel(card({ phase: 'terminado', arr: turbiArr }))).toBe('Estimación Turbi');
+    // Programado con la llegada aún estimada: la hora que se ve es la salida de Aena.
+    expect(sourceLabel(card({ arr: turbiArr }))).toBe('Aena');
   });
   it('Aena sin llegada publicada en curso, con el radar viéndolo → «Radar + Aena»', () => {
     expect(sourceLabel(card({ phase: 'en-curso', arr: turbiArr, radar: volando() }))).toBe('Radar + Aena');
@@ -241,6 +260,13 @@ describe('turbulenceBars', () => {
     expect(bars[0]).toEqual({ level: 0, seg: 0 });
     expect(bars.at(-1).seg).toBe(2);
     expect(bars.find((_, k) => k * 3 === 42).seg).toBe(1); // minuto 42
+  });
+  it('cada barra toma el nivel del TRAMO que la contiene, no el del punto (§9 bis)', () => {
+    const bars = turbulenceBars(view);
+    const levels = [0, 2, 1];
+    for (const b of bars) expect(b.level).toBe(levels[b.seg]);
+    expect(bars.find((_, k) => k * 3 === 45).level).toBe(2); // el punto 45 dice nivel 1, pero su tramo es moderado
+    expect(bars.find((_, k) => k * 3 === 3).level).toBe(0); // el punto 3 dice nivel 3, pero su tramo es nulo
   });
   it('punto sin datos → level null', () => {
     const r = route(10);

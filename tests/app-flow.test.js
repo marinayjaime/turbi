@@ -1586,8 +1586,8 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
     await search('IB715', d);
     await until(() => $('.telemetry') && area().includes(FORECAST_UNAVAILABLE), 'ficha completa');
-    const blocks = [...$('#result').children].map(c => (c.matches('.summary') ? '.flight' : c.id || c.dataset.card));
-    expect(blocks).toEqual(['.flight', 'forecast-area', 'map-card', 'advanced']);
+    const blocks = [...$('#result').children].map(c => (c.matches('.summary') ? '.flight' : c.matches('.disclaimer') ? 'disclaimer' : c.id || c.dataset.card));
+    expect(blocks).toEqual(['.flight', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
     expect($('#map-card .card-title').textContent).toBe('Radar'); // en curso
   });
 
@@ -1640,6 +1640,51 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       // El contador no pide nada: solo puede haber refrescos de Aena (su propio temporizador), nunca radar ni meteorología.
       expect(calls.slice(before).filter(u => !u.includes('/flights/'))).toEqual([]);
     } finally { vi.useRealTimers(); }
+  });
+
+  it('primeros 60 s: el contador solo reescribe «Última señal» (Detalles avanzados no se repinta: ni foco ni toques se pierden)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { L, log } = fakeLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
+      await networkIdle();
+      $('details[data-card="advanced"]').open = true;
+      const adsb = $('#adv-flight [data-card="adv-adsb"]');
+      adsb.open = true;
+      const signal = () => $('#adv-flight .adv-signal .v').textContent;
+      const position = () => [...document.querySelectorAll('#adv-flight .kv')].find(r => r.querySelector('.k').textContent === 'Posición').querySelector('.v').textContent;
+      const first = signal();
+      await vi.advanceTimersByTimeAsync(30000);
+      expect($('#adv-flight [data-card="adv-adsb"]')).toBe(adsb); // el mismo nodo: no se ha repintado #adv-flight
+      expect(signal()).not.toBe(first); // pero «Última señal» sí avanza
+      expect(signal()).toMatch(/^hace \d+ s$/);
+      expect(position()).toBe('51.2000, -0.9000'); // el avión aún está en el mapa: la posición, sin antigüedad
+      await vi.advanceTimersByTimeAsync(30000); // 65 s: el avión sale del mapa
+      expect(planeOnScreen(log)).toBe(false);
+      expect($('#adv-flight [data-card="adv-adsb"]')).not.toBe(adsb); // ahora sí se repinta (una vez), conservando lo abierto
+      expect($('#adv-flight [data-card="adv-adsb"]').open).toBe(true);
+      expect(position()).toBe('51.2000, -0.9000 · hace 1 min');
+      const repainted = $('#adv-flight [data-card="adv-adsb"]');
+      await vi.advanceTimersByTimeAsync(60000); // 2 min: mismo nivel («live»), sin repintar; el texto sigue al día
+      expect($('#adv-flight [data-card="adv-adsb"]')).toBe(repainted);
+      expect(position()).toBe('51.2000, -0.9000 · hace 2 min');
+      expect(signal()).toBe('hace 2 min');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('bajo el mapa, en el aire con el radar «volando»: Indicativo, Avión e Identificación', async () => {
+    const { L } = fakeLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, match: 'ruta' }, openMeteo: () => tooMany }));
+    await search('IB715', d);
+    await until(() => $('.telemetry') && $('#map-facts')?.textContent.trim(), 'datos bajo el mapa');
+    const facts = [...document.querySelectorAll('#map-facts .kv')].map(r => [r.querySelector('.k').textContent, r.querySelector('.v').textContent]);
+    expect(facts).toEqual([['Indicativo', 'IBE715'], ['Avión', 'Airbus A321neo'], ['Identificación', 'Por ruta']]);
   });
 
   it('mapa sin coordenadas: la tarjeta del mapa existe y no hay avión', async () => {
@@ -1701,8 +1746,8 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     const T = Date.parse('2026-09-26T12:00:00Z');
     const D = '2026-09-26';
     const flyLeg = over => ({ d: D, o: 'MLA', a: 'BCN', sd: null, sa: '14:40', ea: `${D}T14:40`, st: 'FLY', sta: 'FLY', ac: '738W', ...over });
-    function app(render, radar = null) {
-      const base = network({ flights: { FR1526: { name: 'Ryanair', updated: new Date(T).toISOString(), legs: [flyLeg()] } }, radar, openMeteo: openMeteoOk });
+    function app(render, radar = null, openMeteo = openMeteoOk) {
+      const base = network({ flights: { FR1526: { name: 'Ryanair', updated: new Date(T).toISOString(), legs: [flyLeg()] } }, radar, openMeteo });
       return vi.fn((url, o) => {
         const u = String(url);
         if (u.startsWith(`${LIVE_BASE}/flights/`)) { calls.push(u); return Promise.resolve(json({ name: 'Ryanair', updated: render.updated, legs: render.legs })); }
@@ -1757,6 +1802,54 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       } finally { vi.useRealTimers(); }
     });
 
+    // ECMWF/GFS sin datos → cálculo simplificado (v1) dentro de la sección.
+    const modelsEmpty = url => {
+      const r = openMeteoOk(url);
+      if (!url.includes('models=')) return r;
+      const body = r.json;
+      const strip = x => ({ ...x, hourly: Object.fromEntries(Object.entries(x.hourly).map(([k, v]) => [k, k === 'time' ? v : v.map(() => null)])) });
+      return { ...r, json: async () => { const b = await body(); return Array.isArray(b) ? b.map(strip) : strip(b); } };
+    };
+
+    it('cálculo simplificado (v1) en pantalla y Aena LND: se conserva con la misma etiqueta (no se sustituye por la nota)', async () => {
+      fake();
+      try {
+        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+        await openApp(app(render, null, modelsEmpty));
+        await search('FR1526', D);
+        await until(() => area().includes('Cálculo simplificado') && $('#forecast-area [data-card="turbulence"]'), 'cálculo simplificado');
+        await networkIdle();
+        expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
+        const meteo = meteoCalls().length;
+        render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
+        render.updated = new Date(T + 600000).toISOString();
+        await advance(630000);
+        await until(() => ($('#result .status')?.textContent ?? '').includes('En tierra'), 'En tierra');
+        expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
+        expect(area()).toContain('Cálculo simplificado');
+        expect(area()).toContain('Previsión mostrada antes del aterrizaje');
+        expect($('#forecast-area .note')).toBeNull();
+        expect(meteoCalls()).toHaveLength(meteo);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('cálculo simplificado (v1) en pantalla y Aena CAN: la nota «Vuelo cancelado.», como con el v2', async () => {
+      fake();
+      try {
+        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+        await openApp(app(render, null, modelsEmpty));
+        await search('FR1526', D);
+        await until(() => area().includes('Cálculo simplificado') && $('#forecast-area [data-card="turbulence"]'), 'cálculo simplificado');
+        await networkIdle();
+        render.legs = [flyLeg({ st: 'CAN', sta: 'CAN' })];
+        render.updated = new Date(T + 600000).toISOString();
+        await advance(630000);
+        await until(() => $('#forecast-area .note'), 'nota');
+        expect($('#forecast-area .note').textContent).toBe('Vuelo cancelado.');
+        expect($('#forecast-area [data-card="turbulence"]')).toBeNull();
+      } finally { vi.useRealTimers(); }
+    });
+
     it('cancelado con pronóstico (Aena CAN): la nota «Vuelo cancelado.» y ninguna tarjeta de pronóstico', async () => {
       fake();
       try {
@@ -1773,6 +1866,8 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         expect($('#forecast-area [data-card="turbulence"]')).toBeNull();
         expect($('#map-card')).not.toBeNull(); // el mapa y los detalles no desaparecen
         expect($('details[data-card="advanced"]')).not.toBeNull();
+        expect(document.querySelectorAll('#result .disclaimer')).toHaveLength(1); // ni el aviso legal (§5.7)
+        expect($('#result').lastElementChild.className).toBe('disclaimer');
       } finally { vi.useRealTimers(); }
     });
 

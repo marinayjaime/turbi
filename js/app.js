@@ -21,9 +21,9 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
   weatherAlertsHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
-import { createRouteMap, wireMapCard, mapTitle } from './map.js';
+import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
 import { flightPhase, signalState, planeOnMap } from './card-model.js';
-import { advancedFlightHtml, advancedHistoryHtml } from './ui-advanced.js';
+import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
@@ -59,6 +59,9 @@ let lastQuery = null;
 let runId = 0; // solo la consulta más reciente puede pintar
 let airportsDb = null;
 let currentView = null; // pronóstico v2 en pantalla (para la timeline interactiva)
+// Cálculo simplificado (v1) pintado en la sección Turbulencias de ESTA ficha (no tiene currentView): §10.2 lo conserva
+// igual que el v2 al aterrizar. Vuelve a null con cada búsqueda (run) y al quitar la ficha (clearFicha).
+let legacyOnScreen = null;
 
 function show(view) {
   els.queryView.hidden = view !== 'query';
@@ -546,7 +549,7 @@ function paintRadar(q, flight, radar, ctx, stale) {
   if (replacement && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(note?.textContent)) note.textContent = replacement;
   // Aterrizado según el radar con el pronóstico de esta consulta en pantalla: se conserva, con su etiqueta (§10.2).
   if (card.radar?.state === 'aterrizado' && forecastOnScreen() && !$in('forecast-area').querySelector('.pre-landing')) {
-    paintForecastSection(currentView, { preLanding: true });
+    paintPreLanding();
   }
 }
 
@@ -601,7 +604,7 @@ async function applyAenaLeg(q, leg, updated, stale) {
     // Llegada final con el pronóstico de esta consulta ya pintado: se conserva con «Previsión mostrada antes del
     // aterrizaje» (§10.2), sin calcular ni pedir nada. Cancelado o desviado: la nota, aunque lo hubiera.
     if (!flags.includes('CAN') && !flags.includes('DES') && forecastOnScreen()) {
-      paintForecastSection(currentView, { preLanding: true });
+      paintPreLanding();
       return;
     }
     const note = flags.includes('CAN') ? 'Vuelo cancelado.' : flags.includes('DES') ? 'Vuelo desviado.'
@@ -759,14 +762,13 @@ async function loadForecastSection(ctx) {
         const { segments, verdict } = analyze(route, await fetchRouteWeather(route));
         if (stale() || !area()) return;
         const legacy = { verdict, reliability: rel, durationMin: route.durationMin, segments, sectionOnly: true };
-        const paint = () => {
-          const tmp = { innerHTML: '' };
-          renderResult(tmp, legacy);
-          area().innerHTML = tmp.innerHTML;
-        };
-        paint();
+        legacyOnScreen = legacy; // en pantalla: al aterrizar se conserva con su etiqueta (§10.2), como el v2
+        // Con el vuelo ya aterrizado (ahora o mientras se calculaba o se ponían los lugares), con la etiqueta, como el v2.
+        const preLanding = () => Boolean(area().querySelector('.pre-landing')) || (Boolean(shownCard) && flightPhase(shownCard) === 'finalizado');
+        paintLegacySection(legacy, { preLanding: preLanding() });
         await nameSegments(segments, q.origin.iata);
-        if (!stale() && area()) paint();
+        // Solo si la tarjeta sigue ahí: una nota que la sustituyó entre medias (cancelado, desviado) no se pisa.
+        if (!stale() && area()?.querySelector('[data-card="turbulence"]')) paintLegacySection(legacy, { preLanding: preLanding() });
         return;
       } catch (err2) {
         if (stale() || !area()) return;
@@ -823,7 +825,7 @@ let signalTimer = null;
 function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; }
 // La ficha deja de estar (otra búsqueda, «Nueva consulta», pantalla de elección, pronóstico guardado): fuera su mapa.
 // No va en stopRadarPoll: applyAenaLeg para el radar con la llegada final y el mapa se queda («Ruta realizada»).
-function clearFicha() { destroyMap(); stopSignal(); shownCard = null; }
+function clearFicha() { destroyMap(); stopSignal(); shownCard = null; legacyOnScreen = null; }
 
 // Qué desplegables (data-card) están abiertos en toda la ficha, Detalles avanzados incluidos.
 const openCards = () => new Set([...els.result.querySelectorAll('details[data-card][open]')].map(d => d.dataset.card));
@@ -853,8 +855,22 @@ function paintAviation(view) {
   if (cat) cat.hidden = !el.innerHTML.trim();
 }
 
-// §10.2: ¿está en pantalla el pronóstico de ESTA consulta? (currentView vuelve a null al empezar cada búsqueda.)
-const forecastOnScreen = () => Boolean(currentView && $in('forecast-area')?.querySelector('[data-card="turbulence"]'));
+// §10.2: ¿está en pantalla el pronóstico de ESTA consulta, v2 o cálculo simplificado v1? (currentView y legacyOnScreen
+// vuelven a null al empezar cada búsqueda.)
+const forecastOnScreen = () => Boolean((currentView || legacyOnScreen) && $in('forecast-area')?.querySelector('[data-card="turbulence"]'));
+// El pronóstico en pantalla, conservado tras el aterrizaje con «Previsión mostrada antes del aterrizaje». Sin peticiones.
+function paintPreLanding() {
+  if (currentView) paintForecastSection(currentView, { preLanding: true });
+  else if (legacyOnScreen) paintLegacySection(legacyOnScreen, { preLanding: true });
+}
+// La tarjeta del cálculo simplificado (renderResult con sectionOnly) en #forecast-area, conservando sus desplegables.
+function paintLegacySection(legacy, { preLanding = false } = {}) {
+  const area = $in('forecast-area');
+  if (!area) return;
+  const tmp = { innerHTML: '' };
+  renderResult(tmp, legacy, { preLanding, open: openCards() });
+  area.innerHTML = tmp.innerHTML;
+}
 // Pinta (o repinta) la tarjeta de Turbulencias con la vista ya calculada, conservando sus desplegables. Sin peticiones.
 function paintForecastSection(view, { preLanding = false } = {}) {
   const area = $in('forecast-area');
@@ -882,10 +898,17 @@ function mountMap(q, stale) {
   }).catch(() => {});
 }
 
+// Indicativo, Avión e Identificación bajo el mapa (mapFactsHtml): solo en el aire con el radar «volando».
+function paintMapFacts(card) {
+  const el = $in('map-facts');
+  if (el) el.innerHTML = mapFactsHtml(card);
+}
+
 // Lo común del armazón (ficha con pronóstico o con nota): Detalles avanzados y el mapa.
 function initFicha(q, flight, stale) {
   shownCard = flight;
   paintAdvancedFlight(flight);
+  paintMapFacts(flight);
   paintHistory(null);
   mountMap(q, stale);
   startSignal(flight, stale);
@@ -910,6 +933,7 @@ function repaintFlight(card, stale) {
   paintHistory(currentView, open);
   const title = $in('map-card')?.querySelector('.card-title');
   if (title) title.textContent = mapTitle(flightPhase(card));
+  paintMapFacts(card);
   routeMap?.setPlane(planeOnMap(card.radar, card.radarReceivedAt, Date.now()));
   if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
   if (els.result.scrollTop !== resultTop) els.result.scrollTop = resultTop;
@@ -918,14 +942,18 @@ function repaintFlight(card, stale) {
 
 // Contador de señal (§10 bis.2): como el radar deja de sondear tras una lectura «volando», la ficha envejece en
 // pantalla. Temporizador encadenado de 1 s (como el de la distancia, nunca setInterval) mientras haya «volando» y la
-// ficha se vea: repinta el indicador y «Última señal» (y Detalles avanzados) cuando cambia el texto, marca «Ahora» como
-// antigua desde STALE_MIN y quita el avión del mapa cuando su posición pasa de 60 s. Cero peticiones.
+// ficha se vea: repinta el indicador y «Última señal» cuando cambia el texto, marca «Ahora» como antigua desde
+// STALE_MIN y quita el avión del mapa cuando su posición pasa de 60 s. En Detalles avanzados solo reescribe los textos
+// de antigüedad (.adv-signal y .adv-age): #adv-flight entero se repinta solo si cambia el nivel de la señal o el avión
+// sale del mapa (la posición pasa a llevar su antigüedad), para no perder el foco ni un toque cada segundo. Cero peticiones.
 function stopSignal() { if (signalTimer !== null) clearTimeout(signalTimer); signalTimer = null; }
 function startSignal(card, stale) {
   stopSignal();
-  if (!signalState(card?.radar, card?.radarReceivedAt, Date.now())) return; // solo «volando» con instante de recepción
+  const first = signalState(card?.radar, card?.radarReceivedAt, Date.now());
+  if (!first) return; // solo «volando» con instante de recepción
   let plane = planeOnMap(card.radar, card.radarReceivedAt, Date.now()) !== null;
   let painted = null;
+  let level = first.level; // el nivel con el que se pintó #adv-flight (initFicha / repaintFlight)
   const tick = () => {
     signalTimer = null;
     const flight = els.result.querySelector('.flight');
@@ -934,11 +962,21 @@ function startSignal(card, stale) {
     const sig = signalState(card.radar, card.radarReceivedAt, now);
     if (!sig) return;
     const key = `${sig.level}|${sig.text}`;
-    if (key !== painted) { painted = key; paintSignal(flight, sig); paintAdvancedFlight(card); }
-    if (plane && !planeOnMap(card.radar, card.radarReceivedAt, now)) { plane = false; routeMap?.setPlane(null); }
+    const planeGone = plane && !planeOnMap(card.radar, card.radarReceivedAt, now);
+    if (planeGone) { plane = false; routeMap?.setPlane(null); }
+    if (key !== painted) { painted = key; paintSignal(flight, sig); }
+    if (sig.level !== level || planeGone) { level = sig.level; paintAdvancedFlight(card); } else paintAdvancedAge(sig);
     signalTimer = setTimeout(tick, TICK_MS);
   };
   signalTimer = setTimeout(tick, TICK_MS);
+}
+// Solo los textos de antigüedad de Datos ADS-B (mismo texto que advancedFlightHtml): el resto de #adv-flight no se toca.
+function paintAdvancedAge(sig) {
+  const el = $in('adv-flight');
+  if (!el) return;
+  const value = el.querySelector('.adv-signal .v');
+  if (value && value.textContent !== `hace ${sig.text}`) value.textContent = `hace ${sig.text}`;
+  for (const age of el.querySelectorAll('.adv-age')) if (age.textContent !== ageSuffix(sig)) age.textContent = ageSuffix(sig);
 }
 // Solo el indicador, la celda «Última señal» y la marca de lectura antigua: la distancia (.tm-remaining) es del otro
 // contador y no se toca. Mismo HTML que la tarjeta (signalHtml / tmOldHtml de js/ui.js).

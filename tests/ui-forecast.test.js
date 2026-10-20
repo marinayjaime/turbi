@@ -211,11 +211,12 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
     for (const id of ['trend', 'timeline', 'altitudes']) expect(html).toContain(`id="${id}"`);
     expect(html).not.toContain('id="fresh"'); // Tarea 8: #fresh vive en Detalles avanzados (si no, id duplicado)
   });
-  it('armazón y ficha con nota: .flight, #forecast-area, el mapa y Detalles avanzados, en ese orden', () => {
+  it('armazón y ficha con nota: .flight, #forecast-area, el mapa, Detalles avanzados y el aviso legal, en ese orden', () => {
     for (const html of [flightShellHtml({ flight, punctuality }), flightNoteHtml({ flight, punctuality, note: 'x' })]) {
       const root = dom(html).body;
-      const blocks = [...root.children].map(c => (c.matches('.summary') ? 'flight' : c.id || c.dataset.card));
-      expect(blocks).toEqual(['flight', 'forecast-area', 'map-card', 'advanced']);
+      const blocks = [...root.children].map(c => (c.matches('.summary') ? 'flight' : c.matches('.disclaimer') ? 'disclaimer' : c.id || c.dataset.card));
+      expect(blocks).toEqual(['flight', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
+      expect(root.querySelectorAll('.disclaimer')).toHaveLength(1); // también con la nota en lugar del pronóstico (§5.7)
       expect(root.querySelector('#map-card .card-title').textContent).toBe('Radar'); // en curso (radar volando)
     }
   });
@@ -336,11 +337,16 @@ describe('tarjeta de Turbulencias', () => {
   it('sin tramos con turbulencia, la lista lo dice', () => {
     expect(segmentListHtml({ ...full, segments: [seg(0, 0, 119)] })).toContain('Ningún tramo con turbulencia.');
   });
-  it('aviso legal fuera de la tarjeta, al final; sin #aviation ni #map; ningún emoji', () => {
+  it('aviso legal fuera de #forecast-area (al final de la ficha, una vez); sin #aviation ni #map; ningún emoji', () => {
     const doc = dom(`<div id="forecast-area">${forecastSectionHtml({ ...full, aviation: { sigmets: [{ label: 'x', crosses: true }], pireps: [] } }, NOW, { preLanding: true })}</div>`);
     const area = doc.querySelector('#forecast-area');
-    expect(area.lastElementChild.className).toBe('disclaimer');
-    expect(area.lastElementChild.textContent).toBe('Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.');
+    expect(area.querySelector('.disclaimer')).toBeNull(); // si una nota sustituye la sección, el aviso no se va con ella
+    const el = { innerHTML: '' };
+    renderForecast(el, { ...full, flight: null, title: 'PMI → MAD', subtitle: 'x', times: '10:00–11:30' }, NOW);
+    const page = dom(el.innerHTML).body;
+    expect(page.querySelectorAll('.disclaimer')).toHaveLength(1);
+    expect(page.lastElementChild.className).toBe('disclaimer');
+    expect(page.lastElementChild.textContent).toBe('Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.');
     expect(area.querySelector('#aviation, #map')).toBeNull();
     expect(area.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
     expect(explainHtml('Turbulento')).not.toMatch(/\p{Extended_Pictographic}/u);

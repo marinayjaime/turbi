@@ -231,11 +231,13 @@ function headHtml(view, nowMs) {
     </div>`;
 }
 
-// Bloques que siguen a #forecast-area, en su orden fijo (§9 bis): la tarjeta del mapa (título según la fase) y
-// «Detalles avanzados». Nunca cambian de sitio: un vuelo que pasa de programado a en curso y a finalizado no recrea el
-// nodo de Leaflet, y cuando una nota sustituye al pronóstico ni el mapa ni los detalles desaparecen.
+// Bloques que siguen a #forecast-area, en su orden fijo (§9 bis): la tarjeta del mapa (título según la fase),
+// «Detalles avanzados» y, al final de la ficha, el aviso legal (§5.7). Nunca cambian de sitio: un vuelo que pasa de
+// programado a en curso y a finalizado no recrea el nodo de Leaflet, y cuando una nota sustituye al pronóstico ni el
+// mapa, ni los detalles, ni el aviso legal desaparecen.
 const afterForecastHtml = (phase, { map = true } = {}) => `${map ? `
-    ${mapCardHtml(phase)}` : ''}${advancedShellHtml()}`;
+    ${mapCardHtml(phase)}` : ''}${advancedShellHtml()}
+    ${DISCLAIMER}`;
 
 // Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar), puntualidad, la
 // tarjeta de turbulencias aún calculando, el mapa y Detalles avanzados.
@@ -265,8 +267,8 @@ export function forecastUnavailableHtml(err) {
       </div>`);
 }
 
-// Contenido de #forecast-area con pronóstico: la tarjeta de Turbulencias (§5.7) y, fuera de ella, el aviso legal.
-// open: los data-card abiertos (los conserva el repintado). preLanding (§10.2): el pronóstico que ya estaba en pantalla
+// Contenido de #forecast-area con pronóstico: la tarjeta de Turbulencias (§5.7). El aviso legal no va aquí sino al
+// final de la ficha (afterForecastHtml), para que siga visible cuando una nota sustituye al pronóstico. open: los data-card abiertos (los conserva el repintado). preLanding (§10.2): el pronóstico que ya estaba en pantalla
 // cuando el vuelo aterriza, con su etiqueta. #fresh y #aviation viven en Detalles avanzados y #map en su tarjeta.
 export function forecastSectionHtml(view, nowMs, { preLanding = false, open = new Set() } = {}) {
   const s = view.summary;
@@ -282,8 +284,7 @@ export function forecastSectionHtml(view, nowMs, { preLanding = false, open = ne
         <section id="segments">${segmentListHtml(view)}</section>
         <section id="altitudes">${altitudeHtml(view.altitudes)}</section>
         <div class="pills">${explainHtml(s.headline)}</div>`;
-  return `${turbCardHtml({ open, preLanding, summary, body })}
-    ${DISCLAIMER}`;
+  return turbCardHtml({ open, preLanding, summary, body });
 }
 
 // Todo junto (pronóstico guardado sin conexión y consultas manuales), con el mismo orden de bloques que la ficha.

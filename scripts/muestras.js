@@ -8,6 +8,7 @@ import { flightCardHtml, renderResult } from '../js/ui.js';
 import { flightShellHtml, flightNoteHtml, forecastSectionHtml, forecastUnavailableHtml, renderForecast, freshnessHtml,
   aviationHtml } from '../js/ui-forecast.js';
 import { advancedFlightHtml, advancedHistoryHtml } from '../js/ui-advanced.js';
+import { mapFactsHtml } from '../js/map.js';
 import { punctualityHtml } from '../js/ui-punctuality.js';
 import { arrivalNote, LANDED_NOTE } from '../js/radar.js';
 import { icon } from '../js/icons.js';
@@ -230,6 +231,8 @@ async function main() {
     : flightShellHtml({ flight: card, punctuality: punct }));
   // Como repaintFlight: la ficha con la hora de la muestra (los armazones la pintan con Date.now()).
   $('.flight').outerHTML = flightCardHtml(card, { nowMs: now, open, punctualityBody: punct ? punctualityHtml(punct) : '' });
+  const facts = $('#map-facts'); // bajo el mapa, como paintMapFacts
+  if (facts) facts.innerHTML = mapFactsHtml(card);
   const area = $('#forecast-area');
   if (s.view) area.innerHTML = forecastSectionHtml(s.view, now, { preLanding: Boolean(s.preLanding), open });
   else if (s.unavailable) area.innerHTML = forecastUnavailableHtml(s.unavailable);
