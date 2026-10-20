@@ -41,7 +41,7 @@ describe('pantallas centradas (inicio y carga)', () => {
   it('nada descentra el panel: sin margen inferior de .panel, sin margin-top en el formulario, sin padding vertical en main', () => {
     expect(values('.screen > .panel', 'margin-bottom')).toEqual(['0']);
     expect(values('#query-form', 'margin-top')).toEqual([]);
-    expect(values('main', 'padding')).toEqual(['0 20px']);
+    expect(values('main', 'padding')).toEqual(['0 16px']);
   });
 
   it('100svh solo con el teclado abierto (:focus-within): con el teclado cerrado manda 100dvh', () => {

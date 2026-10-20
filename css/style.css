@@ -6,6 +6,7 @@
   --border: rgba(15, 40, 80, 0.07);
   --shadow: 0 1px 2px rgba(15, 40, 80, 0.04), 0 8px 24px rgba(15, 40, 80, 0.05);
   --radius: 20px;
+  --pad: 16px;       /* margen interior horizontal de las tarjetas (y de la cabecera de la ficha) */
   --text: #0E2240;   /* azul marino: texto principal */
   --muted: #5B6B82;  /* etiquetas y texto secundario (≥ 4,5:1 sobre blanco) */
   --faint: #93A0B3;  /* lo terciario: marcas, separadores con texto, valores pendientes */
@@ -36,7 +37,7 @@ body {
 main {
   max-width: 480px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 16px; /* el margen lateral de la referencia: tarjetas casi a todo el ancho del iPhone */
 }
 /* Pantallas centradas (inicio y «Consultando el pronóstico…»): cada una ocupa el viewport visible (100dvh, con 100vh de
    respaldo) y centra su contenido en vertical. El margen es el mismo arriba y abajo (la mayor de las dos zonas seguras),
@@ -60,7 +61,7 @@ main {
    .panel es la tarjeta de las pantallas (consulta, carga) y el contenedor actual de la ficha (#result). */
 .card, .panel {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px;
+  box-shadow: var(--shadow); padding: 18px var(--pad); margin-bottom: 16px;
 }
 /* Cabecera de tarjeta: título a la izquierda y chevron a la derecha (gira al desplegar un <details>). */
 .card-head {
@@ -206,16 +207,33 @@ button { font: inherit; cursor: pointer; }
 #forecast-area:empty { display: none; }
 .flight { margin-bottom: 16px; }
 
-/* Cabecera: foto arriba, a sangre, que se funde con el blanco; atribución pequeña debajo (obligatoria). */
+/* Orden visual de las tarjetas según la fase (spec §6). El DOM sigue el orden de bloques de la integración (.flight,
+   #forecast-area, mapa, Detalles avanzados), que no se toca: .flight se repinta entero y el mapa no debe recrearse.
+   Para que las tarjetas se ordenen entre sí, #result es una columna flexible y sus envoltorios (.summary sin tarjeta
+   propia, .flight y #forecast-area) no generan caja (display: contents): sus tarjetas pasan a ser hijas directas.
+   Programado: … Horario, Turbulencias, Avión, Ruta prevista, Detalles. En curso: … Turbulencias, Radar, Detalles.
+   Finalizado: Horario, Ruta realizada, Turbulencias, Resumen del vuelo, Detalles. El aviso legal, al final. */
+#result.panel { display: flex; flex-direction: column; }
+#result > .summary:not(.card), #result > .flight, #result > .summary:not(.card) > .flight, #result > #forecast-area { display: contents; }
+#result > #forecast-area > * { order: 2; }
+#result .flight > .aircraft, #result .flight > .flight-summary { order: 3; }
+#result > .map-card { order: 4; }
+#result:has(.flight[data-phase="finalizado"]) > .map-card { order: 1; }
+#result > .adv { order: 5; }
+#result > #forecast-area > .disclaimer, #result > .disclaimer { order: 6; }
+
+/* Cabecera: foto arriba, a sangre, que se funde con el blanco; la atribución (obligatoria por la licencia) va en
+   pequeño sobre la parte ya fundida de la foto, sin ocupar una línea propia. */
 .flight-main { padding: 0 0 18px; overflow: hidden; }
 .plane-photo { position: relative; margin: 0; }
-.plane-photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--field); }
-.plane-photo::after { content: ""; position: absolute; left: 0; right: 0; top: 0; aspect-ratio: 16 / 9; pointer-events: none;
-  background: linear-gradient(to bottom, transparent 62%, rgba(255, 255, 255, 0.85) 94%, #fff); }
-.plane-photo figcaption { position: relative; z-index: 1; padding: 2px 20px 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
+.plane-photo img { display: block; width: 100%; aspect-ratio: 2 / 1; object-fit: cover; background: var(--field); }
+.plane-photo::after { content: ""; position: absolute; left: 0; right: 0; top: 0; aspect-ratio: 2 / 1; pointer-events: none;
+  background: linear-gradient(to bottom, transparent 60%, rgba(255, 255, 255, 0.85) 92%, #fff); }
+.plane-photo figcaption { position: absolute; z-index: 1; right: 0; bottom: 0; left: 0; padding: 0 var(--pad) 2px; text-align: right;
+  font-size: 10px; line-height: 1.3; color: var(--muted); }
 .plane-photo figcaption a { color: inherit; }
-.hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 20px 0; }
-.hero:not(:has(.plane-photo)) .hero-head { padding-top: 20px; }
+.hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px var(--pad) 0; }
+.hero:not(:has(.plane-photo)) .hero-head { padding-top: 18px; }
 .hero-id { min-width: 0; }
 .hero-num { display: flex; align-items: center; gap: 10px; }
 .hero-num h2 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
@@ -223,9 +241,14 @@ button { font: inherit; cursor: pointer; }
 .hero:has(.plane-photo) .logo { display: none; } /* con foto, el logotipo sobra; si la foto falla, su figura se va y vuelve */
 .hero-sub { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
 .hero-status { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; max-width: 52%; text-align: right; }
-.hero-status .chip { white-space: normal; text-align: right; }
+.hero-status { max-width: 50%; }
+/* Un estado largo («Retrasado · sale 18:40», «Embarcando hace 2 h») se parte en líneas parejas, sin una palabra suelta. */
+.hero-status .chip { padding: 6px 12px; font-size: 14px; white-space: normal; text-align: right; text-wrap: balance; }
+/* En vuelo, el chip es pleno (como «En vuelo» en la referencia): es el estado que más importa de un vistazo. */
+.hero-status .chip.flying.tone-info { background: var(--accent); color: #fff; }
+
 .status-note { margin: 0; font-size: 12px; line-height: 1.3; color: var(--muted); }
-.stale { display: flex; align-items: center; gap: 6px; margin: 12px 20px 0; padding: 8px 12px; border-radius: 10px;
+.stale { display: flex; align-items: center; gap: 6px; margin: 12px var(--pad) 0; padding: 8px 12px; border-radius: 10px;
   background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 13px; font-weight: 500; }
 /* En vuelo: un avión cruza en bucle junto al texto del chip (decorativo; no indica la posición real). */
 .chip.flying { gap: 4px; }
@@ -242,7 +265,7 @@ button { font: inherit; cursor: pointer; }
 }
 
 /* Ruta: códigos grandes, ciudad debajo, avión en medio. */
-.route-codes { display: flex; align-items: flex-start; gap: 16px; padding: 16px 20px 0; }
+.route-codes { display: flex; align-items: flex-start; gap: 16px; padding: 14px var(--pad) 0; }
 .route-codes .rc { display: flex; flex-direction: column; min-width: 0; }
 .route-codes .rc-to { text-align: left; }
 .route-codes strong { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
@@ -250,7 +273,7 @@ button { font: inherit; cursor: pointer; }
 .rc-arrow { flex: none; display: grid; place-items: center; height: 33px; color: var(--accent); }
 
 /* Hora principal: grande a la izquierda; la cuenta atrás o la duración a la derecha. */
-.main-time { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 16px 20px 0; }
+.main-time { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 14px var(--pad) 0; }
 .mt-main { display: flex; flex-direction: column; min-width: 0; }
 .mt-time { font-size: 40px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .mt-time.turbi { color: var(--accent); } /* estimación de Turbi: no es un dato oficial */
@@ -261,17 +284,22 @@ button { font: inherit; cursor: pointer; }
 .mt-aside .kv { align-items: flex-end; }
 .mt-aside .v { font-size: 18px; }
 
-/* Fila de resumen: tres en una fila; por debajo de ~340 px se reparten en dos líneas. Sin dato, sin tarjeta. */
-.tiles { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 20px 0; }
-.tile { flex: 1 1 92px; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 9px 8px; border-radius: 14px;
-  border: 1px solid var(--border); background: var(--card); }
-.tile > .icon { color: var(--muted); }
-.tile .k { font-size: 11px; }
+/* Fila de resumen: tres en una fila. Cada tarjeta parte del ancho de su contenido (flex-basis auto) y se reparte el
+   sobrante, así «Radar + Aena» cabe en una línea junto a «En hora» y «Alta»; un valor aún más largo («Estimación
+   Turbi») se parte en dos líneas dentro de su tarjeta. Por debajo de 340 px de ancho, la que no cabe baja a otra
+   línea (spec §5.4). Sin dato, sin tarjeta. */
+.tiles { display: flex; gap: 6px; padding: 16px 10px 0; }
+@media (max-width: 339px) { .tiles { flex-wrap: wrap; } }
+.tile { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 9px 8px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--card); box-shadow: 0 1px 2px rgba(15, 40, 80, 0.03); }
+.tile > .icon { width: 17px; height: 17px; color: var(--muted); }
+
+.tile .k { font-size: 11px; white-space: nowrap; }
 .tile .v { font-size: 13px; line-height: 1.2; }
 .tile[data-tone="ok"] .v, .tile[data-tone="ok"] > .icon { color: var(--ok); }
 .tile[data-tone="warn"] .v, .tile[data-tone="late"] .v, .tile[data-tone="warn"] > .icon, .tile[data-tone="late"] > .icon { color: var(--warn); }
 .tile[data-tone="bad"] .v, .tile[data-tone="bad"] > .icon { color: var(--bad); }
-.limited { display: flex; align-items: flex-start; gap: 8px; margin: 10px 20px 0; padding: 10px 12px; border-radius: 12px;
+.limited { display: flex; align-items: flex-start; gap: 8px; margin: 10px 10px 0; padding: 10px 12px; border-radius: 12px;
   background: var(--field); font-size: 12px; line-height: 1.4; color: var(--muted); }
 .limited .icon, .ms-alert .icon, .stale .icon { margin-top: 1px; }
 
@@ -284,18 +312,27 @@ details[open] > .card-sum .card-head > .icon:last-child { transform: rotate(90de
 details[open] > .card-body { animation: card-in var(--ease); }
 @keyframes card-in { from { opacity: 0; transform: translateY(-4px); } }
 h3.card-head { text-transform: none; letter-spacing: -0.01em; margin: 0 0 14px; }
+/* Un h3 como título dentro de la cabecera (Detalles avanzados): el aspecto de título de tarjeta, no el del h3 genérico. */
+.card-head h3.card-title { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; text-transform: none; color: var(--text); }
 .card-body .kv { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; }
 .card-body .kv .k { font-size: 13px; }
 .card-body .kv .v { font-size: 14px; text-align: right; }
 
 /* «Ahora». */
 .signal { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
-.tm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); margin-top: 14px; }
-.tm-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 0 4px; text-align: center; }
+.tm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--border); }
+.tm-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 0 2px; text-align: center; }
 .tm-cell + .tm-cell { border-left: 1px solid var(--border); }
+/* Por debajo de 340 px no caben cuatro celdas: dos por fila (nunca tres y una suelta). */
+@media (max-width: 339px) {
+  .tm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+  .tm-cell:nth-child(odd) { border-left: 0; }
+}
+
 .tm-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 4px; border-radius: 50%;
   background: rgba(26, 111, 224, 0.08); color: var(--accent); }
-.tm-label { font-size: 12px; color: var(--muted); }
+.tm-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .tm-value { display: inline-flex; align-items: baseline; gap: 2px; font-size: 16px; font-weight: 600; color: var(--text);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tm-value small { font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -316,9 +353,9 @@ h3.card-head { text-transform: none; letter-spacing: -0.01em; margin: 0 0 14px; 
 .now-title small { font-size: 12px; font-weight: 500; color: var(--muted); }
 .now-meta { font-size: 13px; color: var(--muted); }
 /* Puerta de embarque: línea propia, con el valor grande. */
-.gate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--field); }
+.gate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-top: 12px; padding: 10px 14px; border-radius: 14px; background: var(--field); }
 .gate-k { font-size: 12px; color: var(--muted); width: 100%; }
-.gate-v { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+.gate-v { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
 .gate.pending .gate-v { font-size: 16px; font-weight: 600; color: var(--muted); }
 .gate small { font-size: 12px; color: var(--muted); width: 100%; }
 .tag.warn { background: var(--warn); }
@@ -361,7 +398,9 @@ h3.card-head { text-transform: none; letter-spacing: -0.01em; margin: 0 0 14px; 
 .fs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
 .fs-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0 6px; text-align: center; }
 .fs-item + .fs-item { border-left: 1px solid var(--border); }
-.fs-item > .icon { color: var(--accent); }
+/* Icono en un círculo suave, como las celdas de «Ahora». */
+.fs-item > .icon { box-sizing: content-box; padding: 8px; border-radius: 50%; background: rgba(26, 111, 224, 0.08); color: var(--accent); }
+
 .fs-item .kv { align-items: center; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -384,7 +423,7 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 /* «General» a la izquierda (icono y titular en el color del nivel máximo) y «Tramo más movido» a la derecha. */
 .turb-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .turb-general { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.turb-general .v { font-size: 17px; }
+.turb-general .v { font-size: 16px; }
 .turb-general > .icon, .turb-general .v { color: var(--ink); }
 .lvl-ink0 { --ink: var(--text); } .lvl-ink1 { --ink: var(--ok); } .lvl-ink2 { --ink: var(--warn); } .lvl-ink3 { --ink: var(--bad); }
 .turb-span { flex: none; text-align: right; }
@@ -393,12 +432,14 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 /* Gráfica de barras verticales: cada barra es un botón que ocupa toda la altura (objetivo táctil) y sin huecos entre
    ellas (tocar entre dos barras no abre la tarjeta); lo que se ve es su ::after, de altura fija por nivel. Nula = la
    barra mínima (un punto gris, la línea base punteada); sin datos = rayada. */
-.tchart { display: flex; align-items: stretch; height: 56px; margin-top: 16px; }
+/* Barras finas y separadas, como en la referencia: 3 px de ancho sobre una línea base fina. */
+.tchart { display: flex; align-items: stretch; height: 52px; margin-top: 16px;
+  background: linear-gradient(var(--lvl0), var(--lvl0)) bottom / 100% 1px no-repeat; }
 .tbar { flex: 1 1 0; min-width: 0; display: flex; align-items: flex-end; justify-content: center; padding: 0; border: 0;
   background: none; cursor: pointer; }
-.tbar::after { content: ""; width: calc(100% - 2px); max-width: 6px; min-width: 2px; border-radius: 2px 2px 1px 1px;
+.tbar::after { content: ""; width: 3px; max-width: calc(100% - 1px); border-radius: 2px 2px 0 0;
   transition: box-shadow var(--ease); }
-.tbar.lvl0::after { height: 3px; max-width: 3px; border-radius: 50%; background: var(--faint); opacity: 0.55; }
+.tbar.lvl0::after { height: 3px; border-radius: 50%; background: var(--faint); opacity: 0.55; }
 .tbar.lvl1::after { height: 40%; background: var(--lvl1); }
 .tbar.lvl2::after { height: 70%; background: var(--lvl2); }
 .tbar.lvl3::after { height: 100%; background: var(--lvl3); }
@@ -407,7 +448,7 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 .tbar.selected::after { box-shadow: 0 0 0 1.5px var(--text); }
 .tbar:focus-visible { outline-offset: 0; }
 .ticks { position: relative; height: 18px; margin-top: 6px; }
-.ticks span { position: absolute; transform: translateX(-50%); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+.ticks span { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
   white-space: nowrap; }
 .ticks span:first-child { transform: none; }
 .ticks span:last-child { transform: translateX(-100%); }
@@ -493,6 +534,13 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .map-btn { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--field); color: var(--text); cursor: pointer; }
 .map-btn .icon { color: inherit; }
 .map-close { display: none; }
+/* Tarjeta del mapa como en la referencia: título solo y el botón de ampliar en la esquina del propio mapa (blanco,
+   cuadrado redondeado). El mapa aísla los z-index de Leaflet para que el botón quede siempre encima. */
+.map-card { position: relative; }
+.map-card h3.card-head { margin-bottom: 0; }
+.map-card [data-map="expand"] { position: absolute; z-index: 2; top: 60px; right: calc(var(--pad) + 8px); width: 32px; height: 32px;
+  border-radius: 10px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
+.map-card [data-map="expand"] .icon { width: 16px; height: 16px; }
 /* Ampliado: pantalla completa respetando las zonas seguras; el mapa ocupa el resto bajo la cabecera. */
 .map-card.expanded {
   position: fixed; inset: 0; z-index: 1000; margin: 0; border-radius: 0; display: flex; flex-direction: column;
@@ -501,20 +549,21 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .map-card.expanded .map { flex: 1; height: auto; margin-top: 12px; border-radius: 14px; }
 .map-card.expanded [data-map="expand"] { display: none; }
 .map-card.expanded .map-close { display: grid; }
-.map { height: 260px; border-radius: 14px; margin-top: 18px; overflow: hidden; }
+.map { height: 180px; border-radius: 14px; margin-top: 12px; overflow: hidden; isolation: isolate; }
 .fresh { font-size: 12px; color: var(--muted); margin: 18px 0 0; line-height: 1.5; }
 /* ---- Detalles avanzados (js/ui-advanced.js): tarjeta cerrada con categorías desplegables ---- */
-.adv .adv-cats { gap: 8px; }
+/* Abierta, una lista compacta como en la referencia: cada categoría es una fila (icono, título y chevron que gira al
+   abrir) separada por una línea fina; sin cajas de color. */
+.adv .adv-cats { gap: 0; margin-top: 12px; padding-top: 4px; }
 .adv-cats > div:empty, .adv-cats > div:has(> .fresh:empty) { display: none; }
-/* Cada categoría es una fila-tarjeta en el color de campo: icono, título y chevron que gira al abrir. */
-.adv-cat, details[data-card="adv-weather"] { background: var(--field); border-radius: 14px; margin-bottom: 8px; }
-.adv-sum { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; list-style: none; font-size: 14px; font-weight: 600; color: var(--text); }
+.adv-cat, details[data-card="adv-weather"] { border-bottom: 1px solid var(--border); }
+.adv-sum { display: flex; align-items: center; gap: 10px; padding: 11px 0; cursor: pointer; list-style: none; font-size: 15px; font-weight: 500; color: var(--text); }
 .adv-sum::-webkit-details-marker { display: none; }
-.adv-sum > .icon:first-child { color: var(--accent); flex: none; }
+.adv-sum > .icon:first-child { color: var(--muted); flex: none; }
 .adv-sum > .icon:last-child { margin-left: auto; color: var(--faint); transition: transform var(--ease); }
 details[open] > .adv-sum > .icon:last-child { transform: rotate(90deg); }
 .adv-title { flex: 1; min-width: 0; }
-.adv-body { padding: 0 14px 14px; display: grid; gap: 8px; }
+.adv-body { padding: 0 0 14px 28px; display: grid; gap: 8px; }
 .adv-body .kv { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; }
 .adv-body .kv .k { font-size: 13px; }
 .adv-body .kv .v { font-size: 13px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
@@ -525,10 +574,13 @@ details[open] > .adv-body { animation: card-in var(--ease); }
 details[data-card="adv-weather"] .adv-body { display: block; }
 #aviation h3.section { display: none; }
 #aviation .apt:last-of-type { border-bottom: 0; }
-#adv-sources { padding: 0 14px 6px; }
+/* Frescura del pronóstico (#fresh, la escribe forecastExtras): nota al pie de la tarjeta, tras todas las categorías. */
+#adv-sources { order: 1; padding: 12px 0 0; }
 #adv-sources .fresh { margin: 0; }
+.adv-cats > div:has(.adv-cat):last-of-type .adv-cat:last-child { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .adv-sum > .icon:last-child, details[open] > .adv-body { transition: none; animation: none; } }
-.disclaimer { font-size: 12px; color: var(--muted); margin: 8px 4px 0; font-style: italic; }
+.disclaimer { font-size: 11px; line-height: 1.4; color: var(--muted); margin: 4px 4px 0; }
+
 .offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 #saved-link { margin-top: 4px; }
 .facts > .conf-row:has(details[open]) { grid-template-columns: 1fr; }
@@ -571,7 +623,10 @@ details[data-card="adv-weather"] .adv-body { display: block; }
 
 /* Varios vuelos físicos con el mismo número y fecha: se escoge el tramo por su ruta. Pantalla de elección (sin ficha
    debajo): tarjeta con opciones grandes. Encima de la ficha: una fila compacta de chips de ruta que se desplaza. */
-.leg-switch { display: flex; gap: 8px; margin: 0 0 12px; overflow-x: auto; scrollbar-width: none; }
+/* Encima de la ficha, la fila de chips se desplaza hasta el borde de la pantalla (sangra sobre el margen lateral), así
+   se ve que continúa; el relleno vertical deja ver su sombra. */
+.leg-switch { display: flex; gap: 8px; margin: 0 -16px 10px; padding: 2px 16px 4px; overflow-x: auto; scrollbar-width: none; }
+
 .leg-switch::-webkit-scrollbar { display: none; }
 .leg-switch .leg-title { display: none; } /* encima de la ficha, los chips bastan */
 .leg-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; font: inherit; cursor: pointer;

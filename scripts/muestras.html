@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Página LOCAL de muestras del rediseño (spec 2026-10-20 §8 y §11): pinta la ficha con objetos card y view de prueba
+     para comparar contra la referencia visual. No se publica: no va al SHELL del service worker ni la enlaza index.html.
+     Uso: python3 -m http.server en la raíz y abrir /scripts/muestras.html?estado=<id> (sin estado, la lista). -->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#F4F8FC">
+  <!-- Rutas relativas a la raíz, como en index.html (img/logos/…, css/…). -->
+  <base href="../">
+  <link rel="stylesheet" href="css/style.css">
+  <title>Turbi · muestras</title>
+  <style>
+    /* Solo para las muestras: sin Leaflet ni teselas, el hueco del mapa se ve con el fondo de la app. */
+    .map { background: var(--bg); }
+    .muestras-index { padding: 24px 20px; font-size: 15px; line-height: 1.8; }
+    .muestras-index a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main id="muestras"></main>
+  <script type="module" src="scripts/muestras.js"></script>
+</body>
+</html>
