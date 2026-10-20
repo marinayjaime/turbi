@@ -203,6 +203,11 @@ describe('signalState', () => {
     expect(signalState({ state: 'reciente', ageMin: 3 }, NOW, NOW)).toBeNull();
     expect(signalState(null, NOW, NOW)).toBeNull();
   });
+  it('sin instante de recepción (undefined o NaN) → null, nunca «NaN min»', () => {
+    const r = volando({ seenS: 400 });
+    expect(signalState(r, undefined, NOW)).toBeNull();
+    expect(signalState(r, NaN, NOW)).toBeNull();
+  });
 });
 
 describe('planeOnMap', () => {
@@ -215,6 +220,10 @@ describe('planeOnMap', () => {
   it('a los 60 s aún se pinta; a los 61 s de antigüedad, no', () => {
     expect(planeOnMap(volando(), NOW, NOW + 55000)).toEqual({ lat: 40.1, lon: -3.2 });
     expect(planeOnMap(volando(), NOW, NOW + 56000)).toBeNull();
+  });
+  it('sin instante de recepción (undefined o NaN) → null: un avión de antigüedad desconocida no se pinta', () => {
+    expect(planeOnMap(volando({ seenS: 400, lat: 1, lon: 2 }), undefined, NOW)).toBeNull();
+    expect(planeOnMap(volando({ seenS: 5 }), NaN, NOW)).toBeNull();
   });
   it('estado «reciente» → null', () => {
     expect(planeOnMap(volando({ state: 'reciente' }), NOW, NOW)).toBeNull();

@@ -76,7 +76,8 @@ export function confidenceInfo(level) {
 }
 
 // Retraso de hoy (currentPunctuality) en corto, con su banda. Con la llegada aún sin actualizar y la salida retrasada,
-// currentPunctuality ya habla de la salida: se muestra ese mismo retraso.
+// currentPunctuality ya habla de la salida: se muestra ese mismo retraso. `unchanged` replica la regla de
+// currentPunctuality (js/punctuality.js, «const unchanged = side.delay === null || …»): si cambia allí, cambia aquí.
 export function punctualityTile(p) {
   if (!p || p.state === 'sin-datos') return null;
   if (p.state === 'cancelado') return { text: 'Cancelado', band: p.band };
@@ -128,6 +129,7 @@ const radarAgeS = (radar, receivedAtMs, nowMs) => receiptAgeS(radar, receivedAtM
 export function signalState(radar, receivedAtMs, nowMs) {
   if (radar?.state !== 'volando') return null;
   const ageS = radarAgeS(radar, receivedAtMs, nowMs);
+  if (!Number.isFinite(ageS)) return null; // sin instante de recepción no hay antigüedad: no se inventa «NaN min»
   const level = ageS < MAX_EXTRAPOLATION_S ? 'live' : ageS >= STALE_MIN * 60 ? 'stale' : 'old';
   const text = ageS < 60 ? `${Math.floor(ageS)} s` : `${Math.floor(ageS / 60)} min`;
   return { ageS, level, text };
@@ -137,7 +139,8 @@ export function signalState(radar, receivedAtMs, nowMs) {
 // antigua nunca se pinta (ni «última posición»): sin avión, solo la ruta y los aeropuertos. Sin interpolar.
 export function planeOnMap(radar, receivedAtMs, nowMs) {
   if (radar?.state !== 'volando' || !Number.isFinite(radar.lat) || !Number.isFinite(radar.lon)) return null;
-  if (radarAgeS(radar, receivedAtMs, nowMs) > PLANE_MAX_AGE_S) return null;
+  const ageS = radarAgeS(radar, receivedAtMs, nowMs);
+  if (!Number.isFinite(ageS) || ageS > PLANE_MAX_AGE_S) return null; // antigüedad desconocida = posición no fiable
   return { lat: radar.lat, lon: radar.lon };
 }
 
