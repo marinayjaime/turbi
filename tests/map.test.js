@@ -111,6 +111,33 @@ describe('createRouteMap', () => {
     expect(() => m.setForecast({ route: OPTS.route })).not.toThrow();
   });
 
+  it('clearForecast: vuelve a la ruta sin colorear, sin SIGMET ni PIREP, sin tocar la vista ni el avión', async () => {
+    // Capas vivas por tipo (con sus opciones): se quitan con remove().
+    const live = [];
+    let views = 0;
+    const track = kind => (coords, o = {}) => {
+      const l = { kind, o, addTo() { live.push(this); return this; }, bindTooltip() { return this; }, remove() { live.splice(live.indexOf(this), 1); } };
+      return l;
+    };
+    Object.assign(ctx.L, { polyline: track('line'), polygon: track('polygon'), circleMarker: track('circle'),
+      map: () => ({ fitBounds() { views++; }, setView() { views++; }, setZoom() { views++; }, invalidateSize() {}, remove() {} }) });
+    const m = await createRouteMap(el(), OPTS, { raf: () => 0, caf: () => {}, now: () => 0, reducedMotion: () => true });
+    m.setPlane({ lat: 40, lon: 2.5 });
+    const layers = () => live.map(l => `${l.kind} ${l.o.color}`).sort();
+    const fresh = layers();
+    m.setForecast({ route: [{ lat: 39, lon: 3, level: 3 }, { lat: 41, lon: 2, level: 3 }],
+      aviation: { sigmets: [{ coords: [{ lat: 39, lon: 2 }, { lat: 40, lon: 3 }, { lat: 41, lon: 2 }], label: 'S' }],
+        pireps: [{ lat: 40, lon: 2.5, label: 'P' }] } });
+    expect(live.some(l => l.kind === 'polygon')).toBe(true);
+    expect(live.some(l => l.o.color === '#ff3b30' && l.kind === 'line')).toBe(true);
+    const before = views;
+    m.clearForecast();
+    expect(layers()).toEqual(fresh); // ruta gris y los dos aeropuertos, como recién creado
+    expect(views).toBe(before);
+    expect(ctx.log.markers).toHaveLength(1);
+    expect(ctx.log.removed).toBe(0); // el avión sigue
+  });
+
   it('rechaza la promesa si Leaflet no carga', async () => {
     delete globalThis.L;
     await expect(createRouteMap(el(), OPTS)).rejects.toBeTruthy();

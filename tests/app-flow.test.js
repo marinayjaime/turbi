@@ -2046,22 +2046,29 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
   it('conserva los desplegables abiertos: Horario, Turbulencias (se repinta con el pronóstico) y Detalles avanzados', async () => {
     fake();
     try {
-      const { log } = await firstLoad([A, B], { openMeteo: openMeteoOk });
+      // Tras «Actualizar», el radar primero localiza (repinta .flight) y a los 20 s da el aterrizaje (repinta .flight y
+      // Turbulencias, con su etiqueta): repintados posteriores reales para comprobar que lo cerrado sigue cerrado.
+      await firstLoad([A, { state: 'sin-datos', identifying: true }, { state: 'aterrizado', seenS: 30 }], { openMeteo: openMeteoOk });
       await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
       await networkIdle();
       for (const c of ['schedule', 'turbulence', 'advanced']) $(`details[data-card="${c}"]`).open = true;
       const oldArea = $('#forecast-area');
       $('#refresh').click();
-      await refreshed(log);
-      await until(() => $('#forecast-area') !== oldArea && $('#forecast-area [data-card="turbulence"]'), 'Turbulencias repintada');
+      await until(() => radarCalls().length === 2 && $('#forecast-area') !== oldArea && $('#forecast-area [data-card="turbulence"]'), 'Turbulencias repintada');
       await networkIdle();
       for (const c of ['schedule', 'turbulence', 'advanced']) expect($(`details[data-card="${c}"]`).open, c).toBe(true);
-      // Ya aplicados: si el usuario cierra uno, un repintado posterior no lo vuelve a abrir.
-      $('details[data-card="schedule"]').open = false;
-      $('details[data-card="turbulence"]').open = false;
-      await vi.advanceTimersByTimeAsync(61000); // el avión sale del mapa: se repinta Detalles avanzados
+      // Ya aplicados: si el usuario cierra uno, el repintado siguiente (otro nodo) no lo vuelve a abrir.
+      const schedule = $('details[data-card="schedule"]'), turbulence = $('details[data-card="turbulence"]');
+      schedule.open = false;
+      turbulence.open = false;
+      await advance(25000);
+      await until(() => area().includes('Previsión mostrada antes del aterrizaje'), 'aterrizaje repintado');
+      expect(radarCalls()).toHaveLength(3);
+      expect($('details[data-card="schedule"]')).not.toBe(schedule);
+      expect($('details[data-card="turbulence"]')).not.toBe(turbulence);
       expect($('details[data-card="schedule"]').open).toBe(false);
       expect($('details[data-card="turbulence"]').open).toBe(false);
+      expect($('details[data-card="advanced"]').open).toBe(true);
     } finally { vi.useRealTimers(); }
   }, 30000);
 
@@ -2132,10 +2139,45 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       expect(log.markers).toHaveLength(1);
       expect(log.markers[0].path).toEqual([at(A)]);
       expect(planeOnScreen(log)).toBe(true);
-      const before = calls.filter(u => !u.includes('/flights/')).length;
       await vi.advanceTimersByTimeAsync(60000); // la posición A pasa de 60 s
       expect(planeOnScreen(log)).toBe(false);
-      expect(calls.filter(u => !u.includes('/flights/') && !u.includes('/radar/')).length).toBeLessThanOrEqual(before);
+      expect(log.maps).toBe(1); // se quita el avión, no el mapa
+      expect(log.mapsRemoved).toBe(0);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('dos pulsaciones seguidas (la segunda antes de que se monte la primera): el mismo mapa, sin recrearlo ni tocar la vista', async () => {
+    fake();
+    try {
+      // Las fotos de aerolínea fallan en la primera carga (no se guardan) y en la segunda quedan en espera: la primera
+      // «Actualizar» se queda en buildFlight con el mapa conservado aún sin montar mientras llega la segunda.
+      const { L, log } = fakeLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      const base = app([A, B, B], { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } });
+      let photos = 0, release;
+      await openApp(vi.fn((url, o) => {
+        if (String(url) !== 'data/airline-photos.json') return base(url, o);
+        calls.push(String(url));
+        if (photos++ === 0) return Promise.reject(new TypeError('fallo'));
+        return new Promise(r => { release = () => r(json({})); });
+      }));
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1 && planeOnScreen(log), 'ficha con el avión en A');
+      await networkIdle();
+      const views = log.view.length;
+      $('#refresh').click();
+      await until(() => release, 'primera «Actualizar» esperando en buildFlight');
+      $('#refresh').click();
+      await networkIdle();
+      release();
+      await refreshed(log);
+      await networkIdle();
+      expect(log.maps).toBe(1);
+      expect(log.mapsRemoved).toBe(0);
+      expect(log.view.slice(views)).toEqual([]);
+      expect(log.markers).toHaveLength(1); // el mismo avión, de A a B
+      expect(document.querySelectorAll('#map-card')).toHaveLength(1);
     } finally { vi.useRealTimers(); }
   }, 30000);
 });

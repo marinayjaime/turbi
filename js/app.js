@@ -667,7 +667,10 @@ async function run(q, handoff = null) {
   stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
   stopStatusRefresh(); // y de refrescar el estado de Aena
   const same = handoff && handoff.key === physicalOf(q) ? handoff : null;
-  const kept = same ? keepMap() : null; // el mapa se queda fuera de clearFicha: lo recoge mountMap con el armazón nuevo
+  // El mapa se queda fuera de clearFicha y lo recoge mountMap con el armazón nuevo. Dos pulsaciones seguidas: la
+  // segunda hereda el que conservó la primera y aún no se montó (si no, clearFicha lo destruiría).
+  const kept = same ? (keptMap ?? keepMap()) : null;
+  if (kept) keptMap = null;
   clearFicha(); // y su mapa
   keptMap = kept;
   if (same) reopen = new Set(same.open);
@@ -865,7 +868,8 @@ function keepMap() {
 }
 function dropKeptMap() { keptMap?.map.destroy(); keptMap = null; }
 // El #map-card recién pintado se sustituye por el conservado. Sus botones ya están cableados (wireMapCard busca
-// routeMap al pulsar): no se vuelven a cablear. Sin fitBounds ni otro L.map; el pronóstico lo pone forecastExtras.
+// routeMap al pulsar): no se vuelven a cablear. Sin fitBounds ni otro L.map. El pronóstico anterior se quita (si el
+// nuevo falla, no queda coloreado con datos viejos) y lo vuelve a poner forecastExtras.
 function adoptMap(fresh) {
   const { node, map, card: prev } = keptMap;
   keptMap = null;
@@ -875,6 +879,8 @@ function adoptMap(fresh) {
   if (title) title.textContent = mapTitle(flightPhase(shownCard));
   paintMapFacts(shownCard);
   map.invalidate();
+  // Como recién creado: la ruta sin colorear, sin SIGMET ni PIREP; el pronóstico nuevo la colorea (forecastExtras).
+  map.clearForecast();
   holdPlane(prev);
 }
 // Avión del traspaso: mientras la ficha nueva no tenga lectura del radar, el marcador se queda con la posición anterior,
@@ -967,7 +973,7 @@ function paintForecastSection(view, { preLanding = false } = {}) {
 // quita el avión. Leaflet es prescindible: si no carga, la tarjeta se queda sin mapa y nada más cambia.
 function mountMap(q, stale) {
   const card = $in('map-card'), el = $in('map');
-  if (!card || !el || !q?.origin || !q?.destination) return;
+  if (!card || !el || !q?.origin || !q?.destination) { dropKeptMap(); return; } // sin hueco: el conservado, fuera
   if (keptMap) { adoptMap(card); return; } // «Actualizar» del mismo vuelo físico: el mapa de antes, tal cual
   destroyMap();
   const token = mapToken;

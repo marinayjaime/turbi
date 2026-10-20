@@ -182,6 +182,12 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       };
       frame = clock.raf(step);
     },
+    // Quita lo que puso setForecast: la ruta inicial sin colorear (círculo máximo), sin SIGMET ni PIREP, como recién
+    // creado. No toca la vista (ni centro ni zoom) ni el avión.
+    clearForecast() {
+      forecastLayers.splice(0).forEach(l => l.remove());
+      drawRoute(route);
+    },
     invalidate() { map.invalidateSize(); },
     destroy() { stop(); map.remove(); },
   };
