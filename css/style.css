@@ -503,6 +503,31 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .map { height: 260px; border-radius: 14px; margin-top: 18px; overflow: hidden; }
 .fresh { font-size: 12px; color: var(--muted); margin: 18px 0 0; line-height: 1.5; }
 .turb + .fresh { margin: 0 4px 6px; } /* provisional: #fresh pasa a Detalles avanzados en la Tarea 7 */
+/* ---- Detalles avanzados (js/ui-advanced.js): tarjeta cerrada con categorías desplegables ---- */
+.adv .adv-cats { gap: 8px; }
+.adv-cats > div:empty, .adv-cats > div:has(> .fresh:empty) { display: none; }
+/* Cada categoría es una fila-tarjeta en el color de campo: icono, título y chevron que gira al abrir. */
+.adv-cat, details[data-card="adv-weather"] { background: var(--field); border-radius: 14px; margin-bottom: 8px; }
+.adv-sum { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; list-style: none; font-size: 14px; font-weight: 600; color: var(--text); }
+.adv-sum::-webkit-details-marker { display: none; }
+.adv-sum > .icon:first-child { color: var(--accent); flex: none; }
+.adv-sum > .icon:last-child { margin-left: auto; color: var(--faint); transition: transform var(--ease); }
+details[open] > .adv-sum > .icon:last-child { transform: rotate(90deg); }
+.adv-title { flex: 1; min-width: 0; }
+.adv-body { padding: 0 14px 14px; display: grid; gap: 8px; }
+.adv-body .kv { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; }
+.adv-body .kv .k { font-size: 13px; }
+.adv-body .kv .v { font-size: 13px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+.adv-body code { font-size: 12px; word-break: break-all; }
+.adv-note { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.4; }
+details[open] > .adv-body { animation: card-in var(--ease); }
+/* El tiempo en los aeropuertos (aviationHtml) dentro de su categoría: sin título propio repetido y con bordes suaves. */
+details[data-card="adv-weather"] .adv-body { display: block; }
+#aviation h3.section { display: none; }
+#aviation .apt:last-of-type { border-bottom: 0; }
+#adv-sources { padding: 0 14px 6px; }
+#adv-sources .fresh { margin: 0; }
+@media (prefers-reduced-motion: reduce) { .adv-sum > .icon:last-child, details[open] > .adv-body { transition: none; animation: none; } }
 .disclaimer { font-size: 12px; color: var(--muted); margin: 8px 4px 0; font-style: italic; }
 .offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 #saved-link { margin-top: 4px; }
