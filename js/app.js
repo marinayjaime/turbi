@@ -4,7 +4,7 @@ import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlightResult, canonicalRoute, icaoCallsign } from './flight.js';
 import { aliasOffer, adsbdbVetoes } from './aliases.js';
-import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate } from './adb.js';
+import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate, adbPhase } from './adb.js';
 import { fetchSchedule, loadAirlines, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh, refreshMode } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
@@ -354,6 +354,7 @@ function flightTimes(q, oTz, dTz) {
 function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs = null, depEstimate = null) {
   const { leg, schedule, origin, destination } = q;
   const dep = legDeparture(leg), arr = legArrival(leg);
+  const punctuality = currentPunctuality(leg);
   return {
     al: schedule.al,
     title: flightTitle(schedule),
@@ -370,6 +371,19 @@ function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs 
     updatedAgo: !leg.past && schedule.updated ? agoText(Date.now() - Date.parse(schedule.updated)) : null,
     stale: !leg.past && schedule.updated ? Date.now() - Date.parse(schedule.updated) > 40 * 60000 : false,
     past: Boolean(leg.past),
+    // Para el modelo de presentación (js/card-model.js): lo que ya deciden legPhase, currentPunctuality y eta.js, tal cual.
+    ...presentationFields({ phase: legPhase(leg), punctuality, timeConfidence: eta?.confidence ?? null, source: 'aena', q,
+      physicalKey: physicalFlightKey(leg), aenaCodes: { st: leg.st ?? null, std: leg.std ?? null, sta: leg.sta ?? null } }),
+  };
+}
+
+// Campos del card que consume js/card-model.js (los mismos en Aena y AeroDataBox; el HTML actual no los usa).
+// depFinal / arrFinal: hora real (final) de cada lado; cities: la ciudad de findAirport (null si no se conoce).
+function presentationFields({ phase, punctuality = null, depFinal = punctuality?.dep?.final ?? false, arrFinal = punctuality?.arr?.final ?? false,
+  timeConfidence = null, source, q, aircraftReg = null, aircraftHex = null, physicalKey, aenaCodes = null }) {
+  return {
+    phase, depFinal: Boolean(depFinal), arrFinal: Boolean(arrFinal), timeConfidence, punctuality, source,
+    cities: { o: q.origin?.city ?? null, a: q.destination?.city ?? null }, aircraftReg, aircraftHex, physicalKey, aenaCodes,
   };
 }
 
@@ -393,6 +407,9 @@ function adbCard(q, durationMin) {
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: false,
     dep: side(leg.dep.sched, dep), arr: side(leg.arr.sched, arr), aircraft: leg.aircraft ?? null,
     gateChanged: false, stale: false, past: false, sourceNote: `Horario según AeroDataBox · consultado ${agoText(Date.now() - at)}`,
+    // Fase: traducción directa del estado de AeroDataBox; final: hora de pista. Sin puntualidad ni confianza (no hay ETA).
+    ...presentationFields({ phase: adbPhase(leg.status), depFinal: leg.dep.runway, arrFinal: leg.arr.runway, source: 'aerodatabox', q,
+      aircraftReg: leg.reg ?? null, aircraftHex: leg.modeS ?? null, physicalKey: q.adbKey }),
   };
 }
 
@@ -487,6 +504,10 @@ function paintRadar(q, flight, radar, ctx, stale) {
   // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
   const landedAt = recallLanding(radarKey(q));
   card = withLanding(card, landedAt, q.kind === 'adb' ? {} : q.leg);
+  // Momento en que llegó esta lectura «volando» (envejecimiento de «Última señal» y del avión en js/card-model.js); el
+  // mismo instante que toma la distancia animada como referencia.
+  const receivedAt = Date.now();
+  if (card !== flight && card.radar?.state === 'volando') card = { ...card, radarReceivedAt: receivedAt };
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
   // Solo se sustituye la tarjeta .flight: la puntualidad y la sección Turbulencias (#forecast-area) no se tocan.
@@ -495,7 +516,7 @@ function paintRadar(q, flight, radar, ctx, stale) {
   stopDistance();
   if (card.radar?.state === 'volando') {
     distanceTicker = startRemainingTicker({
-      ref: distanceReference(card.radar, Date.now()),
+      ref: distanceReference(card.radar, receivedAt),
       isActive: () => !stale() && !els.result.closest('[hidden]'),
       render: km => {
         const value = els.result.querySelector('.tm-remaining');
@@ -604,6 +625,10 @@ async function buildFlight(q) {
     ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
       departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg)
     : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin), landedAt, {}) : null;
+  // Para js/card-model.js (cuentas «Sale en / Llega en / Duración»): la salida y la llegada visibles en UTC, sin calcular
+  // nada nuevo. En AeroDataBox, la llegada visible es su mejor hora (adbTimes), la misma que muestra la ficha.
+  const arrMs = q.kind === 'adb' ? adbTimes(q.adbLeg).arr?.utc ?? null : visibleArrivalMs;
+  if (flight) Object.assign(flight, { depMs: departureMs, arrMs, km: profile.km });
   return { oTz, dTz, departureMs, durationMin, profile, forecastProfile, air, etaCtx, eta, officialMs, landedAt, flight };
 }
 

@@ -131,3 +131,6 @@ export function adbRadarGate(leg, meta, nowMs, { plannedMin = null } = {}) {
     arrMs: arr?.utc ?? null, plannedMin: leg.estMin ?? plannedMin });
   return g.mode === 'identify' ? { ...g, mode: 'direct' } : g;
 }
+
+// Fase del card (la de legPhase en Aena): traducción directa del estado de AeroDataBox, sin deducir nada de las horas.
+export const adbPhase = s => (s === 'Arrived' ? 'terminado' : FINAL.has(s) ? 'cancelado' : IN_AIR.has(s) ? 'en-curso' : 'pendiente');

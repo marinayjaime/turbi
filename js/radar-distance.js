@@ -23,10 +23,16 @@ export const TICK_MS = 1000;
 // mostrada al llegar sigue siendo exactamente la del servidor.
 export function distanceReference(radar, receivedAtMs) {
   if (radar?.state !== 'volando' || !Number.isFinite(radar.remainingKm) || radar.remainingKm < 0) return null;
-  const seenS = Number.isFinite(radar.seenS) && radar.seenS >= 0 ? radar.seenS : 0;
-  const checkedMs = typeof radar.checked === 'string' ? Date.parse(radar.checked) : NaN;
+  return { km: radar.remainingKm, kmh: Number.isFinite(radar.kmh) ? radar.kmh : null, at: receivedAtMs, ageAtReceiptS: receiptAgeS(radar, receivedAtMs) };
+}
+
+// La misma antigüedad al recibir, sin exigir remainingKm: la usan también «Última señal» y el avión del mapa
+// (js/card-model.js), para que la ficha, la distancia y el mapa envejezcan con una sola cuenta.
+export function receiptAgeS(radar, receivedAtMs) {
+  const seenS = Number.isFinite(radar?.seenS) && radar.seenS >= 0 ? radar.seenS : 0;
+  const checkedMs = typeof radar?.checked === 'string' ? Date.parse(radar.checked) : NaN;
   const cachedS = Number.isFinite(checkedMs) ? Math.max(0, receivedAtMs - checkedMs) / 1000 : 0;
-  return { km: radar.remainingKm, kmh: Number.isFinite(radar.kmh) ? radar.kmh : null, at: receivedAtMs, ageAtReceiptS: seenS + cachedS };
+  return seenS + cachedS;
 }
 
 // Distancia visible en nowMs. { km, moving }: moving = false cuando ya no se extrapola (freno, señal antigua…).
