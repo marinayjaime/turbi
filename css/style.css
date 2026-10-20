@@ -205,22 +205,6 @@ button { font: inherit; cursor: pointer; }
    Las pantallas de elección (selector de tramos, alias) siguen siendo tarjeta por sí mismas (ver más abajo). */
 #result.panel { background: none; border: 0; box-shadow: none; padding: 0; border-radius: 0; }
 #forecast-area:empty { display: none; }
-.flight { margin-bottom: 16px; }
-
-/* Orden visual de las tarjetas según la fase (spec §6). El DOM sigue el orden de bloques de la integración (.flight,
-   #forecast-area, mapa, Detalles avanzados), que no se toca: .flight se repinta entero y el mapa no debe recrearse.
-   Para que las tarjetas se ordenen entre sí, #result es una columna flexible y sus envoltorios (.summary sin tarjeta
-   propia, .flight y #forecast-area) no generan caja (display: contents): sus tarjetas pasan a ser hijas directas.
-   Programado: … Horario, Turbulencias, Avión, Ruta prevista, Detalles. En curso: … Turbulencias, Radar, Detalles.
-   Finalizado: Horario, Ruta realizada, Turbulencias, Resumen del vuelo, Detalles. El aviso legal, al final. */
-#result.panel { display: flex; flex-direction: column; }
-#result > .summary:not(.card), #result > .flight, #result > .summary:not(.card) > .flight, #result > #forecast-area { display: contents; }
-#result > #forecast-area > * { order: 2; }
-#result .flight > .aircraft, #result .flight > .flight-summary { order: 3; }
-#result > .map-card { order: 4; }
-#result:has(.flight[data-phase="finalizado"]) > .map-card { order: 1; }
-#result > .adv { order: 5; }
-#result > #forecast-area > .disclaimer, #result > .disclaimer { order: 6; }
 
 /* Cabecera: foto arriba, a sangre, que se funde con el blanco; la atribución (obligatoria por la licencia) va en
    pequeño sobre la parte ya fundida de la foto, sin ocupar una línea propia. */
@@ -240,8 +224,7 @@ button { font: inherit; cursor: pointer; }
 .hero-num .logo { height: 26px; width: auto; max-width: 96px; object-fit: contain; }
 .hero:has(.plane-photo) .logo { display: none; } /* con foto, el logotipo sobra; si la foto falla, su figura se va y vuelve */
 .hero-sub { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
-.hero-status { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; max-width: 52%; text-align: right; }
-.hero-status { max-width: 50%; }
+.hero-status { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; max-width: 50%; text-align: right; }
 /* Un estado largo («Retrasado · sale 18:40», «Embarcando hace 2 h») se parte en líneas parejas, sin una palabra suelta. */
 .hero-status .chip { padding: 6px 12px; font-size: 14px; white-space: normal; text-align: right; text-wrap: balance; }
 /* En vuelo, el chip es pleno (como «En vuelo» en la referencia): es el estado que más importa de un vistazo. */
@@ -289,12 +272,25 @@ button { font: inherit; cursor: pointer; }
    Turbi») se parte en dos líneas dentro de su tarjeta. Por debajo de 340 px de ancho, la que no cabe baja a otra
    línea (spec §5.4). Sin dato, sin tarjeta. */
 .tiles { display: flex; gap: 6px; padding: 16px 10px 0; }
-@media (max-width: 339px) { .tiles { flex-wrap: wrap; } }
+@media (max-width: 339px) { .tiles { flex-wrap: wrap; } .tile[data-tone] { flex-shrink: 1; } }
+/* Entre 340 y 400 px las tres caben en una fila con menos relleno, el icono más pequeño y el texto un punto menor. */
+@media (max-width: 399px) {
+  .tiles { gap: 5px; padding: 14px 8px 0; }
+  .tile { gap: 5px; padding: 8px 6px; }
+  .tile > .icon { width: 15px; height: 15px; }
+  .tile .k { font-size: 10.5px; }
+  .tile .v { font-size: 12px; }
+}
+/* Por debajo de 380 px el icono no cabe junto a una palabra larga («Estimación», «AeroDataBox») sin cortarla: se
+   quita y el color del valor sigue diciendo el tono. */
+@media (max-width: 379px) { .tile > .icon { display: none; } .tile { padding: 8px 8px; } }
 .tile { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 9px 8px; border-radius: 14px;
   border: 1px solid var(--border); background: var(--card); box-shadow: 0 1px 2px rgba(15, 40, 80, 0.03); }
 .tile > .icon { width: 17px; height: 17px; color: var(--muted); }
-
-.tile .k { font-size: 11px; white-space: nowrap; }
+/* Puntualidad y Confianza tienen valores cortos y no ceden ancho; lo cede Fuente, cuyo valor («Radar + Aena»,
+   «Estimación Turbi») se parte en dos líneas. La etiqueta nunca se sale: en el peor caso, puntos suspensivos. */
+.tile[data-tone] { flex-shrink: 0; }
+.tile .k { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .v { font-size: 13px; line-height: 1.2; }
 .tile[data-tone="ok"] .v, .tile[data-tone="ok"] > .icon { color: var(--ok); }
 .tile[data-tone="warn"] .v, .tile[data-tone="late"] .v, .tile[data-tone="warn"] > .icon, .tile[data-tone="late"] > .icon { color: var(--warn); }
@@ -536,9 +532,13 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .map-close { display: none; }
 /* Tarjeta del mapa como en la referencia: título solo y el botón de ampliar en la esquina del propio mapa (blanco,
    cuadrado redondeado). El mapa aísla los z-index de Leaflet para que el botón quede siempre encima. */
-.map-card { position: relative; }
-.map-card h3.card-head { margin-bottom: 0; }
-.map-card [data-map="expand"] { position: absolute; z-index: 2; top: 60px; right: calc(var(--pad) + 8px); width: 32px; height: 32px;
+/* La posición del botón sale de las mismas medidas que colocan el mapa (relleno superior de la tarjeta, alto de la
+   cabecera y separación hasta el mapa): queda a 8 px de la esquina del mapa aunque cambie alguna. */
+.map-card { position: relative; --map-pt: 18px; --map-head: 36px; --map-gap: 12px; padding-top: var(--map-pt); }
+.map-card h3.card-head { height: var(--map-head); margin-bottom: 0; }
+.map-card .map { margin-top: var(--map-gap); }
+.map-card [data-map="expand"] { position: absolute; z-index: 2; top: calc(var(--map-pt) + var(--map-head) + var(--map-gap) + 8px);
+  right: calc(var(--pad) + 8px); width: 32px; height: 32px;
   border-radius: 10px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
 .map-card [data-map="expand"] .icon { width: 16px; height: 16px; }
 /* Ampliado: pantalla completa respetando las zonas seguras; el mapa ocupa el resto bajo la cabecera. */
@@ -579,7 +579,7 @@ details[data-card="adv-weather"] .adv-body { display: block; }
 #adv-sources .fresh { margin: 0; }
 .adv-cats > div:has(.adv-cat):last-of-type .adv-cat:last-child { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .adv-sum > .icon:last-child, details[open] > .adv-body { transition: none; animation: none; } }
-.disclaimer { font-size: 11px; line-height: 1.4; color: var(--muted); margin: 4px 4px 0; }
+.disclaimer { font-size: 11px; line-height: 1.4; color: var(--muted); margin: -4px 4px 16px; } /* pegado a Turbulencias, separado del mapa */
 
 .offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 #saved-link { margin-top: 4px; }

@@ -4,7 +4,9 @@
 # estado en $TMPDIR/turbi-capturas/: iPhone (390×844, 2×, página entera), más programado y en-curso en desktop
 # (1280×900). La emulación del dispositivo la hace scripts/capturas.mjs (Chrome no baja de 500 px con --window-size).
 # No sustituye la prueba en un iPhone real (Safari y PWA): zonas seguras, barra de estado, teclado y barras de Safari.
-# Uso: bash scripts/capturas.sh [estado…]   (sin argumentos, todos). ANCHO=320 bash scripts/capturas.sh → a 320 px.
+# Sin argumentos, además, todos los estados a 345 y 320 px (*-345.png, *-320.png): la fila de resumen debe caber en
+# una línea desde 340 px y nada debe desbordar a 320. capturas.mjs avisa de cualquier texto cortado o desbordado.
+# Uso: bash scripts/capturas.sh [estado…]   (sin argumentos, todos). ANCHO=320 bash scripts/capturas.sh → solo a 320 px.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -37,5 +39,8 @@ for e in "${ESTADOS[@]}"; do
 done
 if [ $# -eq 0 ] && [ "$ANCHO" = 390 ]; then
   JOBS+=("programado-desktop|1280|900|estado=programado" "en-curso-desktop|1280|900|estado=en-curso")
+  for w in 345 320; do
+    for e in "${ESTADOS[@]}"; do JOBS+=("$e-$w|$w|$ALTO|estado=$e"); done
+  done
 fi
 node scripts/capturas.mjs "$CHROME" "http://127.0.0.1:$PORT" "$OUT" "${JOBS[@]}"

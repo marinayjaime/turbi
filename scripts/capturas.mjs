@@ -51,12 +51,20 @@ try {
     }
     await sleep(600);
     const full = await evaluate('Math.max(document.documentElement.scrollHeight, innerHeight)');
-    // Nada debe desbordar en horizontal (spec §11: 320 px incluido): se avisa con el elemento más ancho.
-    const wide = await evaluate(`document.documentElement.scrollWidth > innerWidth
-      ? [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 0.5)
-        .map(e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.split(' ').join('.') : '')).slice(0, 5).join(', ')
-      : ''`);
-    if (wide) console.warn(`AVISO ${name}: desborda en horizontal (${wide})`);
+    // Nada debe desbordar en horizontal (spec §11, también a 320 y 345 px): ni el documento ni el contenido de una
+    // tarjeta, una tarjeta de resumen, una etiqueta o un valor (scrollWidth > clientWidth: texto cortado o que se sale,
+    // incluida una etiqueta con puntos suspensivos). Se avisa con los primeros elementos afectados.
+    const wide = await evaluate(`(() => {
+      const name = e => e.tagName.toLowerCase() + (typeof e.className === 'string' && e.className ? '.' + e.className.trim().split(/\\s+/).join('.') : '');
+      const out = [];
+      if (document.documentElement.scrollWidth > innerWidth) out.push('documento');
+      for (const e of document.querySelectorAll('.card, .tile, .kv, .kv > *, .tm-cell, .tm-cell > *, .hero-head, .route-codes, .main-time, .ms, .chip')) {
+        if (e.closest('[hidden], details:not([open]) > .card-body, details:not([open]) > .adv-body')) continue;
+        if (e.scrollWidth > e.clientWidth + 1) out.push(name(e) + ' «' + e.textContent.trim().slice(0, 24) + '»');
+      }
+      return out.slice(0, 6).join(', ');
+    })()`);
+    if (wide) console.warn(`AVISO ${name}: desborda o se corta (${wide})`);
     const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true,
       clip: { x: 0, y: 0, width, height: full, scale: 1 } });
     const file = join(out, `${name}.png`);
