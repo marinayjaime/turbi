@@ -1,5 +1,6 @@
 # Turbi — Roadmap
 
+Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap).
 
 ## Rediseño claro (20/10/2026, rama feat/rediseno-claro, sin desplegar)
 
@@ -11,7 +12,7 @@
 - Sin cambios en búsqueda, fuentes, radar, ETA, estados ni backend, salvo `lat`/`lon` en la respuesta del radar.
 
 ### Pendiente
-- **Manual Deploy de Render** para que el radar devuelva `lat`/`lon` en su respuesta (el front ya lo espera y no pinta mapa/avión sin ellos).
+- **Manual Deploy de Render** para que el radar devuelva `lat`/`lon` en su respuesta (el front ya lo espera: sin `lat`/`lon` pinta el mapa con la ruta y los aeropuertos, sin el avión).
 - Validar en un iPhone real (las capturas de Chrome headless no sustituyen esta prueba), en Safari y en la PWA instalada:
   - [ ] Safe areas arriba y abajo con la barra de estado `default` (en la PWA `env(safe-area-inset-top)` puede valer 0).
   - [ ] Consulta centrada con el teclado abierto y cerrado.
@@ -21,7 +22,6 @@
   - [ ] `:has()` y `<details>` animado en el Safari mínimo soportado.
   - [ ] Actualización desde la PWA instalada (aviso «Hay una versión nueva»).
   - [ ] Márgenes laterales en horizontal (`main` sin `safe-area-inset-left/right`).
-Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap).
 
 ## Fase cerrada (25/09/2026): llegada estimada internacional y relleno de indicativos
 
