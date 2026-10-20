@@ -556,3 +556,31 @@ describe('solo la fecha pedida: si ese día no hay vuelo, se dice (nunca se salt
   });
 });
 
+
+// Prueba real en iPhone (FR1104, 20/10/2026): Aena seguía en «Puerta cerrada» con el avión ya en el aire. El estado del
+// chip principal sale de withRadar (js/radar.js), sin otra lógica: una lectura ADS-B «volando» gana al estado de puerta
+// de Aena; un radar sin lectura actual (sin señal, buscando, avistamiento antiguo) no convierte el vuelo en «Volando».
+import { withRadar } from '../js/radar.js';
+
+describe('estado principal: radar «volando» frente al estado de puerta de Aena', () => {
+  const chip = h => h.match(/<span class="chip status[^"]*">([^<]*)/)?.[1].trim();
+  const cer = () => card({ status: { text: 'Puerta cerrada', tone: 'warn' }, phase: 'pendiente' });
+  const flying = { state: 'volando', callsign: 'RYR4AB', altFt: 31000, altM: 9449, kmh: 820, seenS: 3, remainingKm: 900, source: 'adsb.lol' };
+
+  it('Aena «Puerta cerrada» + radar volando → el chip dice «Volando», no «Puerta cerrada»', () => {
+    const h = html({ ...withRadar(cer(), flying, null, NOW), radarReceivedAt: NOW });
+    expect(chip(h)).toBe('Volando');
+    expect(h).not.toMatch(/class="chip status[^"]*">\s*Puerta cerrada/);
+  });
+
+  it.each([
+    ['sin datos y Aena sin confirmar la salida', { state: 'sin-datos', departureConfirmed: false }, null],
+    ['buscando el avión (identificación en curso)', { state: 'sin-datos', identifying: true }, null],
+    ['radar no disponible', { state: 'no-disponible' }, null],
+    ['último avistamiento de hace 20 min', { state: 'sin-datos' }, NOW - 20 * MIN],
+  ])('sin lectura actual (%s) → sigue «Puerta cerrada»', (_, radar, lastSeen) => {
+    const h = html(withRadar(cer(), radar, lastSeen, NOW));
+    expect(chip(h)).toBe('Puerta cerrada');
+    expect(chip(h)).not.toBe('Volando');
+  });
+});
