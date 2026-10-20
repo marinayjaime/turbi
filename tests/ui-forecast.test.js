@@ -156,7 +156,7 @@ describe('renderForecast', () => {
   it('monta todas las secciones y el aviso orientativo; escapa HTML', () => {
     const el = { innerHTML: '' };
     renderForecast(el, { ...view, title: '<b>x</b>' }, NOW);
-    for (const id of ['trend', 'speak', 'timeline', 'seg-detail', 'altitudes']) expect(el.innerHTML).toContain(`id="${id}"`);
+    for (const id of ['trend', 'speak', 'timeline', 'seg-detail', 'altitudes', 'fresh']) expect(el.innerHTML).toContain(`id="${id}"`); // #fresh: provisional, hasta la Tarea 7
     for (const id of ['aviation', 'map']) expect(el.innerHTML).not.toContain(`id="${id}"`); // van a sus tarjetas (Tareas 6–8)
     expect(el.innerHTML).toContain('Estimación orientativa para pasajeros');
     expect(el.innerHTML).not.toContain('<b>x</b>');
@@ -199,7 +199,7 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
   it('la sección del pronóstico no incluye la ficha (se inserta sin tocarla)', () => {
     const html = forecastSectionHtml({ ...view, flight }, NOW);
     expect(html).not.toContain('class="flight"');
-    for (const id of ['trend', 'timeline', 'altitudes']) expect(html).toContain(`id="${id}"`);
+    for (const id of ['trend', 'timeline', 'altitudes', 'fresh']) expect(html).toContain(`id="${id}"`); // #fresh: provisional, hasta la Tarea 7
   });
 });
 

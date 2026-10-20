@@ -379,14 +379,19 @@ function axisHtml(view) {
 
 // Gráfica de barras verticales (#timeline): cada barra es un botón con el tramo que la contiene (data-seg; app.js abre
 // su detalle en #seg-detail). Altura fija por nivel (el view no trae la puntuación 0–100 por punto); nula, la barra
-// mínima; sin datos, rayada.
-export function turbTimelineHtml(view) {
+// mínima; sin datos, rayada. interactive: false (cálculo v1, sin currentView en app.js, así que no hay detalle que
+// abrir): barras como <span> decorativos, sin data-seg ni paradas de tabulación, y tocar la gráfica abre la tarjeta.
+export function turbTimelineHtml(view, { interactive = true } = {}) {
   const segs = view.segments ?? [];
   const bars = barsFor(view).map(b => {
+    const cls = `tbar ${b.level === null ? 'missing' : `lvl${b.level}`}`;
+    if (!interactive) return `<span class="${cls}"></span>`;
     const s = segs[b.seg];
     const label = `${s ? `Min ${s.startMin}–${s.endMin} · ` : ''}${b.level === null ? 'Sin datos' : TURB_LEVELS[b.level]}`;
-    return `<button type="button" class="tbar ${b.level === null ? 'missing' : `lvl${b.level}`}" data-seg="${b.seg}" aria-label="${label}"></button>`;
+    return `<button type="button" class="${cls}" data-seg="${b.seg}" aria-label="${label}"></button>`;
   }).join('');
+  if (!interactive) return `
+        <div class="tchart" aria-hidden="true">${bars}</div>${axisHtml(view)}`;
   return `
         <div class="tchart" role="group" aria-label="Turbulencia a lo largo del vuelo">${bars}</div>${axisHtml(view)}
         <div id="seg-detail" class="seg-detail" hidden></div>`;
@@ -485,7 +490,7 @@ export function renderResult(el, view) {
     detail: `${esc(CAUSES[s.cause])}${s.place ? ` · ${esc(s.place)}` : ''}`,
   }));
   const summary = `${turbGeneralHtml({ level: max, headline: v.title })}
-        <section id="timeline">${turbTimelineHtml(view)}</section>
+        <section id="timeline">${turbTimelineHtml(view, { interactive: false })}</section>
         <p class="note-small simplified">${SIMPLIFIED}</p>`;
   const body = `
         <p class="turb-lead">${v.text}</p>

@@ -361,6 +361,28 @@ describe('flujo DOM completo: la ficha y la sección Turbulencias están siempre
     expect(shell()).toEqual(SHELL_OK);
     expect(area()).not.toContain(FORECAST_UNAVAILABLE);
   });
+  it('tocar una barra abre su detalle y resalta todo su tramo sin plegar ni desplegar la tarjeta; tocar el detalle tampoco', async () => {
+    const { d, leg } = tomorrowLeg();
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
+    await search('IB1668', d);
+    await until(() => $('#forecast-area [data-card="turbulence"]'), 'previsión');
+    await networkIdle(); // nameSegments ya ha repintado #timeline
+    const card = $('#forecast-area [data-card="turbulence"]');
+    const bar = $('#timeline button[data-seg]');
+    bar.click();
+    expect($('#seg-detail').hidden).toBe(false);
+    expect(card.open).toBe(false); // un <button> dentro del summary no abre la tarjeta
+    const same = [...document.querySelectorAll(`#timeline button[data-seg="${bar.dataset.seg}"]`)];
+    expect(same.length).toBeGreaterThan(1);
+    expect(same.every(b => b.classList.contains('selected'))).toBe(true);
+    expect(document.querySelectorAll('#timeline button.selected')).toHaveLength(same.length);
+    $('#seg-detail').firstElementChild.click();
+    expect(card.open).toBe(false); // tocar el texto del detalle no pliega ni despliega la tarjeta
+    $('#forecast-area .turb-head').click();
+    expect(card.open).toBe(true); // control: el resto del summary sí la despliega
+    $('#seg-detail').firstElementChild.click();
+    expect(card.open).toBe(true);
+  });
   it('Open-Meteo sin respuesta (timeout): la sección lo explica y ofrece Reintentar', async () => {
     const { d, leg } = tomorrowLeg();
     const timeout = () => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError'));

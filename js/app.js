@@ -897,15 +897,17 @@ els.result.addEventListener('click', async e => {
   } catch (err) { showError(err.message); }
 });
 
-// Timeline: al tocar un tramo se muestra su detalle (otra vez para ocultarlo).
+// Timeline: al tocar un tramo se muestra su detalle (otra vez para ocultarlo). Se resaltan todas las barras del tramo.
 els.result.addEventListener('click', e => {
+  // #seg-detail está dentro del <summary> de la tarjeta: tocar su texto no debe plegarla ni desplegarla.
+  if (e.target.closest('#seg-detail')) { e.preventDefault(); return; }
   const btn = e.target.closest('button[data-seg]');
   if (!btn || !currentView) return;
   const detail = $in('seg-detail');
   const selected = btn.classList.contains('selected');
   els.result.querySelectorAll('button[data-seg]').forEach(b => b.classList.remove('selected'));
   if (selected) { detail.hidden = true; return; }
-  btn.classList.add('selected');
+  els.result.querySelectorAll(`button[data-seg="${btn.dataset.seg}"]`).forEach(b => b.classList.add('selected'));
   detail.innerHTML = segmentDetailHtml(currentView.segments[Number(btn.dataset.seg)], currentView.originIata);
   detail.hidden = false;
 });

@@ -86,12 +86,15 @@ describe('cálculo v1: misma tarjeta y barras', () => {
     expect(sum.textContent).toContain('Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.');
     expect(doc.querySelector('.flight')).toBeNull(); // sectionOnly: sin la ficha
   });
-  it('barras: ≤ 56 botones con data-seg de un tramo real; eje en minutos', () => {
-    const bars = [...card.querySelectorAll('#timeline button.tbar[data-seg]')];
+  it('barras: ≤ 56, decorativas (sin botones, data-seg ni #seg-detail: en el v1 no hay detalle que abrir); eje en minutos', () => {
+    const bars = [...card.querySelectorAll('#timeline .tbar')];
     expect(bars.length).toBeGreaterThan(3);
     expect(bars.length).toBeLessThanOrEqual(56);
-    expect(new Set(bars.map(b => b.dataset.seg))).toEqual(new Set(['0', '1', '2']));
-    expect(bars.find(b => b.dataset.seg === '1').className).toBe('tbar lvl2');
+    expect(bars.every(b => b.tagName === 'SPAN' && !b.hasAttribute('data-seg'))).toBe(true);
+    expect(card.querySelector(':scope > summary').querySelectorAll('button, [tabindex], [data-seg]')).toHaveLength(0); // tocar la gráfica abre la tarjeta
+    expect(card.querySelector('#seg-detail')).toBeNull();
+    expect(card.querySelector('.tchart').getAttribute('aria-hidden')).toBe('true');
+    expect(bars.filter(b => b.className === 'tbar lvl2').length).toBeGreaterThan(0);
     expect([...card.querySelectorAll('.ticks span')].map(t => t.textContent)).toEqual(['0′', '50′', '100′', '150′']);
   });
   it('al desplegar: veredicto, ¿Qué significa?, fiabilidad y los tramos .seg-card; sin emojis', () => {
