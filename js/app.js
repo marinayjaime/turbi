@@ -22,7 +22,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
-import { flightPhase, signalState, planeOnMap, positionAgeS, ageText } from './card-model.js';
+import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, PLANE_MAX_AGE_S } from './card-model.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
@@ -659,15 +659,21 @@ async function buildFlight(q) {
   return { oTz, dTz, departureMs, durationMin, profile, forecastProfile, air, etaCtx, eta, officialMs, landedAt, flight };
 }
 
-async function run(q) {
+// handoff: traspaso de «Actualizar» (refreshHandoff). Solo si la consulta nueva es del MISMO vuelo físico se conserva
+// la presentación (mapa, desplegables, scroll, sin pantalla de carga); la consulta es exactamente la de siempre.
+async function run(q, handoff = null) {
   lastQuery = q;
   const token = ++runId;
   stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
   stopStatusRefresh(); // y de refrescar el estado de Aena
+  const same = handoff && handoff.key === physicalOf(q) ? handoff : null;
+  const kept = same ? keepMap() : null; // el mapa se queda fuera de clearFicha: lo recoge mountMap con el armazón nuevo
   clearFicha(); // y su mapa
+  keptMap = kept;
+  if (same) reopen = new Set(same.open);
   const stale = () => token !== runId;
   els.refresh.hidden = false;
-  show('loading');
+  if (!same) show('loading'); // «Actualizar» del mismo vuelo: la ficha sigue a la vista mientras se consulta
   try {
     const { oTz, dTz, departureMs, durationMin, profile, forecastProfile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
@@ -690,6 +696,7 @@ async function run(q) {
       els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
       show('result');
       initFicha(q, flight, stale);
+      if (same) restoreScroll(same.scrollY);
       watchAena(q, stale);
       await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale, etaCtx))]);
       return;
@@ -702,6 +709,7 @@ async function run(q) {
       els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight, punctuality: punct });
       show('result');
       initFicha(q, flight, stale);
+      if (same) restoreScroll(same.scrollY);
       watchAena(q, stale);
       const ctx = { q, profile, forecastProfile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
       lastForecastCtx = ctx;
@@ -730,6 +738,7 @@ async function run(q) {
     showForecast(view, q, stale).catch(() => { if (!stale()) showError('Algo ha fallado al mostrar el pronóstico.', true); });
   } catch (err) {
     if (stale()) return;
+    dropKeptMap(); // el error sustituye a la ficha: el mapa conservado que no llegó a montarse, fuera
     // fetch lanza TypeError sin conexión; su mensaje viene en inglés.
     const network = err instanceof TypeError;
     const msg = network ? 'Sin conexión o el servicio no responde.' : err.message;
@@ -823,12 +832,82 @@ let mapToken = 0; // un mapa que termina de crearse cuando su ficha ya no está 
 let signalTimer = null;
 
 function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; }
-// La ficha deja de estar (otra búsqueda, «Nueva consulta», pantalla de elección, pronóstico guardado): fuera su mapa.
+// La ficha deja de estar (otra búsqueda, «Nueva consulta», pantalla de elección, pronóstico guardado): fuera su mapa
+// (también uno conservado por «Actualizar» que aún no se montó), el avión retenido y los desplegables pendientes.
 // No va en stopRadarPoll: applyAenaLeg para el radar con la llegada final y el mapa se queda («Ruta realizada»).
-function clearFicha() { destroyMap(); stopSignal(); shownCard = null; legacyOnScreen = null; }
+function clearFicha() { destroyMap(); dropKeptMap(); releasePlane(); reopen.clear(); stopSignal(); shownCard = null; legacyOnScreen = null; }
 
-// Qué desplegables (data-card) están abiertos en toda la ficha, Detalles avanzados incluidos.
-const openCards = () => new Set([...els.result.querySelectorAll('details[data-card][open]')].map(d => d.dataset.card));
+// ---- «Actualizar» del mismo vuelo físico (decisión de 20/10/2026; solo presentación) ----
+// La consulta es la de siempre (submit → run: Aena, radar con su pollRadar, pronóstico, puntualidad); solo cambia cómo
+// se sustituye la ficha si es del MISMO vuelo físico (physicalFlightKey del tramo de Aena o adbKey de AeroDataBox):
+// el #map-card con su mapa Leaflet pasa a la ficha nueva (sin destruirlo, recentrarlo ni cambiar el zoom), los
+// desplegables abiertos se vuelven a abrir, el scroll se restaura y no se muestra la pantalla de carga. Otra clave u
+// otra clase de consulta: como siempre.
+const physicalOf = q => (q?.kind === 'schedule' ? physicalFlightKey(q.leg) : q?.kind === 'adb' ? q.adbKey : null);
+function refreshHandoff() {
+  const key = physicalOf(lastQuery);
+  if (!key || !els.result.querySelector('.flight')) return null;
+  return { key, open: openCards(), scrollY: document.scrollingElement?.scrollTop ?? 0 };
+}
+function restoreScroll(y) {
+  const scroller = document.scrollingElement;
+  if (scroller && scroller.scrollTop !== y) scroller.scrollTop = y;
+}
+// El mapa de la ficha en pantalla, con la tarjeta que lo pintó (su avión): routeMap queda libre para clearFicha. Sin
+// mapa (Leaflet no ha cargado o aún se está creando), nada: mountMap crea uno, como siempre.
+let keptMap = null;
+function keepMap() {
+  const node = $in('map-card');
+  if (!routeMap || !node) return null;
+  const kept = { node, map: routeMap, card: shownCard };
+  routeMap = null;
+  return kept;
+}
+function dropKeptMap() { keptMap?.map.destroy(); keptMap = null; }
+// El #map-card recién pintado se sustituye por el conservado. Sus botones ya están cableados (wireMapCard busca
+// routeMap al pulsar): no se vuelven a cablear. Sin fitBounds ni otro L.map; el pronóstico lo pone forecastExtras.
+function adoptMap(fresh) {
+  const { node, map, card: prev } = keptMap;
+  keptMap = null;
+  fresh.replaceWith(node);
+  routeMap = map;
+  const title = node.querySelector('.card-title');
+  if (title) title.textContent = mapTitle(flightPhase(shownCard));
+  paintMapFacts(shownCard);
+  map.invalidate();
+  holdPlane(prev);
+}
+// Avión del traspaso: mientras la ficha nueva no tenga lectura del radar, el marcador se queda con la posición anterior,
+// solo mientras siga vigente (planeOnMap, 60 s); al caducar se quita (temporizador al vencimiento; cero peticiones). La
+// primera lectura lo suelta (showPlane): misma identidad → map.js anima desde lo que se ve; otra → salto directo.
+let heldPlane = null, heldTimer = null;
+function releasePlane() { if (heldTimer !== null) clearTimeout(heldTimer); heldTimer = null; heldPlane = null; }
+function holdPlane(prev) {
+  releasePlane();
+  const now = Date.now();
+  if (!planeOnMap(prev?.radar, prev?.radarReceivedAt, now)) { routeMap?.setPlane(null); return; }
+  heldPlane = prev;
+  const expire = () => {
+    heldTimer = null;
+    if (heldPlane !== prev) return;
+    // Por redondeo aún vigente: se espera un segundo más.
+    if (planeOnMap(prev.radar, prev.radarReceivedAt, Date.now())) { heldTimer = setTimeout(expire, TICK_MS); return; }
+    heldPlane = null;
+    routeMap?.setPlane(null);
+  };
+  heldTimer = setTimeout(expire, Math.max(0, (PLANE_MAX_AGE_S - positionAgeS(prev.radar, prev.radarReceivedAt, now)) * 1000) + 1);
+}
+
+// Desplegables abiertos al pulsar «Actualizar» aún no repintados: se abren al aparecer (una vez cada uno: si el
+// usuario lo cierra después, se queda cerrado) y hasta entonces cuentan como abiertos en los repintados intermedios.
+let reopen = new Set();
+function reopenCards() {
+  if (!reopen.size) return;
+  for (const d of els.result.querySelectorAll('details[data-card]')) if (reopen.delete(d.dataset.card)) d.open = true;
+}
+
+// Qué desplegables (data-card) están abiertos en toda la ficha, Detalles avanzados incluidos (y los pendientes).
+const openCards = () => new Set([...reopen, ...[...els.result.querySelectorAll('details[data-card][open]')].map(d => d.dataset.card)]);
 
 function wireSpeak(view) {
   const btn = $in('speak');
@@ -841,10 +920,12 @@ function wireSpeak(view) {
 function paintAdvancedFlight(card, open = openCards()) {
   const el = $in('adv-flight');
   if (el) el.innerHTML = advancedFlightHtml(card, { open, nowMs: Date.now() });
+  reopenCards();
 }
 function paintHistory(view = currentView, open = openCards()) {
   const el = $in('adv-history');
   if (el) el.innerHTML = advancedHistoryHtml({ queriedAt: view?.queriedAt, aenaUpdatedAgo: shownCard?.updatedAgo ?? null, trend: view?.trend ?? null }, Date.now(), { open });
+  reopenCards();
 }
 // METAR/TAF, SIGMET y PIREP en «El tiempo en los aeropuertos»: la categoría solo se ve con contenido.
 function paintAviation(view) {
@@ -870,12 +951,14 @@ function paintLegacySection(legacy, { preLanding = false } = {}) {
   const tmp = { innerHTML: '' };
   renderResult(tmp, legacy, { preLanding, open: openCards() });
   area.innerHTML = tmp.innerHTML;
+  reopenCards();
 }
 // Pinta (o repinta) la tarjeta de Turbulencias con la vista ya calculada, conservando sus desplegables. Sin peticiones.
 function paintForecastSection(view, { preLanding = false } = {}) {
   const area = $in('forecast-area');
   if (!area) return;
   area.innerHTML = forecastSectionHtml(view, Date.now(), { preLanding, open: openCards() });
+  reopenCards();
   wireSpeak(view);
 }
 
@@ -885,6 +968,7 @@ function paintForecastSection(view, { preLanding = false } = {}) {
 function mountMap(q, stale) {
   const card = $in('map-card'), el = $in('map');
   if (!card || !el || !q?.origin || !q?.destination) return;
+  if (keptMap) { adoptMap(card); return; } // «Actualizar» del mismo vuelo físico: el mapa de antes, tal cual
   destroyMap();
   const token = mapToken;
   wireMapCard(card, { invalidate: () => routeMap?.invalidate() }); // el mapa aún se está creando: se busca al pulsar
@@ -902,6 +986,9 @@ function mountMap(q, stale) {
 // por transpondedor o, si no, indicativo), para que el mapa no anime entre dos aviones o dos vuelos distintos.
 const planeIdentity = card => `${card?.physicalKey ?? ''}|${card?.radar?.hex ?? card?.radar?.callsign ?? ''}`;
 function showPlane(map, card) {
+  // Traspaso de «Actualizar»: la ficha nueva aún sin lectura del radar (y sin terminar) no quita el avión retenido.
+  if (heldPlane && card && !card.radar && !['finalizado', 'cancelado'].includes(flightPhase(card))) return;
+  releasePlane();
   map?.setPlane(card ? planeOnMap(card.radar, card.radarReceivedAt, Date.now()) : null, { identity: planeIdentity(card) });
 }
 
@@ -1061,7 +1148,8 @@ async function forecastExtras(view, q, stale) {
   if (routeMap && view === currentView) safely(async () => routeMap.setForecast(view));
 }
 
-async function submit() {
+// handoff: el traspaso de «Actualizar» (refreshHandoff), que llega hasta run; sin él, la búsqueda de siempre.
+async function submit(handoff = null) {
   els.error.hidden = true;
   if (navigator.onLine === false) {
     // Sin red ni el horario ni adsbdb responden: decir «no encuentro ese vuelo» sería engañoso.
@@ -1069,12 +1157,12 @@ async function submit() {
     showError('Sin conexión: no se puede consultar el pronóstico ahora.', true);
     return;
   }
-  show('loading'); // buscar el vuelo también puede tardar unos segundos
+  if (!handoff) show('loading'); // buscar el vuelo también puede tardar unos segundos
   try {
     const q = await resolveFlight();
     if (q?.kind === 'choose') showLegChooser(q);
     else if (q?.kind === 'alias') await showAliasOffer(q);
-    else if (q) run(q);
+    else if (q) run(q, handoff);
     else show('query');
   } catch (err) {
     showError(err instanceof TypeError ? 'Sin conexión o el servicio no responde.' : err.message);
@@ -1161,8 +1249,9 @@ els.savedLink.addEventListener('click', () => {
 window.addEventListener('offline', offerSaved);
 window.addEventListener('online', () => { els.savedLink.hidden = true; });
 els.changeTime.addEventListener('click', () => { setTimeNeeded(true); show('query'); els.time.focus(); });
-// Actualizar vuelve a pedir el horario (retrasos, puerta, estado).
-els.refresh.addEventListener('click', () => (['schedule', 'adb'].includes(lastQuery?.kind) ? submit() : lastQuery && run(lastQuery)));
+// Actualizar vuelve a pedir el horario (retrasos, puerta, estado) y el radar; con el mismo vuelo físico, la ficha
+// conserva su mapa, sus desplegables y el scroll (refreshHandoff).
+els.refresh.addEventListener('click', () => (['schedule', 'adb'].includes(lastQuery?.kind) ? submit(refreshHandoff()) : lastQuery && run(lastQuery)));
 els.retry.addEventListener('click', () => (lastQuery ? run(lastQuery) : submit()));
 // Reintentar solo la sección de turbulencias (la ficha se queda como está).
 els.result.addEventListener('click', e => {

@@ -1554,15 +1554,20 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
 // Integración del rediseño (Tarea 8): repintado con estado, mapa con el avión, señal en vivo y previsión tras aterrizar.
 // Leaflet se simula con un `L` falso: se cuentan los mapas creados y destruidos y los marcadores del avión.
 function fakeLeaflet() {
-  const log = { maps: 0, mapsRemoved: 0, markers: [] };
+  // view: llamadas que mueven la vista (fitBounds, setView, setZoom); path: todas las posiciones de cada marcador.
+  const log = { maps: 0, mapsRemoved: 0, markers: [], view: [] };
   const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
   const L = {
-    map: () => { log.maps++; return { fitBounds() {}, invalidateSize() {}, remove() { log.mapsRemoved++; } }; },
+    map: () => {
+      log.maps++;
+      return { fitBounds() { log.view.push('fitBounds'); }, setView() { log.view.push('setView'); }, setZoom() { log.view.push('setZoom'); },
+        invalidateSize() {}, remove() { log.mapsRemoved++; } };
+    },
     tileLayer: layer, polyline: layer, polygon: layer, circleMarker: layer,
     latLngBounds: () => ({ pad() { return this; } }),
     divIcon: o => o,
     marker: ll => {
-      const m = { ...layer(), ll, removed: false, setLatLng(p) { this.ll = p; return this; }, remove() { this.removed = true; } };
+      const m = { ...layer(), ll, path: [ll], removed: false, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; } };
       log.markers.push(m);
       return m;
     },
@@ -1931,4 +1936,206 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
     });
   });
+});
+
+// «Actualizar» del MISMO vuelo físico (decisión de 20/10/2026, solo presentación): misma consulta que siempre (Aena,
+// radar, pronóstico…), pero la ficha conserva su mapa Leaflet (sin recrearlo, recentrarlo ni cambiar el zoom), sus
+// desplegables abiertos y el avión, que se desplaza de la posición A que se ve a la nueva lectura real B.
+describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B', () => {
+  const A = { ...RADAR_FLYING, hex: 'abc123', seenS: 2, posAgeS: 2, lat: 51.0, lon: -1.0 };
+  const B = { ...A, lat: 51.4, lon: -0.6 };
+  const flyingLeg = () => {
+    const dep = Date.now() - 60 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N' } };
+  };
+  // Radar: una respuesta por consulta, en orden (null = 404, sin respuesta); la última se repite.
+  function app(answers, data, openMeteo = () => tooMany) {
+    const base = network({ flights: data, openMeteo });
+    let i = 0;
+    return vi.fn((url, o) => {
+      const u = String(url);
+      if (!u.startsWith(`${LIVE_BASE}/radar/`)) return base(url, o);
+      calls.push(u);
+      const r = answers[Math.min(i++, answers.length - 1)];
+      return Promise.resolve(r ? json(r) : notFound);
+    });
+  }
+  // Primera carga con el avión en A: ficha, panel ADS-B, un mapa y el marcador en pantalla.
+  async function firstLoad(answers, { openMeteo, data } = {}) {
+    const { L, log } = fakeLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    data ??= { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } };
+    await openApp(app(answers, data, openMeteo));
+    await search('IB715', d);
+    await until(() => $('.telemetry') && log.maps === 1 && planeOnScreen(log), 'ficha con el avión en A');
+    await networkIdle();
+    return { log, data, leg };
+  }
+  const at = p => [p.lat, p.lon];
+  const strictlyBetween = (p, a, b) => p[0] > Math.min(a.lat, b.lat) && p[0] < Math.max(a.lat, b.lat)
+    && p[1] > Math.min(a.lon, b.lon) && p[1] < Math.max(a.lon, b.lon);
+  const within = (p, a, b) => p[0] >= Math.min(a.lat, b.lat) && p[0] <= Math.max(a.lat, b.lat)
+    && p[1] >= Math.min(a.lon, b.lon) && p[1] <= Math.max(a.lon, b.lon);
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+  const refreshed = log => until(() => radarCalls().length === 2 && log.markers.some(m => !m.removed && m.ll[0] === B.lat && m.ll[1] === B.lon), 'el avión en B');
+
+  it('vuelve a consultar el radar una vez por pulsación y ninguna automática después', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([A, B]);
+      expect(radarCalls()).toHaveLength(1);
+      $('#refresh').click();
+      await refreshed(log);
+      await networkIdle();
+      expect(radarCalls()).toHaveLength(2);
+      expect(new URL(radarCalls()[1]).searchParams.get('poll')).toBeNull(); // la consulta de siempre, no un sondeo
+      await advance(600000);
+      expect(radarCalls()).toHaveLength(2); // ningún sondeo nuevo
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('no destruye el mapa ni muestra la pantalla de carga: un solo L.map y ningún remove', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([A, B]);
+      const node = $('#map-card');
+      $('#refresh').click();
+      expect($('#loading').hidden).toBe(true); // la ficha sigue a la vista mientras se consulta
+      expect($('#result-view').hidden).toBe(false);
+      await refreshed(log);
+      await networkIdle();
+      expect(log.maps).toBe(1);
+      expect(log.mapsRemoved).toBe(0);
+      expect($('#map-card')).toBe(node); // el mismo nodo, con su mapa, dentro de la ficha nueva
+      expect(document.querySelectorAll('#map-card')).toHaveLength(1);
+      expect($('#map-card .card-title').textContent).toBe('Radar');
+      expect($('#map-facts').textContent).toContain('IBE715');
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('A → B: el MISMO marcador pasa por posiciones intermedias y termina en B', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([A, B]);
+      $('#refresh').click();
+      await refreshed(log);
+      await networkIdle();
+      expect(log.markers).toHaveLength(1);
+      const { path } = log.markers[0];
+      expect(path[0]).toEqual(at(A));
+      expect(path.at(-1)).toEqual(at(B));
+      expect(path.slice(1, -1).filter(p => strictlyBetween(p, A, B)).length).toBeGreaterThan(0);
+      expect(path.every(p => within(p, A, B))).toBe(true); // de A a B, nunca más allá de B
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('conserva zoom y centro: ningún fitBounds, setView ni setZoom tras «Actualizar»', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([A, B]);
+      const before = log.view.length;
+      $('#refresh').click();
+      await refreshed(log);
+      await networkIdle();
+      expect(log.view.slice(before)).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('conserva los desplegables abiertos: Horario, Turbulencias (se repinta con el pronóstico) y Detalles avanzados', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([A, B], { openMeteo: openMeteoOk });
+      await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
+      await networkIdle();
+      for (const c of ['schedule', 'turbulence', 'advanced']) $(`details[data-card="${c}"]`).open = true;
+      const oldArea = $('#forecast-area');
+      $('#refresh').click();
+      await refreshed(log);
+      await until(() => $('#forecast-area') !== oldArea && $('#forecast-area [data-card="turbulence"]'), 'Turbulencias repintada');
+      await networkIdle();
+      for (const c of ['schedule', 'turbulence', 'advanced']) expect($(`details[data-card="${c}"]`).open, c).toBe(true);
+      // Ya aplicados: si el usuario cierra uno, un repintado posterior no lo vuelve a abrir.
+      $('details[data-card="schedule"]').open = false;
+      $('details[data-card="turbulence"]').open = false;
+      await vi.advanceTimersByTimeAsync(61000); // el avión sale del mapa: se repinta Detalles avanzados
+      expect($('details[data-card="schedule"]').open).toBe(false);
+      expect($('details[data-card="turbulence"]').open).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('posición anterior caducada (> 60 s): B se coloca directamente, con un marcador nuevo y sin intermedias', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([{ ...A, posAgeS: 5 }, B]);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(planeOnScreen(log)).toBe(false);
+      $('#refresh').click();
+      await refreshed(log);
+      await networkIdle();
+      expect(log.markers).toHaveLength(2);
+      expect(log.markers[1].path).toEqual([at(B)]);
+      expect(log.maps).toBe(1);
+      expect(log.mapsRemoved).toBe(0);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('otro avión (otro transpondedor e indicativo): salto directo a B, sin intermedias', async () => {
+    fake();
+    try {
+      const other = { ...B, hex: 'def456', callsign: 'IBE9XX' };
+      const { log } = await firstLoad([A, other]);
+      $('#refresh').click();
+      await until(() => radarCalls().length === 2 && log.markers[0].ll[0] === B.lat, 'el otro avión en B');
+      await networkIdle();
+      expect(log.markers).toHaveLength(1);
+      expect(log.markers[0].path).toEqual([at(A), at(B)]);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('«Actualizar» que lleva a OTRO vuelo físico (otro tramo): el mapa se destruye y se crea otro, como siempre', async () => {
+    fake();
+    try {
+      const { log, data, leg } = await firstLoad([A, B]);
+      const sd = formatLocal(Date.now() - 50 * 60000, MAD); // otra hora de salida: otro vuelo físico
+      data.IB715 = { ...data.IB715, legs: [{ ...leg, sd, ed: `${leg.d}T${sd}` }] };
+      $('#refresh').click();
+      await until(() => log.maps === 2, 'segundo mapa');
+      await networkIdle();
+      expect(log.mapsRemoved).toBe(1);
+      expect(document.querySelectorAll('#map-card')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('sin posición nueva (la misma lectura): el marcador ni se mueve ni se recrea', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([A, A]);
+      $('#refresh').click();
+      await until(() => radarCalls().length === 2, 'segunda consulta al radar');
+      await networkIdle();
+      expect(log.markers).toHaveLength(1);
+      expect(log.markers[0].path).toEqual([at(A)]);
+      expect(planeOnScreen(log)).toBe(true);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('el radar no responde: el avión anterior se queda mientras su posición siga vigente y se quita al caducar', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([{ ...A, posAgeS: 5 }, null]);
+      $('#refresh').click();
+      await until(() => radarCalls().length === 2, 'segunda consulta al radar');
+      await networkIdle();
+      expect(log.maps).toBe(1);
+      expect(log.markers).toHaveLength(1);
+      expect(log.markers[0].path).toEqual([at(A)]);
+      expect(planeOnScreen(log)).toBe(true);
+      const before = calls.filter(u => !u.includes('/flights/')).length;
+      await vi.advanceTimersByTimeAsync(60000); // la posición A pasa de 60 s
+      expect(planeOnScreen(log)).toBe(false);
+      expect(calls.filter(u => !u.includes('/flights/') && !u.includes('/radar/')).length).toBeLessThanOrEqual(before);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
 });
