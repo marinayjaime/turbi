@@ -27,6 +27,7 @@ describe('ficha del vuelo', () => {
 });
 
 import { renderResult } from '../js/ui.js';
+import { JSDOM } from 'jsdom';
 
 describe('explicación de la fiabilidad', () => {
   const view = rel => ({
@@ -58,12 +59,56 @@ describe('explicación del veredicto y los tramos', () => {
     expect(html).toContain('<details class="explain">');
     expect(html).toContain('<summary>¿Qué significa?');
     for (const v of ['Tranquilo', 'Algo de movimiento', 'Turbulento']) expect(html).toContain(v);
-    expect(html).toMatch(/<li class="current"><strong>🟡 Algo de movimiento<\/strong>/);
+    expect(html).toMatch(/<li class="current"><strong><span class="dot lvl2"><\/span>Algo de movimiento<\/strong>/); // punto de color, sin emoji
   });
   it('explica intensidades y causas', () => {
     for (const t of ['Ligera', 'Moderada', 'Fuerte', 'Aire revuelto en altura, sin nubes', 'Cambio brusco del viento con la altura', 'Tormentas', 'Viento sobre montañas']) {
       expect(html).toContain(`<strong>${t}</strong>`);
     }
+  });
+});
+
+// Cálculo simplificado (v1): la misma tarjeta de Turbulencias que el pronóstico v2 (spec §5.7), con una línea que lo dice.
+describe('cálculo v1: misma tarjeta y barras', () => {
+  const dom = h => new JSDOM(`<body>${h}</body>`).window.document;
+  const segments = [{ level: 0, startMin: 0, endMin: 30, cause: null }, { level: 2, startMin: 30, endMin: 45, cause: 'ellrod' }, { level: 1, startMin: 45, endMin: 150, cause: 'shear' }];
+  const legacy = { verdict: 'movimiento', reliability: 'media', durationMin: 150, segments, sectionOnly: true };
+  const el = { innerHTML: '' };
+  renderResult(el, legacy);
+  const doc = dom(el.innerHTML);
+  const card = doc.querySelector('details.card.turb[data-card="turbulence"]');
+  it('tarjeta desplegable con el título, «General» y la línea del cálculo simplificado visibles', () => {
+    expect(card).not.toBeNull();
+    const sum = card.querySelector(':scope > summary');
+    expect(sum.querySelector('h3.section').textContent).toBe('Turbulencias');
+    expect(sum.querySelector('.turb-general .v').textContent).toBe('Algo de movimiento');
+    expect(sum.querySelector('.turb-general').classList.contains('lvl-ink2')).toBe(true);
+    expect(sum.textContent).toContain('Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.');
+    expect(doc.querySelector('.flight')).toBeNull(); // sectionOnly: sin la ficha
+  });
+  it('barras: ≤ 56 botones con data-seg de un tramo real; eje en minutos', () => {
+    const bars = [...card.querySelectorAll('#timeline button.tbar[data-seg]')];
+    expect(bars.length).toBeGreaterThan(3);
+    expect(bars.length).toBeLessThanOrEqual(56);
+    expect(new Set(bars.map(b => b.dataset.seg))).toEqual(new Set(['0', '1', '2']));
+    expect(bars.find(b => b.dataset.seg === '1').className).toBe('tbar lvl2');
+    expect([...card.querySelectorAll('.ticks span')].map(t => t.textContent)).toEqual(['0′', '50′', '100′', '150′']);
+  });
+  it('al desplegar: veredicto, ¿Qué significa?, fiabilidad y los tramos .seg-card; sin emojis', () => {
+    const body = card.querySelector(':scope > .card-body');
+    expect(body.querySelector('.reliability')).not.toBeNull();
+    expect(body.querySelector('.explain')).not.toBeNull();
+    expect([...body.querySelectorAll('.seg-card strong')].map(s => s.textContent)).toEqual(['Min 30–45 · Moderada', 'Min 45–150 · Ligera']);
+    expect(el.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
+    expect(doc.querySelector('.disclaimer')).not.toBeNull();
+  });
+  it('con la ficha (respaldo a pantalla completa): ficha y después la tarjeta', () => {
+    const full = { innerHTML: '' };
+    renderResult(full, { ...legacy, sectionOnly: false, title: 'PMI → MAD', subtitle: 'x', times: '10:00–11:30',
+      flight: { al: 'IB', number: 'IB 1', title: 'IB 1', status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', dep: null, arr: null } });
+    const d = dom(full.innerHTML);
+    const flight = d.querySelector('.flight'), turb = d.querySelector('[data-card="turbulence"]');
+    expect(flight.compareDocumentPosition(turb) & 4).toBe(4); // DOCUMENT_POSITION_FOLLOWING
   });
 });
 

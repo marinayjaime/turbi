@@ -1,11 +1,13 @@
 import { LEVELS, CAUSES } from './turbulence.js';
 import { icon } from './icons.js';
-import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown } from './card-model.js';
+import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars } from './card-model.js';
+import { formatLocal } from './time.js';
 
+// dot: el punto de color que sustituye al emoji de antes (verde, ámbar, rojo = ligera, moderada, fuerte).
 const VERDICTS = {
-  tranquilo: { emoji: '🟢', title: 'Tranquilo', text: 'No se espera turbulencia relevante.' },
-  movimiento: { emoji: '🟡', title: 'Algo de movimiento', text: 'Habrá algún tramo con meneo.' },
-  turbulento: { emoji: '🔴', title: 'Turbulento', text: 'Se esperan tramos de turbulencia moderada o fuerte.' },
+  tranquilo: { dot: 1, title: 'Tranquilo', text: 'No se espera turbulencia relevante.' },
+  movimiento: { dot: 2, title: 'Algo de movimiento', text: 'Habrá algún tramo con meneo.' },
+  turbulento: { dot: 3, title: 'Turbulento', text: 'Se esperan tramos de turbulencia moderada o fuerte.' },
 };
 const cap = s => s[0].toUpperCase() + s.slice(1);
 
@@ -309,6 +311,100 @@ export function flightCardHtml(c, { nowMs = Date.now(), open = new Set(), punctu
     </section>`;
 }
 
+// ---- Tarjeta de Turbulencias (spec 2026-10-20 §5.7 y §9 bis) ----
+// La comparten el pronóstico v2 (js/ui-forecast.js) y el cálculo simplificado v1 (renderResult, más abajo): un
+// <details> con lo esencial en el <summary> (título, «General», «Tramo más movido», la gráfica de barras y lo que afecta
+// a la fiabilidad) y el detalle al desplegar. Vive aquí porque ui-forecast.js ya importa ui.js (al revés sería un ciclo).
+export const TURB_LEVELS = ['Nula', 'Ligera', 'Moderada', 'Fuerte'];
+export const DISCLAIMER = '<p class="disclaimer">Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.</p>';
+const turbTitle = '<h3 class="section card-title">Turbulencias</h3>';
+
+// La tarjeta desplegable. preLanding (Tarea 8, §10.2): el pronóstico que ya estaba en pantalla se conserva tras el
+// aterrizaje con su etiqueta, para que nunca se lea como turbulencia observada.
+export function turbCardHtml({ open = new Set(), preLanding = false, summary, body }) {
+  return `
+    <details class="card turb" data-card="turbulence"${open.has('turbulence') ? ' open' : ''}>
+      <summary class="card-sum">
+        <div class="card-head">${turbTitle}${chevron()}</div>${preLanding ? `
+        <p class="pre-landing"><span class="chip tone-stale">Previsión mostrada antes del aterrizaje</span></p>` : ''}${summary}
+      </summary>
+      <div class="card-body">${body}
+      </div>
+    </details>`;
+}
+
+// Estados sin pronóstico (calculando, no disponible, la nota que lo sustituye): tarjeta fija con el mismo título. Sin
+// data-card: no hay nada que desplegar ni pronóstico que conservar.
+export const turbPlainCardHtml = (inner, cls = '') => `
+    <section class="card turb turb-plain${cls ? ` ${cls}` : ''}">
+      <h3 class="section card-head">Turbulencias</h3>${inner}
+    </section>`;
+
+// «General» (titular, coloreado por el nivel máximo) y, a la derecha, «Tramo más movido» si lo hay.
+export function turbGeneralHtml({ level, headline, span = null }) {
+  const lvl = Number.isInteger(level) && level >= 0 && level <= 3 ? level : 0;
+  return `
+        <div class="turb-head">
+          <div class="turb-general lvl-ink${lvl}">${icon('turbulence', { size: 24 })}${kv('General', esc(headline))}</div>${span ? `
+          <div class="turb-span">${kv('Tramo más movido', esc(span))}</div>` : ''}
+        </div>`;
+}
+
+// Barras: con view.route (pronóstico v2), turbulenceBars tal cual. Sin él (cálculo v1 o un pronóstico guardado antes
+// de existir route), el mismo muestreo sobre un perfil de un punto por minuto hecho con los tramos; un tramo marcado
+// sin datos (missing) queda sin nivel, como un punto del modelo no válido.
+export function barsFor(view) {
+  if (view.route?.length) return turbulenceBars(view);
+  const segs = view.segments ?? [];
+  const n = Math.max(1, Math.round(view.durationMin));
+  const route = Array.from({ length: n + 1 }, (_, i) => {
+    const m = (i * view.durationMin) / n;
+    let s = segs[0];
+    for (const x of segs) if (x.startMin <= m) s = x;
+    return { level: s && !s.missing ? s.level : null };
+  });
+  return turbulenceBars({ ...view, route });
+}
+
+// Eje con 4 marcas: horas locales si origen y destino comparten zona (la regla de roughestSpan: Turbi no inventa una
+// zona intermedia); si no, minutos desde el despegue. data-min: el minuto de cada marca, sea cual sea el texto.
+function axisHtml(view) {
+  const d = view.durationMin;
+  const hours = view.originTz && view.originTz === view.destinationTz && Number.isFinite(view.depMs);
+  const marks = [...new Set([0, Math.round(d / 15) * 5, Math.round((2 * d) / 15) * 5, Math.round(d)])].filter(m => m <= d);
+  return `
+        <div class="ticks">${marks.map(m => `<span data-min="${m}" style="left:${d ? (m / d) * 100 : 0}%">${
+  hours ? formatLocal(view.depMs + m * 60000, view.originTz) : `${m}′`}</span>`).join('')}</div>`;
+}
+
+// Gráfica de barras verticales (#timeline): cada barra es un botón con el tramo que la contiene (data-seg; app.js abre
+// su detalle en #seg-detail). Altura fija por nivel (el view no trae la puntuación 0–100 por punto); nula, la barra
+// mínima; sin datos, rayada.
+export function turbTimelineHtml(view) {
+  const segs = view.segments ?? [];
+  const bars = barsFor(view).map(b => {
+    const s = segs[b.seg];
+    const label = `${s ? `Min ${s.startMin}–${s.endMin} · ` : ''}${b.level === null ? 'Sin datos' : TURB_LEVELS[b.level]}`;
+    return `<button type="button" class="tbar ${b.level === null ? 'missing' : `lvl${b.level}`}" data-seg="${b.seg}" aria-label="${label}"></button>`;
+  }).join('');
+  return `
+        <div class="tchart" role="group" aria-label="Turbulencia a lo largo del vuelo">${bars}</div>${axisHtml(view)}
+        <div id="seg-detail" class="seg-detail" hidden></div>`;
+}
+
+// Lista de tramos con turbulencia (cuerpo de la tarjeta). rows: [{ level, title, detail }].
+export function segListHtml(rows) {
+  const items = rows.length ? rows.map(r => `
+          <li class="seg-card">
+            <span class="dot lvl${r.level}"></span>
+            <div>
+              <strong>${r.title}</strong>
+              <p>${r.detail}</p>
+            </div>
+          </li>`).join('') : '<li class="seg-card empty">Ningún tramo con turbulencia.</li>';
+  return `<ul class="seg-list">${items}</ul>`;
+}
+
 const RELIABILITY = [
   { key: 'alta', label: 'Alta', when: 'Faltan menos de 24 h', text: 'El pronóstico a tan poco plazo suele acertar. Lo que ves es muy probable.' },
   { key: 'media', label: 'Media', when: 'Faltan de 1 a 3 días', text: 'Orientativo: las zonas de viento fuerte y las tormentas aún pueden moverse o cambiar.' },
@@ -349,7 +445,7 @@ const CAUSE_HELP = {
 
 function explainHtml(current) {
   const verdicts = Object.entries(VERDICTS).map(([key, v]) => `
-          <li${key === current ? ' class="current"' : ''}><strong>${v.emoji} ${v.title}</strong><br>${VERDICT_HELP[key]}</li>`).join('');
+          <li${key === current ? ' class="current"' : ''}><strong><span class="dot lvl${v.dot}"></span>${v.title}</strong><br>${VERDICT_HELP[key]}</li>`).join('');
   const levels = LEVEL_HELP.slice(1).map(([name, text], i) => `
           <li><span class="dot lvl${i + 1}"></span><strong>${name}</strong> · ${text}</li>`).join('');
   const causes = Object.entries(CAUSE_HELP).map(([key, text]) => `
@@ -372,49 +468,33 @@ function explainHtml(current) {
       </details>`;
 }
 
+const SIMPLIFIED = 'Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.';
+
+// Cálculo simplificado (v1): respaldo si los modelos ECMWF/GFS no dan datos, y consulta manual. Misma tarjeta de
+// Turbulencias que el pronóstico v2, con la línea que dice que es el cálculo simplificado. sectionOnly: sin la ficha,
+// para #forecast-area.
 export function renderResult(el, view) {
   if (view.note) {
-    el.innerHTML = `<div class="summary">${flightCardHtml(view.flight)}<p class="note">${esc(view.note)}</p></div>`;
+    el.innerHTML = `${flightCardHtml(view.flight)}${turbPlainCardHtml(`<p class="note">${esc(view.note)}</p>`)}`;
     return;
   }
   const v = VERDICTS[view.verdict];
-  const bar = view.segments.map(s =>
-    `<div class="seg lvl${s.level}" style="flex:${Math.max(s.endMin - s.startMin, 1)}"></div>`).join('');
-  const ticks = timeTicks(view.durationMin).map(m =>
-    `<span style="left:${(m / view.durationMin) * 100}%">${m}′</span>`).join('');
-  const bumpy = view.segments.filter(s => s.level > 0);
-  const cards = bumpy.length
-    ? bumpy.map(s => `
-      <li class="card">
-        <span class="dot lvl${s.level}"></span>
-        <div>
-          <strong>Min ${s.startMin}–${s.endMin} · ${cap(LEVELS[s.level])}</strong>
-          <p>${esc(CAUSES[s.cause])}${s.place ? ` · ${esc(s.place)}` : ''}</p>
-        </div>
-      </li>`).join('')
-    : '<li class="card empty">Ningún tramo con turbulencia.</li>';
-
+  const max = Math.max(0, ...view.segments.map(s => s.level));
+  const rows = view.segments.filter(s => s.level > 0).map(s => ({
+    level: s.level, title: `Min ${s.startMin}–${s.endMin} · ${cap(LEVELS[s.level])}`,
+    detail: `${esc(CAUSES[s.cause])}${s.place ? ` · ${esc(s.place)}` : ''}`,
+  }));
+  const summary = `${turbGeneralHtml({ level: max, headline: v.title })}
+        <section id="timeline">${turbTimelineHtml(view)}</section>
+        <p class="note-small simplified">${SIMPLIFIED}</p>`;
+  const body = `
+        <p class="turb-lead">${v.text}</p>
+        <div class="pills">${explainHtml(view.verdict)}${reliabilityHtml(view.reliability)}</div>
+        <section id="segments">${segListHtml(rows)}</section>`;
+  const card = turbCardHtml({ summary, body });
+  if (view.sectionOnly) { el.innerHTML = `${card}${DISCLAIMER}`; return; }
   const head = view.flight
-    ? `${flightCardHtml(view.flight)}<h3 class="section">Turbulencias</h3>`
-    : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>`;
-  el.innerHTML = view.sectionOnly ? legacyBody(view, v, bar, ticks, cards, '') : legacyBody(view, v, bar, ticks, cards, head);
-}
-
-// Cálculo simplificado (v1). sectionOnly: sin la ficha, para la sección de turbulencias.
-function legacyBody(view, v, bar, ticks, cards, head) {
-  return `
-    <div class="summary">
-      ${head}
-      <div class="verdict">
-        <span class="emoji">${v.emoji}</span>
-        <div><h2>${v.title}</h2><p>${v.text}</p></div>
-      </div>
-      <div class="pills">${explainHtml(view.verdict)}${reliabilityHtml(view.reliability)}</div>
-    </div>
-    <div class="timeline">
-      <div class="bar">${bar}</div>
-      <div class="ticks">${ticks}</div>
-      <div class="ends"><span>Despegue</span><span>Aterrizaje</span></div>
-    </div>
-    <ul class="cards">${cards}</ul>`;
+    ? flightCardHtml(view.flight)
+    : `<div class="summary card query-head"><p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p></div>`;
+  el.innerHTML = `${head}${card}${DISCLAIMER}`;
 }

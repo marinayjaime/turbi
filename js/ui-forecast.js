@@ -1,17 +1,22 @@
-// Pintado del pronóstico v2: resumen, confianza, timeline interactiva, altitudes, Aviation Weather y frescura.
-import { esc, flightCardHtml, formatDuration } from './ui.js';
+// Pintado del pronóstico v2: la tarjeta de Turbulencias (resumen, gráfica de barras, avisos, confianza, tramos y
+// altitudes), Aviation Weather y frescura.
+import { esc, flightCardHtml, formatDuration, TURB_LEVELS, DISCLAIMER, turbCardHtml, turbPlainCardHtml, turbGeneralHtml,
+  turbTimelineHtml, segListHtml } from './ui.js';
+import { icon } from './icons.js';
+import { roughestSpan, weatherAlerts } from './card-model.js';
 import { CAUSE_LABELS } from './turbi-index.js';
 import { NO_PIREPS } from './aviation-weather.js';
 import { agoText } from './storage.js';
 import { altitudeText, altitudeRange, localHour } from './plain.js';
 import { punctualityHtml } from './ui-punctuality.js';
 
-const LEVELS = ['Nula', 'Ligera', 'Moderada', 'Fuerte'];
+const LEVELS = TURB_LEVELS;
+// dot: nivel del punto de color que sustituye al emoji de antes (verde = ligera, ámbar = moderada, rojo = fuerte).
 const HEAD = {
-  Tranquilo: { emoji: '🟢', text: 'No se espera turbulencia relevante.' },
-  'Mayormente tranquilo': { emoji: '🟢', text: 'Como mucho algún tramo breve de movimiento.' },
-  'Algo de movimiento': { emoji: '🟡', text: 'Habrá algún tramo con meneo.' },
-  Turbulento: { emoji: '🔴', text: 'Se esperan tramos de turbulencia moderada o fuerte.' },
+  Tranquilo: { dot: 1, text: 'No se espera turbulencia relevante.' },
+  'Mayormente tranquilo': { dot: 1, text: 'Como mucho algún tramo breve de movimiento.' },
+  'Algo de movimiento': { dot: 2, text: 'Habrá algún tramo con meneo.' },
+  Turbulento: { dot: 3, text: 'Se esperan tramos de turbulencia moderada o fuerte.' },
 };
 const CONF = { alta: 'Alta', media: 'Media', baja: 'Baja' };
 const AGREEMENT = { alta: 'coinciden bastante', media: 'coinciden en parte', baja: 'coinciden poco' };
@@ -31,9 +36,10 @@ function confidenceHtml(c) {
       </details>`;
 }
 
+// Datos del cuerpo de la tarjeta: confianza del pronóstico con sus motivos, máximo, duración y momentos, y el reparto
+// por niveles. El titular («General») y la cobertura incompleta van en el summary, visibles sin desplegar.
 export function summaryHtml(view) {
   const s = view.summary;
-  const head = HEAD[s.headline] ?? HEAD['Algo de movimiento'];
   const facts = [['Máximo previsto', s.maxLevel > 0 ? `Turbulencia ${LEVELS[s.maxLevel].toLowerCase()}` : 'Sin turbulencia prevista']];
   if (s.maxLevel > 0) {
     facts.push(['Duración estimada', `≈ ${Math.max(5, Math.round(s.maxDurationMin / 5) * 5)} min`]);
@@ -43,45 +49,45 @@ export function summaryHtml(view) {
   }
   const bar = s.percentages.map((p, l) => (p ? `<span class="lvl${l}" style="flex:${p}"></span>` : '')).join('');
   return `
-    <div class="headline">
-      <span class="emoji">${head.emoji}</span>
-      <div><h2>${esc(s.headline)}</h2><p>${head.text}</p></div>
-    </div>
-    <dl class="facts">
-      ${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}
-      <div class="conf-row"><dt>Confianza</dt><dd>${confidenceHtml(view.confidence)}</dd></div>
-    </dl>
-    ${view.coverage !== undefined && view.coverage < 0.95
-      ? `<p class="note-small">Faltan datos en el ${Math.max(5, Math.round(((1 - view.coverage) * 100) / 5) * 5)} % de la ruta: esos tramos (rayados en la barra) se muestran como nulos y podrían no serlo.</p>`
-      : ''}
-    <div class="shares">
-      <div class="sharebar">${bar}</div>
-      <ul>${s.percentages.map((p, l) => `<li><span class="dot lvl${l}"></span>${LEVELS[l]} ${p} %</li>`).join('')}</ul>
-    </div>`;
+        <dl class="facts">
+          <div class="conf-row"><dt>Confianza</dt><dd>${confidenceHtml(view.confidence)}</dd></div>
+          ${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}
+        </dl>
+        <div class="shares">
+          <div class="sharebar">${bar}</div>
+          <ul>${s.percentages.map((p, l) => `<li><span class="dot lvl${l}"></span>${LEVELS[l]} ${p} %</li>`).join('')}</ul>
+        </div>`;
 }
 
-const ticks = d => { const step = d <= 90 ? 15 : d <= 240 ? 30 : 60; const t = []; for (let m = 0; m <= d; m += step) t.push(m); return t; };
-
-export function timelineHtml(view) {
-  const bar = view.segments.map((s, i) => `<button type="button" class="seg lvl${s.level}${s.missing ? ' missing' : ''}" data-seg="${i}"
-      style="flex:${Math.max(s.endMin - s.startMin, 1)}" aria-label="Min ${s.startMin}–${s.endMin} · ${LEVELS[s.level]}"></button>`).join('');
-  const bumpy = view.segments.filter(s => s.level > 0);
-  const cards = bumpy.length ? bumpy.map(s => `
-      <li class="card">
-        <span class="dot lvl${s.level}"></span>
-        <div>
-          <strong>Min ${s.startMin}–${s.endMin} · ${LEVELS[s.level]}</strong>
-          <p>${esc(causeText(s.causes))} · ${esc(flText(s.flMin, s.flMax))}${s.place ? ` · ${esc(s.place)}` : ''}</p>
-        </div>
-      </li>`).join('') : '<li class="card empty">Ningún tramo con turbulencia.</li>';
+// Cobertura incompleta: afecta a la fiabilidad, así que se ve sin desplegar (condición 2 de Jaime, §10 bis).
+function coverageHtml(view) {
+  if (view.coverage === undefined || view.coverage >= 0.95) return '';
   return `
-    <div class="timeline">
-      <div class="bar">${bar}</div>
-      <div class="ticks">${ticks(view.durationMin).map(m => `<span style="left:${(m / view.durationMin) * 100}%">${m}′</span>`).join('')}</div>
-      <div class="ends"><span>Despegue</span><span>Toca un tramo</span><span>Aterrizaje</span></div>
-    </div>
-    <div id="seg-detail" class="seg-detail" hidden></div>
-    <ul class="cards">${cards}</ul>`;
+        <p class="note-small coverage">Faltan datos en el ${Math.max(5, Math.round(((1 - view.coverage) * 100) / 5) * 5)} % de la ruta: esos tramos (rayados en la gráfica) se muestran como nulos y podrían no serlo.</p>`;
+}
+
+// Contenido de #timeline (gráfica, eje y #seg-detail): app.js lo repinta tras nameSegments.
+export const timelineHtml = view => turbTimelineHtml(view);
+
+// Tramos con turbulencia, con causa, altura y lugar (#segments, en el cuerpo): app.js lo repinta tras nameSegments.
+export function segmentListHtml(view) {
+  return segListHtml(view.segments.filter(s => s.level > 0).map(s => ({
+    level: s.level, title: `Min ${s.startMin}–${s.endMin} · ${LEVELS[s.level]}`,
+    detail: `${esc(causeText(s.causes))} · ${esc(flText(s.flMin, s.flMax))}${s.place ? ` · ${esc(s.place)}` : ''}`,
+  })));
+}
+
+// Avisos meteorológicos en una línea compacta (§10 bis.1): solo lo que ya devuelven sigmetsNearRoute y
+// pirepsNearRoute (weatherAlerts). Ámbar si algún SIGMET cruza la ruta. «Ver detalles» abre «El tiempo en los
+// aeropuertos» de Detalles avanzados (data-open, Tarea 8). Sin avisos o sin datos (null), nada.
+export function weatherAlertsHtml(aviation) {
+  const alerts = weatherAlerts(aviation);
+  if (!alerts.length) return '';
+  return `
+        <div class="wx-alerts">${alerts.map(a => `
+          <p class="wx-alert tone-${a.crosses ? 'warn' : 'neutral'}">${icon('alert', { size: 16 })}<span>${esc(a.text)}${a.label ? ` · ${esc(a.label)}` : ''}</span></p>`).join('')}
+          <button type="button" class="wx-more" data-open="adv-weather">Ver detalles</button>
+        </div>`;
 }
 
 export function segmentDetailHtml(seg, originIata) {
@@ -179,7 +185,7 @@ export function explainHtml(current) {
       <details class="explain">
         <summary>¿Qué significa? <span class="info">ⓘ</span></summary>
         <h4>Resumen</h4>
-        <ul>${Object.entries(HEAD).map(([k, v]) => `<li${k === current ? ' class="current"' : ''}><strong>${v.emoji} ${k}</strong><br>${v.text}</li>`).join('')}</ul>
+        <ul>${Object.entries(HEAD).map(([k, v]) => `<li${k === current ? ' class="current"' : ''}><strong><span class="dot lvl${v.dot}"></span>${k}</strong><br>${v.text}</li>`).join('')}</ul>
         <h4>Intensidad</h4>
         <ul>
           <li><span class="dot lvl1"></span><strong>Ligera</strong> · Pequeños botes. Normalmente se puede caminar por la cabina.</li>
@@ -199,15 +205,23 @@ export function explainHtml(current) {
 
 // La ficha del vuelo va primero y no depende de la meteorología: el pronóstico se pinta después en #forecast-area,
 // y si Open-Meteo falla (429, red, modelos) solo esa sección lo dice. Un error meteorológico nunca sustituye la ficha.
+// Cada estado de la sección es una tarjeta con el título «Turbulencias» (app-flow lo busca).
 export const FORECAST_UNAVAILABLE = 'Previsión de turbulencias no disponible temporalmente';
-const FORECAST_LOADING = '<p class="forecast-loading">Calculando la previsión de turbulencias…</p>';
+// «Calculando…»: el texto y un esqueleto suave de la gráfica (decorativo).
+export const forecastLoadingHtml = () => turbPlainCardHtml(`
+      <p class="forecast-loading">Calculando la previsión de turbulencias…</p>
+      <div class="tchart skeleton" aria-hidden="true"></div>`, 'turb-loading');
+// La nota que sustituye al pronóstico (vuelo terminado, cancelado, sin llegada…): su texto tal cual, porque app.js lo
+// compara con ENDED_ESTIMATED / NO_ARRIVAL_NOTE para sustituirlo.
+export const forecastNoteHtml = note => turbPlainCardHtml(`<p class="note">${esc(note)}</p>`);
 
 function headHtml(view, nowMs) {
   // La puntualidad va dentro del «Horario» de la ficha (#punctuality): aquí solo su contenido inicial (situación de hoy).
+  // El título «Turbulencias» ya no va aquí: lo lleva la propia tarjeta, dentro de #forecast-area.
   const punctualityBody = view.punctuality ? punctualityHtml(view.punctuality) : '';
   const head = view.flight
-    ? `${flightCardHtml(view.flight, { nowMs, punctualityBody })}<h3 class="section">Turbulencias</h3>`
-    : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>${view.sourceInfo ? `<p class="note-small source-info">${esc(view.sourceInfo)}</p>` : ''}`;
+    ? flightCardHtml(view.flight, { nowMs, punctualityBody })
+    : `<div class="card query-head"><p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>${view.sourceInfo ? `<p class="note-small source-info">${esc(view.sourceInfo)}</p>` : ''}</div>`;
   return `
     <div class="summary">
       ${view.saved ? offlineBanner(view.saved, nowMs) : ''}
@@ -216,20 +230,18 @@ function headHtml(view, nowMs) {
 }
 
 // Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar), puntualidad y la
-// sección de turbulencias aún calculando.
+// tarjeta de turbulencias aún calculando.
 export function flightShellHtml({ flight, punctuality = null }) {
   return `${headHtml({ flight, punctuality })}
-    <div id="forecast-area">
-      ${FORECAST_LOADING}
+    <div id="forecast-area">${forecastLoadingHtml()}
     </div>`;
 }
 
 // Ficha con aviso (vuelo terminado, sin hora de llegada, cancelado, demasiado lejano…): no hay previsión que calcular,
-// pero la sección Turbulencias está siempre y dice por qué.
+// pero la tarjeta Turbulencias está siempre y dice por qué.
 export function flightNoteHtml({ flight, punctuality = null, note }) {
   return `${headHtml({ flight, punctuality })}
-    <div id="forecast-area">
-      <p class="note">${esc(note)}</p>
+    <div id="forecast-area">${forecastNoteHtml(note)}
     </div>`;
 }
 
@@ -237,28 +249,35 @@ export function forecastUnavailableHtml(err) {
   const why = err?.rateLimited
     ? `Open-Meteo ha recibido demasiadas consultas.${err.retryAfterMs ? ` Puedes reintentar en unos ${Math.ceil(err.retryAfterMs / 1000)} s.` : ''}`
     : esc(err?.message ?? 'No se ha podido obtener.');
-  return `
+  return turbPlainCardHtml(`
       <div class="forecast-error">
         <p><strong>${FORECAST_UNAVAILABLE}</strong></p>
         <p class="note-small">${why}</p>
         <button type="button" id="forecast-retry" class="pill-btn">Reintentar</button>
-      </div>`;
+      </div>`);
 }
 
-// Contenido de la sección de turbulencias (sin la ficha).
-export function forecastSectionHtml(view, nowMs) {
-  return `
-    <div class="summary">
-      ${summaryHtml(view)}
-      <p id="trend" class="trend"${view.trend ? '' : ' hidden'}>${esc(view.trend ?? '')}</p>
-      <div class="pills">${explainHtml(view.summary.headline)}<button type="button" id="speak" class="pill-btn" hidden>🔊 Escuchar previsión</button></div>
-    </div>
-    <section id="timeline">${timelineHtml(view)}</section>
-    <section id="altitudes">${altitudeHtml(view.altitudes)}</section>
-    <section id="aviation">${aviationHtml(view.aviation, nowMs)}</section>
-    <div id="map" class="map" hidden></div>
+// Contenido de #forecast-area con pronóstico: la tarjeta de Turbulencias (§5.7) y, fuera de ella, el aviso legal.
+// open: los data-card abiertos (los conserva el repintado). preLanding: Tarea 8 (§10.2).
+// #fresh se queda aquí de momento, al final y fuera de la tarjeta: app.js aún escribe en él y app-flow lo espera; la
+// Tarea 7 lo lleva a Detalles avanzados. #aviation y #map ya no se generan aquí (Tareas 6–8).
+export function forecastSectionHtml(view, nowMs, { preLanding = false, open = new Set() } = {}) {
+  const s = view.summary;
+  const span = roughestSpan(view);
+  const summary = `${turbGeneralHtml({ level: s.maxLevel, headline: s.headline, span: span?.text ?? null })}
+        <section id="timeline">${timelineHtml(view)}</section>${coverageHtml(view)}
+        <div id="wx-alerts">${weatherAlertsHtml(view.aviation)}</div>`;
+  const head = HEAD[s.headline] ?? HEAD['Algo de movimiento'];
+  const body = `
+        <p class="turb-lead">${head.text}</p>${summaryHtml(view)}
+        <p id="trend" class="trend"${view.trend ? '' : ' hidden'}>${esc(view.trend ?? '')}</p>
+        <button type="button" id="speak" class="pill-btn speak" hidden>${icon('sound', { size: 16 })}Escuchar previsión</button>
+        <section id="segments">${segmentListHtml(view)}</section>
+        <section id="altitudes">${altitudeHtml(view.altitudes)}</section>
+        <div class="pills">${explainHtml(s.headline)}</div>`;
+  return `${turbCardHtml({ open, preLanding, summary, body })}
     <p id="fresh" class="fresh">${freshnessHtml(view, nowMs)}</p>
-    <p class="disclaimer">Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.</p>`;
+    ${DISCLAIMER}`;
 }
 
 // Todo junto (pronóstico guardado sin conexión y consultas manuales).

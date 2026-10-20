@@ -170,13 +170,9 @@ button { font: inherit; cursor: pointer; }
 }
 
 
-/* ---- Ficha actual (se rehace en las tareas siguientes): mismos selectores, pasados a los tokens claros ---- */
-.summary .route { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
-.summary .sub { color: var(--muted); margin: 4px 0 20px; font-size: 15px; }
-.verdict { display: flex; gap: 14px; align-items: center; }
-.verdict .emoji { font-size: 44px; line-height: 1; }
-.verdict h2 { margin: 0; font-size: 24px; }
-.verdict p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+/* ---- Cabecera de la consulta manual (sin ficha): ruta y horas en su tarjeta ---- */
+.query-head .route { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+.query-head .sub { color: var(--muted); margin: 4px 0 0; font-size: 15px; }
 .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .pills details[open] { flex-basis: 100%; order: 1; }
 .reliability, .explain { font-size: 13px; color: var(--muted); }
@@ -195,28 +191,10 @@ button { font: inherit; cursor: pointer; }
 .explain li .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 .reliability li.current, .explain li.current { background: var(--field); color: var(--text); }
 
-.timeline { margin: 32px 0 8px; }
-.bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px; }
-.seg.lvl0, .dot.lvl0 { background: var(--lvl0); }
-.seg.lvl1, .dot.lvl1 { background: var(--lvl1); }
-.seg.lvl2, .dot.lvl2 { background: var(--lvl2); }
-.seg.lvl3, .dot.lvl3 { background: var(--lvl3); }
-.ticks { position: relative; height: 20px; margin-top: 6px; }
-.ticks span { position: absolute; transform: translateX(-50%); font-size: 12px; color: var(--muted); }
-.ticks span:first-child { transform: none; }
-.ticks span:last-child { transform: translateX(-100%); }
-.ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
-
-.cards { list-style: none; margin: 24px 0 0; padding: 0; }
-/* Tramos de la lista: comparten el nombre .card con la tarjeta base hasta que pasen a .seg-card; acotados a .cards > .card
-   y sin el aspecto de tarjeta (filas separadas por una línea). */
-.cards > .card { display: flex; gap: 12px; align-items: flex-start; margin: 0; padding: 14px 0; background: none;
-  border: 0; border-bottom: 1px solid var(--border); border-radius: 0; box-shadow: none; }
-.cards > .card:last-child { border-bottom: 0; padding-bottom: 0; }
-.cards > .card .dot { flex: none; width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; }
-.cards > .card strong { font-size: 16px; }
-.cards > .card p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
-.cards > .card.empty { color: var(--muted); }
+.dot.lvl0 { background: var(--lvl0); }
+.dot.lvl1 { background: var(--lvl1); }
+.dot.lvl2 { background: var(--lvl2); }
+.dot.lvl3 { background: var(--lvl3); }
 
 .actions { display: flex; gap: 12px; }
 .actions:not(:has(button:not([hidden]))) { display: none; } /* sin botones visibles, no ocupa sitio */
@@ -225,12 +203,7 @@ button { font: inherit; cursor: pointer; }
    #result deja de ser una tarjeta cuando lleva la ficha: cada bloque (cabecera, Ahora, Horario…) es su propia .card.
    Las pantallas de elección (selector de tramos, alias) siguen siendo tarjeta por sí mismas (ver más abajo). */
 #result.panel { background: none; border: 0; box-shadow: none; padding: 0; border-radius: 0; }
-/* Provisional hasta la Tarea 5 (tarjeta de Turbulencias): mientras #forecast-area no tenga su propia .card, se pinta
-   como tarjeta para no dejar el pronóstico suelto sobre el fondo. Se apaga sola en cuanto contenga una .card. */
-#forecast-area:not(:has(> .card)) { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px; }
 #forecast-area:empty { display: none; }
-#result > .summary > h3.section:first-of-type { margin-top: 8px; border-top: 0; padding-top: 0; }
 .flight { margin-bottom: 16px; }
 
 /* Cabecera: foto arriba, a sangre, que se funde con el blanco; atribución pequeña debajo (obligatoria). */
@@ -400,11 +373,77 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
   font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: 0.05em; }
 .note { margin: 20px 0 0; padding: 14px 16px; border-radius: 12px; background: var(--field); font-size: 15px; }
 
-/* ---- Pronóstico v2 ---- */
-.headline { display: flex; gap: 14px; align-items: center; }
-.headline .emoji { font-size: 44px; line-height: 1; }
-.headline h2 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
-.headline p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+/* ---- Tarjeta de Turbulencias (.turb, §5.7): lo esencial en el summary y el detalle al desplegar ---- */
+/* El título es un h3.section (app.js y sus tests lo buscan): aquí, con el aspecto de cabecera de tarjeta. */
+.turb .card-head h3.section, .turb h3.section.card-head { margin: 0; padding: 0; border: 0; font-size: 17px; font-weight: 600;
+  letter-spacing: -0.01em; text-transform: none; color: var(--text); }
+.turb-plain h3.section.card-head { margin-bottom: 12px; }
+.pre-landing { margin: 10px 0 0; }
+.pre-landing .chip { white-space: normal; }
+/* «General» a la izquierda (icono y titular en el color del nivel máximo) y «Tramo más movido» a la derecha. */
+.turb-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.turb-general { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.turb-general .v { font-size: 17px; }
+.turb-general > .icon, .turb-general .v { color: var(--ink); }
+.lvl-ink0 { --ink: var(--text); } .lvl-ink1 { --ink: var(--ok); } .lvl-ink2 { --ink: var(--warn); } .lvl-ink3 { --ink: var(--bad); }
+.turb-span { flex: none; text-align: right; }
+.turb-span .kv { align-items: flex-end; }
+.turb-span .v { font-size: 15px; }
+/* Gráfica de barras verticales: cada barra es un botón que ocupa toda la altura (objetivo táctil) y sin huecos entre
+   ellas (tocar entre dos barras no abre la tarjeta); lo que se ve es su ::after, de altura fija por nivel. Nula = la
+   barra mínima (un punto gris, la línea base punteada); sin datos = rayada. */
+.tchart { display: flex; align-items: stretch; height: 56px; margin-top: 16px; }
+.tbar { flex: 1 1 0; min-width: 0; display: flex; align-items: flex-end; justify-content: center; padding: 0; border: 0;
+  background: none; cursor: pointer; }
+.tbar::after { content: ""; width: calc(100% - 2px); max-width: 6px; min-width: 2px; border-radius: 2px 2px 1px 1px;
+  transition: box-shadow var(--ease); }
+.tbar.lvl0::after { height: 3px; max-width: 3px; border-radius: 50%; background: var(--faint); opacity: 0.55; }
+.tbar.lvl1::after { height: 40%; background: var(--lvl1); }
+.tbar.lvl2::after { height: 70%; background: var(--lvl2); }
+.tbar.lvl3::after { height: 100%; background: var(--lvl3); }
+.tbar.missing::after { height: 30%; opacity: 0.7;
+  background: repeating-linear-gradient(45deg, var(--faint) 0 2px, transparent 2px 4px); }
+.tbar.selected::after { box-shadow: 0 0 0 1.5px var(--text); }
+.tbar:focus-visible { outline-offset: 0; }
+.ticks { position: relative; height: 18px; margin-top: 6px; }
+.ticks span { position: absolute; transform: translateX(-50%); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  white-space: nowrap; }
+.ticks span:first-child { transform: none; }
+.ticks span:last-child { transform: translateX(-100%); }
+/* «Calculando…»: esqueleto suave de la gráfica. */
+.forecast-loading { margin: 0; color: var(--muted); font-size: 15px; }
+.tchart.skeleton { height: 40px; margin-top: 14px; border-radius: 8px;
+  background: linear-gradient(90deg, var(--field) 25%, #E8EEF6 50%, var(--field) 75%); background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.turb-plain .note { margin: 0; }
+.forecast-error p { margin: 0 0 6px; }
+/* Avisos meteorológicos en una línea compacta (§10 bis.1); ámbar si un SIGMET cruza la ruta. */
+.wx-alerts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 14px; padding: 10px 12px;
+  border-radius: 12px; background: var(--field); font-size: 13px; line-height: 1.35; }
+.wx-alerts:has(.tone-warn) { background: rgba(179, 106, 0, 0.08); }
+.wx-alert { flex: 1 1 100%; display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--muted); }
+.wx-alert.tone-warn { color: var(--warn); font-weight: 500; }
+.wx-alert .icon { margin-top: 1px; }
+.wx-more { border: 0; background: none; padding: 0; color: var(--accent); font-size: 13px; font-weight: 600; }
+/* Cuerpo: una columna con el aire de .card-body; los subtítulos de sección, un escalón por debajo del título. */
+.turb-lead { margin: 0; font-size: 15px; }
+.turb .facts, .turb .shares, .turb .trend, .turb .pills { margin: 0; }
+.turb .card-body h3.section { margin: 4px 0 10px; padding-top: 14px; }
+.speak { display: inline-flex; align-items: center; gap: 6px; justify-self: start; padding: 6px 12px; }
+.seg-list { list-style: none; margin: 0; padding: 0; }
+.seg-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.seg-card:first-child { padding-top: 0; }
+.seg-card:last-child { border-bottom: 0; padding-bottom: 0; }
+.seg-card .dot { width: 10px; height: 10px; margin-top: 5px; }
+.seg-card strong { font-size: 15px; }
+.seg-card p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.seg-card.empty { color: var(--muted); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .tchart.skeleton { animation: none; }
+}
+
+/* ---- Pronóstico v2 (piezas del cuerpo de la tarjeta y de las secciones que aún no tienen tarjeta propia) ---- */
 .facts { margin: 16px 0 0; display: grid; gap: 10px; }
 .facts > div { display: grid; grid-template-columns: 9.5em 1fr; gap: 8px; align-items: baseline; }
 .facts dt { font-size: 13px; color: var(--muted); }
@@ -419,9 +458,6 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 .shares li .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
 .trend { margin: 14px 0 0; font-size: 14px; color: var(--text); background: var(--field); padding: 10px 12px; border-radius: 10px; }
 .pill-btn { border: 0; background: var(--field); color: var(--accent); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
-.bar button.seg { border: 0; padding: 0; min-width: 4px; cursor: pointer; }
-.bar button.seg.selected { outline: 2px solid var(--text); outline-offset: -2px; }
-.ends { display: flex; justify-content: space-between; }
 .seg-detail { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--field); }
 .seg-detail .seg-title { margin: 0 0 6px; font-size: 16px; }
 .seg-detail .seg-title .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
@@ -452,14 +488,14 @@ details.raw summary { font-size: 12px; color: var(--accent); cursor: pointer; }
 details.raw code { display: block; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--field); padding: 8px; border-radius: 8px; margin-top: 4px; }
 .map { height: 260px; border-radius: 14px; margin-top: 18px; overflow: hidden; }
 .fresh { font-size: 12px; color: var(--muted); margin: 18px 0 0; line-height: 1.5; }
-.disclaimer { font-size: 12px; color: var(--muted); margin: 8px 0 0; font-style: italic; }
+.turb + .fresh { margin: 0 4px 6px; } /* provisional: #fresh pasa a Detalles avanzados en la Tarea 7 */
+.disclaimer { font-size: 12px; color: var(--muted); margin: 8px 4px 0; font-style: italic; }
 .offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 #saved-link { margin-top: 4px; }
 .facts > .conf-row:has(details[open]) { grid-template-columns: 1fr; }
 .facts .conf ul { padding-left: 18px; margin: 8px 0 0; }
 .facts .conf li { padding: 2px 0; font-weight: 400; }
 .facts .conf p { font-weight: 400; }
-.bar button.seg.missing { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,0.18) 0 3px, transparent 3px 7px); }
 
 /* ---- Puntualidad (cuerpo del «Horario», #punctuality) ---- */
 #punctuality > :first-child { margin-top: 0; }

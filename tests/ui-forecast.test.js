@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { JSDOM } from 'jsdom';
 import { flightNoteHtml, summaryHtml, timelineHtml, segmentDetailHtml, altitudeHtml, freshnessHtml, aviationHtml, offlineBanner, renderForecast, flText } from '../js/ui-forecast.js';
 
 const NOW = Date.parse('2026-09-24T10:18:00Z');
+const dom = html => new JSDOM(`<body>${html}</body>`).window.document;
 const seg = (level, startMin, endMin, extra = {}) => ({ level, startMin, endMin, causes: level ? ['vertical_shear', 'jet_stream'] : [], flMin: 350, flMax: 350, mid: { kmFromOrigin: 180 }, ...extra });
 const view = {
   v: 2, flight: null, title: 'PMI → MAD', subtitle: 'IB1668 · Iberia', times: '17:55–19:25', fromCity: 'Palma de Mallorca', toCity: 'Madrid', originIata: 'PMI',
@@ -16,7 +18,8 @@ const view = {
 describe('resumen', () => {
   it('responde: cómo será, máximo, duración, momento, confianza y porcentajes', () => {
     const h = summaryHtml(view);
-    for (const t of ['Mayormente tranquilo', 'Máximo previsto', 'Turbulencia moderada', 'Duración estimada', '≈ 10 min', 'Momento', 'aprox. 42–54 min después del despegue', 'Confianza', 'Alta',
+    expect(forecastSectionHtml(view, NOW)).toContain('Mayormente tranquilo'); // el titular, en «General» (cabecera de la tarjeta)
+    for (const t of ['Máximo previsto', 'Turbulencia moderada', 'Duración estimada', '≈ 10 min', 'Momento', 'aprox. 42–54 min después del despegue', 'Confianza', 'Alta',
       'Nula', '60 %', 'Ligera', '30 %', 'Moderada', '10 %', 'Fuerte', '0 %']) expect(h).toContain(t);
     for (const r of view.confidence.reasons) expect(h).toContain(r);
   });
@@ -36,9 +39,11 @@ describe('resumen', () => {
 });
 
 describe('cobertura, frescura y precisión', () => {
-  it('con cobertura incompleta avisa en el resumen', () => {
-    expect(summaryHtml({ ...view, coverage: 0.8 })).toContain('Faltan datos en el 20 % de la ruta');
-    expect(summaryHtml({ ...view, coverage: 1 })).not.toContain('Faltan datos');
+  it('con cobertura incompleta avisa en la tarjeta, visible sin desplegarla (condición 2 de Jaime)', () => {
+    const doc = dom(forecastSectionHtml({ ...view, coverage: 0.8 }, NOW));
+    expect(doc.querySelector('[data-card="turbulence"] > summary').textContent).toContain('Faltan datos en el 20 % de la ruta');
+    expect(forecastSectionHtml({ ...view, coverage: 0.96 }, NOW)).not.toContain('Faltan datos');
+    expect(forecastSectionHtml({ ...view, coverage: 0.93 }, NOW)).toContain('Faltan datos en el 5 % de la ruta');
   });
   it('la duración se redondea a 5 min', () => {
     expect(summaryHtml({ ...view, summary: { ...view.summary, maxDurationMin: 23 } })).toContain('≈ 25 min');
@@ -46,7 +51,8 @@ describe('cobertura, frescura y precisión', () => {
   });
   it('tramos sin datos se distinguen en la barra', () => {
     const h = timelineHtml({ ...view, segments: [seg(0, 0, 90, { missing: true })] });
-    expect(h).toContain('class="seg lvl0 missing"');
+    expect(h).toContain('class="tbar missing"');
+    expect(h).not.toMatch(/class="tbar lvl/);
   });
   it('METAR: antigüedad visible; viejo o ausente, dicho claramente; SIGMET/PIREP no disponibles ≠ ninguno', () => {
     const av = {
@@ -65,9 +71,12 @@ describe('cobertura, frescura y precisión', () => {
 });
 
 describe('timeline', () => {
-  it('cada tramo es un botón con su índice; detalle con causas, altitud y ubicación', () => {
-    const h = timelineHtml(view);
-    expect(h.match(/<button[^>]+data-seg="\d+"/g)).toHaveLength(3);
+  it('cada barra es un botón con el índice de su tramo; detalle con causas, altitud y ubicación', () => {
+    const doc = dom(timelineHtml(view));
+    const bars = [...doc.querySelectorAll('button[data-seg]')];
+    expect(bars.length).toBeGreaterThan(3);
+    expect(new Set(bars.map(b => b.dataset.seg))).toEqual(new Set(['0', '1', '2'])); // los tres tramos, por orden
+    expect(doc.querySelector('#seg-detail')).not.toBeNull();
     const d = segmentDetailHtml(view.segments[1], 'PMI');
     for (const t of ['Min 42–54', 'Moderada', 'Causa probable', 'Cambio brusco del viento con la altura', 'Corriente de viento muy fuerte en altura', 'Altura del avión', '10,7 km (35.000 pies)', 'Ubicación aproximada', 'sobre el Golfo de León']) expect(d).toContain(t);
   });
@@ -147,14 +156,16 @@ describe('renderForecast', () => {
   it('monta todas las secciones y el aviso orientativo; escapa HTML', () => {
     const el = { innerHTML: '' };
     renderForecast(el, { ...view, title: '<b>x</b>' }, NOW);
-    for (const id of ['trend', 'timeline', 'seg-detail', 'altitudes', 'aviation', 'map', 'fresh']) expect(el.innerHTML).toContain(`id="${id}"`);
+    for (const id of ['trend', 'speak', 'timeline', 'seg-detail', 'altitudes']) expect(el.innerHTML).toContain(`id="${id}"`);
+    for (const id of ['aviation', 'map']) expect(el.innerHTML).not.toContain(`id="${id}"`); // van a sus tarjetas (Tareas 6–8)
     expect(el.innerHTML).toContain('Estimación orientativa para pasajeros');
     expect(el.innerHTML).not.toContain('<b>x</b>');
     expect(el.innerHTML).not.toMatch(/no pone en peligro|no pasa nada/);
   });
 });
 
-import { flightShellHtml, forecastSectionHtml, forecastUnavailableHtml, FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
+import { flightShellHtml, forecastSectionHtml, forecastUnavailableHtml, FORECAST_UNAVAILABLE, forecastLoadingHtml, forecastNoteHtml, weatherAlertsHtml,
+  segmentListHtml, explainHtml } from '../js/ui-forecast.js';
 describe('la ficha primero; el pronóstico en su propia sección', () => {
   const flight = { al: 'IB', number: 'IB 1668', airline: 'Iberia', title: 'x', route: 'Palma de Mallorca a Madrid', status: { text: 'Volando', tone: 'info', flying: true },
     o: 'PMI', a: 'MAD', duration: 90, dep: { date: '2026-09-25', time: '17:55', est: null, late: false, terminal: null, gate: 'D86' }, arr: null, aircraft: 'Airbus A321neo',
@@ -165,7 +176,9 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
     expect(html).toContain('class="flight"');
     expect(html).toContain('class="card now telemetry"'); // el radar no depende de la meteorología
     expect(html).toContain('id="punctuality"');
-    expect(html).toMatch(/<div id="forecast-area">\s*<p class="forecast-loading">Calculando la previsión de turbulencias…<\/p>/);
+    const area = dom(html).querySelector('#forecast-area');
+    expect(area.querySelector('.card h3.section').textContent).toBe('Turbulencias');
+    expect(area.querySelector('.card .forecast-loading').textContent).toBe('Calculando la previsión de turbulencias…');
   });
   it('sin cupo en Open-Meteo (429): solo la sección lo dice, con Reintentar y cuándo', () => {
     const err = Object.assign(new Error('Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.'), { rateLimited: true, retryAfterMs: 30000 });
@@ -175,6 +188,7 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
     expect(html).toContain('Open-Meteo ha recibido demasiadas consultas. Puedes reintentar en unos 30 s.');
     expect(html).toContain('<button type="button" id="forecast-retry" class="pill-btn">Reintentar</button>');
     expect(html).not.toContain('class="flight"');
+    expect(dom(html).querySelector('.card h3.section').textContent).toBe('Turbulencias');
   });
   it('otros fallos (red, modelos): el mismo aviso con su motivo, y Reintentar', () => {
     const html = forecastUnavailableHtml(new Error('No se pudo conectar con el servicio del tiempo (Open-Meteo).'));
@@ -185,7 +199,7 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
   it('la sección del pronóstico no incluye la ficha (se inserta sin tocarla)', () => {
     const html = forecastSectionHtml({ ...view, flight }, NOW);
     expect(html).not.toContain('class="flight"');
-    for (const id of ['trend', 'timeline', 'altitudes', 'aviation', 'map', 'fresh']) expect(html).toContain(`id="${id}"`);
+    for (const id of ['trend', 'timeline', 'altitudes']) expect(html).toContain(`id="${id}"`);
   });
 });
 
@@ -194,8 +208,132 @@ describe('ficha con aviso (vuelo terminado, sin llegada, cancelado…): la secci
     const flight = { al: 'UX', title: 'UX 6030', route: 'y', tabs: [], status: { text: 'Ha llegado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 75,
       dep: { date: '2026-09-25', time: '10:51', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 1 min', stale: false };
     const html = flightNoteHtml({ flight, punctuality: null, note: 'Este vuelo ya ha aterrizado.' });
-    expect(html).toContain('<h3 class="section">Turbulencias</h3>');
-    expect(html).toMatch(/<div id="forecast-area">\s*<p class="note">Este vuelo ya ha aterrizado\.<\/p>\s*<\/div>/);
+    const area = dom(html).querySelector('#forecast-area');
+    expect(area.querySelector('.card h3.section').textContent).toBe('Turbulencias');
+    expect(area.querySelector('.card .note').textContent).toBe('Este vuelo ya ha aterrizado.'); // mismo texto (app.js lo compara)
+    expect(area.querySelector('[data-card="turbulence"]')).toBeNull(); // sin pronóstico no hay tarjeta desplegable
   });
 });
 
+
+// Tarjeta de Turbulencias (spec 2026-10-20 §5.7, §9 bis «Barras», §10.2 y §10 bis.1).
+describe('tarjeta de Turbulencias', () => {
+  // Perfil en el aire de 120 puntos (como view.route de forecastView): nulo, moderado en el centro, ligero al final.
+  const route = Array.from({ length: 120 }, (_, i) => ({ lat: 39, lon: 3 - i / 40, level: i >= 56 && i < 72 ? 2 : i >= 100 ? 1 : 0 }));
+  const full = { ...view, durationMin: 119, route, segments: [seg(0, 0, 56), seg(2, 56, 72), seg(0, 72, 100), seg(1, 100, 119)],
+    summary: { ...view.summary, moments: [{ startMin: 56, endMin: 72 }] } };
+  const card = (v = full, opts) => dom(forecastSectionHtml(v, NOW, opts)).querySelector('details.card.turb[data-card="turbulence"]');
+  it('es un <details> con el título «Turbulencias» (h3.section) en su summary', () => {
+    const c = card();
+    expect(c).not.toBeNull();
+    expect(c.hasAttribute('open')).toBe(false);
+    expect(c.querySelector(':scope > summary h3.section').textContent).toBe('Turbulencias');
+    expect(card(full, { open: new Set(['turbulence']) }).hasAttribute('open')).toBe(true);
+  });
+  it('barras: como mucho 56, cada una un botón con un data-seg válido y su tramo y nivel en aria-label', () => {
+    const bars = [...card().querySelectorAll(':scope > summary #timeline button.tbar')];
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.length).toBeLessThanOrEqual(56);
+    for (const b of bars) {
+      expect(b.getAttribute('type')).toBe('button');
+      expect(Number(b.dataset.seg)).toBeGreaterThanOrEqual(0);
+      expect(Number(b.dataset.seg)).toBeLessThan(full.segments.length);
+      expect(b.getAttribute('aria-label')).toMatch(/^Min \d+–\d+ · (Nula|Ligera|Moderada|Fuerte|Sin datos)$/);
+    }
+    expect(bars.some(b => b.classList.contains('lvl2') && b.dataset.seg === '1')).toBe(true);
+    expect(bars.find(b => b.classList.contains('lvl2')).getAttribute('aria-label')).toBe('Min 56–72 · Moderada');
+  });
+  it('punto sin datos (level null) → barra rayada «missing»', () => {
+    const holes = route.map((p, i) => (i < 10 ? { ...p, level: null } : p));
+    const bars = [...card({ ...full, route: holes }).querySelectorAll('button.tbar')];
+    expect(bars[0].className).toBe('tbar missing');
+    expect(bars[0].getAttribute('aria-label')).toContain('Sin datos');
+  });
+  it('«General» con el titular coloreado por el nivel máximo y «Tramo más movido» (horas con la misma zona; si no, minutos)', () => {
+    const tz = { originTz: 'Europe/Madrid', destinationTz: 'Europe/Madrid', depMs: Date.parse('2026-09-24T16:00:00Z') };
+    const s = card({ ...full, ...tz }).querySelector(':scope > summary');
+    expect(s.querySelector('.turb-general').textContent).toContain('General');
+    expect(s.querySelector('.turb-general .v').textContent).toBe('Mayormente tranquilo');
+    expect(s.querySelector('.turb-general').classList.contains('lvl-ink2')).toBe(true);
+    expect(s.querySelector('.turb-span .k').textContent).toBe('Tramo más movido');
+    expect(s.querySelector('.turb-span .v').textContent).toBe('18:56 – 19:12');
+    // Eje: 3–4 marcas, en horas locales (con su minuto en data-min).
+    const ticks = [...s.querySelectorAll('.ticks span')];
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    expect(ticks.length).toBeLessThanOrEqual(4);
+    expect(ticks[0].textContent).toBe('18:00');
+    expect(ticks.at(-1).dataset.min).toBe('119');
+    const other = card({ ...full, ...tz, destinationTz: 'Atlantic/Canary' }).querySelector(':scope > summary');
+    expect(other.querySelector('.turb-span').textContent).toContain('min 56–72');
+    expect([...other.querySelectorAll('.ticks span')].map(t => t.textContent)).toEqual(['0′', '40′', '80′', '119′']);
+  });
+  it('sin turbulencia no hay «Tramo más movido»', () => {
+    const calm = { ...full, summary: { headline: 'Tranquilo', maxLevel: 0, maxDurationMin: 0, moments: [], percentages: [100, 0, 0, 0] } };
+    expect(card(calm).querySelector('.turb-span')).toBeNull();
+    expect(card(calm).querySelector('.turb-general').classList.contains('lvl-ink0')).toBe(true);
+  });
+  it('preLanding: el chip exacto «Previsión mostrada antes del aterrizaje»; sin él, nada', () => {
+    const chip = card(full, { preLanding: true }).querySelector(':scope > summary .chip');
+    expect(chip.textContent).toBe('Previsión mostrada antes del aterrizaje');
+    expect(forecastSectionHtml(full, NOW)).not.toContain('antes del aterrizaje');
+  });
+  it('avisos: 1 SIGMET que cruza la ruta → línea ámbar «1 aviso oficial (SIGMET)» con su etiqueta y «Ver detalles»', () => {
+    const aviation = { sigmets: [{ label: 'Turbulencia fuerte', crosses: true, distanceKm: 0, raw: 'x' }], pireps: [] };
+    const s = card({ ...full, aviation }).querySelector(':scope > summary');
+    const warn = s.querySelector('.wx-alerts .tone-warn');
+    expect(warn.textContent).toContain('1 aviso oficial (SIGMET)');
+    expect(warn.textContent).toContain('Turbulencia fuerte');
+    expect(warn.querySelector('svg.icon')).not.toBeNull();
+    expect(s.querySelector('.wx-alerts [data-open="adv-weather"]').textContent).toBe('Ver detalles');
+  });
+  it('avisos: SIGMET que no cruza y PIREP → sin ámbar; null o vacíos → ninguna .wx-alerts', () => {
+    const aviation = { sigmets: [{ label: 'Tormentas', crosses: false }], pireps: [{ label: 'Turbulencia ligera' }, { label: 'x' }] };
+    const box = card({ ...full, aviation }).querySelector('.wx-alerts');
+    expect(box.querySelector('.tone-warn')).toBeNull();
+    expect(box.textContent).toContain('2 informes de pilotos cerca de la ruta');
+    expect(card({ ...full, aviation: null }).querySelector('.wx-alerts')).toBeNull();
+    expect(card({ ...full, aviation: { sigmets: null, pireps: null } }).querySelector('.wx-alerts')).toBeNull();
+    expect(card(full).querySelector('.wx-alerts')).toBeNull();
+    expect(dom(weatherAlertsHtml({ sigmets: [], pireps: [] })).querySelector('.wx-alerts')).toBeNull();
+  });
+  it('al desplegar: confianza con motivos, datos, reparto, tendencia, Escuchar (icono), tramos .seg-card, altitudes y ¿Qué significa?', () => {
+    const body = card({ ...full, trend: 'Ha mejorado desde ayer' }).querySelector(':scope > .card-body');
+    const t = body.textContent.replace(/\s+/g, ' ');
+    for (const x of ['Confianza', 'Alta', ...view.confidence.reasons, 'Máximo previsto', 'Duración estimada', 'Momento', 'Nula 60 %', 'Ha mejorado desde ayer',
+      'Condiciones por altitud', '¿Qué significa?']) expect(t).toContain(x);
+    expect(body.querySelector('.sharebar')).not.toBeNull();
+    const speak = body.querySelector('#speak');
+    expect(speak.hidden).toBe(true); // app.js lo muestra si hay voz
+    expect(speak.textContent.trim()).toBe('Escuchar previsión');
+    expect(speak.querySelector('svg.icon')).not.toBeNull();
+    const segs = [...body.querySelectorAll('#segments .seg-card')];
+    expect(segs.map(li => li.querySelector('strong').textContent)).toEqual(['Min 56–72 · Moderada', 'Min 100–119 · Ligera']);
+    expect(segs[0].textContent).toContain('Cambio brusco del viento con la altura');
+    expect(body.querySelector('#altitudes h3.section').textContent).toBe('Condiciones por altitud');
+    // Orden del cuerpo: confianza, datos, reparto, tendencia, Escuchar, tramos, altitudes, ¿Qué significa?
+    expect(body.querySelector('.facts > :first-child dt').textContent).toBe('Confianza'); // la confianza, lo primero
+    const order = ['.facts', '.sharebar', '#trend', '#speak', '#segments', '#altitudes', '.explain:not(.conf)'].map(sel => [...body.querySelectorAll('*')].indexOf(body.querySelector(sel)));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+  it('sin tramos con turbulencia, la lista lo dice', () => {
+    expect(segmentListHtml({ ...full, segments: [seg(0, 0, 119)] })).toContain('Ningún tramo con turbulencia.');
+  });
+  it('aviso legal fuera de la tarjeta, al final; sin #aviation ni #map; ningún emoji', () => {
+    const doc = dom(`<div id="forecast-area">${forecastSectionHtml({ ...full, aviation: { sigmets: [{ label: 'x', crosses: true }], pireps: [] } }, NOW, { preLanding: true })}</div>`);
+    const area = doc.querySelector('#forecast-area');
+    expect(area.lastElementChild.className).toBe('disclaimer');
+    expect(area.lastElementChild.textContent).toBe('Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.');
+    expect(area.querySelector('#aviation, #map')).toBeNull();
+    expect(area.innerHTML).not.toMatch(/\p{Extended_Pictographic}/u);
+    expect(explainHtml('Turbulento')).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+  it('estados sin pronóstico: calculando, no disponible y nota, en una tarjeta con el mismo título y sin emojis', () => {
+    for (const html of [forecastLoadingHtml(), forecastUnavailableHtml(new Error('x')), forecastNoteHtml('Vuelo cancelado.')]) {
+      const c = dom(html).querySelector('.card');
+      expect(c.querySelector('h3.section').textContent).toBe('Turbulencias');
+      expect(c.dataset.card).toBeUndefined();
+      expect(html).not.toMatch(/\p{Extended_Pictographic}/u);
+    }
+    expect(dom(forecastNoteHtml('a < b')).querySelector('.note').textContent).toBe('a < b');
+  });
+});

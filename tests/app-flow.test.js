@@ -357,7 +357,7 @@ describe('flujo DOM completo: la ficha y la sección Turbulencias están siempre
     const { d, leg } = tomorrowLeg();
     await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
     await search('IB1668', d);
-    await until(() => $('#forecast-area .summary'), 'previsión');
+    await until(() => $('#forecast-area [data-card="turbulence"]'), 'previsión');
     expect(shell()).toEqual(SHELL_OK);
     expect(area()).not.toContain(FORECAST_UNAVAILABLE);
   });
@@ -1045,7 +1045,7 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     const d = tomorrow();
     await openApp(network({ flights: {}, schedule: { [`UO625|${d}`]: found(d, [raw(d)]) }, adsbdb: { UO625: adsbdbRoute('UO625', 'HKE625', 'Hong Kong Express', 'HND', 'HKG') }, openMeteo: openMeteoOk }));
     await search('UO625', d);
-    await until(() => $('#result .flight') && $('#forecast-area .summary'), 'ficha y pronóstico');
+    await until(() => $('#result .flight') && $('#forecast-area [data-card="turbulence"]'), 'ficha y pronóstico');
     await networkIdle();
     expect($('#time-field').hidden).toBe(true); // no se pidió la hora
     const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
@@ -1411,7 +1411,8 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
   const modelCalls = () => calls.filter(u => u.startsWith('https://api.open-meteo.com/v1/forecast') && u.includes('models='));
   const legacyCalls = () => calls.filter(u => u.startsWith('https://api.open-meteo.com/v1/forecast') && !u.includes('models='));
   const range = u => { const p = new URL(u).searchParams; return [p.get('start_hour'), p.get('end_hour')]; };
-  const ticks = () => [...document.querySelectorAll('#forecast-area .ticks span')].map(s => Number(s.textContent.replace('′', '')));
+  // Minuto de cada marca del eje (data-min): el texto es la hora local cuando origen y destino comparten zona.
+  const ticks = () => [...document.querySelectorAll('#forecast-area .ticks span')].map(s => Number(s.dataset.min));
   const windowFor = d => {
     const dep = localToUtcMs(d, '15:45', 'Europe/Madrid'), arr = localToUtcMs(d, '17:10', 'Europe/Madrid');
     return forecastWindow({ km, blockDepartureMs: dep, blockArrivalMs: arr });
@@ -1421,7 +1422,7 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     const d = tomorrow();
     await openApp(network({ flights: flights(d), openMeteo: openMeteoOk }));
     await search('IB1667', d);
-    await until(() => $('#forecast-area .summary'), 'pronóstico');
+    await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
     await networkIdle();
     const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
     expect(card).toContain('15:45 Programada Salida');
@@ -1441,7 +1442,7 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     const late = { ...leg(d), ed: `${d}T16:05`, ea: `${d}T17:30`, st: 'RET', std: 'RET' };
     await openApp(network({ flights: { IB1667: { name: 'Iberia', updated: new Date().toISOString(), legs: [late] } }, openMeteo: openMeteoOk }));
     await search('IB1667', d);
-    await until(() => $('#forecast-area .summary'), 'pronóstico');
+    await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
     await networkIdle();
     const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
     expect(card).toContain('15:45 Programada Salida 16:05 Prevista Salida');
@@ -1503,7 +1504,7 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     await openApp(network({ flights: {}, openMeteo: openMeteoOk,
       schedule: { [`XX101|${d}`]: { status: 'found', source: 'aerodatabox', number: 'XX101', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) } } }));
     await search('XX101', d);
-    await until(() => $('#forecast-area .summary'), 'pronóstico');
+    await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
     await networkIdle();
     const w = forecastWindow({ km, blockDepartureMs: dep, blockArrivalMs: arr });
     for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);

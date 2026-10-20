@@ -17,7 +17,8 @@ import { forecastWindow } from './airtime.js';
 import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
 import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner,
-  flightShellHtml, flightNoteHtml, forecastSectionHtml, forecastUnavailableHtml } from './ui-forecast.js';
+  flightShellHtml, flightNoteHtml, forecastSectionHtml, forecastUnavailableHtml, forecastLoadingHtml, forecastNoteHtml, segmentListHtml,
+  weatherAlertsHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { renderMap } from './map.js';
@@ -588,7 +589,7 @@ async function applyAenaLeg(q, leg, updated, stale) {
     const note = flags.includes('CAN') ? 'Vuelo cancelado.' : flags.includes('DES') ? 'Vuelo desviado.'
       : endedNote(leg) ?? arrivalNote({ leg, officialMs, eta, departureMs, nowMs: Date.now() });
     const area = $in('forecast-area');
-    if (note && area) area.innerHTML = `<p class="note">${esc(note)}</p>`;
+    if (note && area) area.innerHTML = forecastNoteHtml(note); // la nota, en la tarjeta con el título «Turbulencias»
     return;
   }
   // Sin estado final: con el radar mostrando «Volando», su telemetría manda y no se toca (la distancia sigue su curso).
@@ -721,7 +722,7 @@ async function loadForecastSection(ctx) {
   const { q, profile, forecastProfile, flight, punct, oTz, dTz, etaCtx, rel, stale } = ctx;
   const area = () => $in('forecast-area');
   if (!area()) return;
-  area().innerHTML = '<p class="forecast-loading">Calculando la previsión de turbulencias…</p>';
+  area().innerHTML = forecastLoadingHtml();
   const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`; // horas de bloque
   let view;
   try {
@@ -729,7 +730,8 @@ async function loadForecastSection(ctx) {
   } catch (err) {
     if (stale() || !area()) return;
     if (!isWeatherUnavailable(err)) {
-      // Los modelos ECMWF/GFS no dan datos: cálculo simplificado (v1), también dentro de la sección.
+      // Los modelos ECMWF/GFS no dan datos: cálculo simplificado (v1), también dentro de la sección (su tarjeta ya
+      // dice que es el cálculo simplificado).
       try {
         // La MISMA ventana en el aire que el pronóstico v2.
         const route = buildRoute(q.origin, q.destination, forecastProfile.departureMs, forecastProfile.durationMin);
@@ -739,7 +741,7 @@ async function loadForecastSection(ctx) {
         const paint = () => {
           const tmp = { innerHTML: '' };
           renderResult(tmp, legacy);
-          area().innerHTML = `<p class="note-small">Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.</p>${tmp.innerHTML}`;
+          area().innerHTML = tmp.innerHTML;
         };
         paint();
         await nameSegments(segments, q.origin.iata);
@@ -777,8 +779,8 @@ async function runLegacy(q, air, times, flight, rel, stale) {
   currentView = null;
   const paint = () => {
     renderResult(els.result, view);
-    els.result.insertAdjacentHTML('afterbegin', '<p class="note-small">Cálculo simplificado: los modelos ECMWF y GFS no han dado datos para esta ruta.</p>'
-      + (q.adbInfo ? `<p class="note-small">${esc(q.adbInfo)}</p>` : ''));
+    // La línea «Cálculo simplificado…» ya va en la tarjeta de Turbulencias (renderResult).
+    if (q.adbInfo) els.result.insertAdjacentHTML('afterbegin', `<p class="note-small">${esc(q.adbInfo)}</p>`);
   };
   paint();
   show('result');
@@ -824,6 +826,7 @@ async function forecastExtras(view, q, stale) {
       await nameSegments(view.segments, view.originIata);
       if (stale()) return;
       $in('timeline').innerHTML = timelineHtml(view);
+      $in('segments').innerHTML = segmentListHtml(view); // la lista de tramos, con los lugares
     }),
     safely(async () => {
       view.runs = await fetchModelRuns(view.models);
@@ -831,7 +834,10 @@ async function forecastExtras(view, q, stale) {
     }),
     safely(async () => {
       view.aviation = aviationView(await loadAviation(), view, Date.now());
-      if (!stale()) $in('aviation').innerHTML = aviationHtml(view.aviation, Date.now());
+      if (stale()) return;
+      $in('wx-alerts').innerHTML = weatherAlertsHtml(view.aviation); // línea compacta de avisos en la tarjeta (§10 bis.1)
+      const aviation = $in('aviation'); // sin hueco hasta que la Tarea 8 lo lleve a Detalles avanzados
+      if (aviation) aviation.innerHTML = aviationHtml(view.aviation, Date.now());
     }),
   ]);
   if (stale()) return;
