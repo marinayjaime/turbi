@@ -62,13 +62,14 @@ function adsbRows(c, nowMs) {
   if (Number.isFinite(r.vRateFpm)) rows.push(row('Velocidad vertical', `${r.vRateFpm > 0 ? '+' : ''}${thousands(Math.round(r.vRateFpm))} ft/min${aged}`));
   // .adv-signal: el contador de señal de app.js reescribe solo este valor cada segundo (sin repintar #adv-flight).
   if (sig) rows.push(row('Última señal', `hace ${esc(sig.text)}`, 'adv-signal'));
-  // La posición envejece antes: en cuanto el mapa quita el avión (planeOnMap null, más de 60 s), lleva su antigüedad
-  // REAL (posAgeS, no la del último mensaje). data-pos: el contador de app.js la reescribe con la de la posición.
-  // Sin posAgeS (respuesta antigua en caché) no hay antigüedad de la posición: se usa la de la señal, como un dato más.
+  // La posición lleva solo la antigüedad de la POSICIÓN (posAgeS), nunca la de la señal: en cuanto el mapa quita el
+  // avión (planeOnMap null, más de 60 s) se muestra «· hace X» (data-pos: el contador de app.js la reescribe con la de
+  // la posición). Sin posAgeS la antigüedad es desconocida y no se muestra la fila, como el mapa no pinta el avión.
   const posAge = positionAgeS(r, c.radarReceivedAt, nowMs);
-  const posAged = !sig || planeOnMap(r, c.radarReceivedAt, nowMs) ? aged
-    : posAge === null ? age : `<span class="adv-age" data-pos>${esc(ageSuffix({ text: ageText(posAge) }))}</span>`;
-  if (Number.isFinite(r.lat) && Number.isFinite(r.lon)) rows.push(row('Posición', `${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}${posAged}`));
+  if (Number.isFinite(r.lat) && Number.isFinite(r.lon) && posAge !== null) {
+    const posAged = planeOnMap(r, c.radarReceivedAt, nowMs) ? '' : `<span class="adv-age" data-pos>${esc(ageSuffix({ text: ageText(posAge) }))}</span>`;
+    rows.push(row('Posición', `${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}${posAged}`));
+  }
   if (MATCH[r.match]) rows.push(row('Identificación', MATCH[r.match]));
   return rows;
 }

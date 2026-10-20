@@ -1654,9 +1654,9 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       await networkIdle();
       expect(planeOnScreen(log)).toBe(true);
       const before = calls.length;
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(planeOnScreen(log)).toBe(true); // ~55 s de posición
-      await vi.advanceTimersByTimeAsync(10000); // ~65 s: la posición pasa de 60 s con el último mensaje de hace 16 s
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(planeOnScreen(log)).toBe(true); // ~59 s de posición
+      await vi.advanceTimersByTimeAsync(2000); // ~61 s: la posición pasa de 60 s con el último mensaje de hace ~12 s
       expect(planeOnScreen(log)).toBe(false);
       expect($('[data-signal-level="live"]')).not.toBeNull();
       expect(calls.slice(before).filter(u => !u.includes('/flights/'))).toEqual([]);
@@ -1694,6 +1694,30 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       expect($('#adv-flight [data-card="adv-adsb"]')).toBe(repainted);
       expect(position()).toBe('51.2000, -0.9000 · hace 2 min');
       expect(signal()).toBe('hace 2 min');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('el contador reescribe el span de la posición con su antigüedad (posAgeS), sin repintar el bloque', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { L, log } = fakeLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 1, posAgeS: 50, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
+      await networkIdle();
+      $('details[data-card="advanced"]').open = true;
+      const position = () => [...document.querySelectorAll('#adv-flight .kv')].find(r => r.querySelector('.k').textContent === 'Posición').querySelector('.v');
+      await vi.advanceTimersByTimeAsync(15000); // la posición ya tiene más de 60 s: el avión sale y se repinta una vez
+      expect(planeOnScreen(log)).toBe(false);
+      const adsb = $('#adv-flight [data-card="adv-adsb"]');
+      const span = position().querySelector('.adv-age[data-pos]');
+      expect(span.textContent).toBe(' · hace 1 min');
+      await vi.advanceTimersByTimeAsync(60000);
+      expect($('#adv-flight [data-card="adv-adsb"]')).toBe(adsb); // el mismo nodo: sin repintar
+      expect(position().querySelector('.adv-age[data-pos]')).toBe(span);
+      expect(span.textContent).toBe(' · hace 2 min'); // 50 + 75 s, no los ~76 s de la señal
     } finally { vi.useRealTimers(); }
   });
 

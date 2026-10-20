@@ -63,6 +63,14 @@ describe('advancedFlightHtml', () => {
     const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 40, posAgeS: 50 }), radarReceivedAt: NOW }), { nowMs: NOW + 5000 }));
     expect(html).not.toContain('-3.5000 · hace');
   });
+  it('sin posAgeS (antigüedad de la posición desconocida) no hay fila Posición ni «· hace», aunque haya lat/lon y seenS 1', () => {
+    for (const ms of [0, 90000]) {
+      const html = advancedFlightHtml(card({ radar: volando({ seenS: 1, posAgeS: undefined }), radarReceivedAt: NOW }), { nowMs: NOW + ms });
+      expect(html).not.toContain('Posición');
+      expect(html).not.toContain('-3.5000');
+      expect(html).not.toContain('data-pos');
+    }
+  });
   it('«Última señal» lleva su clase propia (el contador de app.js solo reescribe su valor)', () => {
     const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
     expect(html).toContain('<div class="kv adv-signal"><span class="k">Última señal</span><span class="v">hace 5 s</span></div>');
