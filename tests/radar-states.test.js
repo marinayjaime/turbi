@@ -57,6 +57,6 @@ describe('regresiones reales (datos de Aena del 25/09/2026, sin ningún código 
     const r = { state: 'volando', callsign: 'AEA4024', altM: 7000, kmh: 700, seenS: 2, remainingKm: 120, source: 'adsb.lol' };
     const c = { al: 'UX', title: 'x', route: 'y', tabs: [], status: { text: 'En vuelo', tone: 'info', flying: true }, o: 'PMI', a: 'ALC', duration: 60,
       dep: { date: '2026-09-25', time: '10:48', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 1 min', stale: false };
-    expect(flightCardHtml(withRadar(c, r))).toContain('class="telemetry"');
+    expect(flightCardHtml(withRadar(c, r))).toContain('class="card now telemetry"');
   });
 });

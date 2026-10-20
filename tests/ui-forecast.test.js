@@ -163,7 +163,7 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
   it('armazón: ficha (con el panel ADS-B), puntualidad y la sección de turbulencias «calculando»', () => {
     const html = flightShellHtml({ flight, punctuality });
     expect(html).toContain('class="flight"');
-    expect(html).toContain('class="telemetry"'); // el radar no depende de la meteorología
+    expect(html).toContain('class="card now telemetry"'); // el radar no depende de la meteorología
     expect(html).toContain('id="punctuality"');
     expect(html).toMatch(/<div id="forecast-area">\s*<p class="forecast-loading">Calculando la previsión de turbulencias…<\/p>/);
   });

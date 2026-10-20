@@ -203,9 +203,10 @@ export const FORECAST_UNAVAILABLE = 'Previsión de turbulencias no disponible te
 const FORECAST_LOADING = '<p class="forecast-loading">Calculando la previsión de turbulencias…</p>';
 
 function headHtml(view, nowMs) {
-  const punct = view.punctuality ? `<section id="punctuality">${punctualityHtml(view.punctuality)}</section>` : '';
+  // La puntualidad va dentro del «Horario» de la ficha (#punctuality): aquí solo su contenido inicial (situación de hoy).
+  const punctualityBody = view.punctuality ? punctualityHtml(view.punctuality) : '';
   const head = view.flight
-    ? `${flightCardHtml(view.flight)}${punct}<h3 class="section">Turbulencias</h3>`
+    ? `${flightCardHtml(view.flight, { nowMs, punctualityBody })}<h3 class="section">Turbulencias</h3>`
     : `<p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>${view.sourceInfo ? `<p class="note-small source-info">${esc(view.sourceInfo)}</p>` : ''}`;
   return `
     <div class="summary">

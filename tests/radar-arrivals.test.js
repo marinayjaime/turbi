@@ -105,7 +105,7 @@ describe('radar de una llegada desde el extranjero', () => {
     expect(s.calls.some(u => u.includes('/v2/point/'))).toBe(false);
     const card = { al: 'FR', title: 'x', route: 'y', tabs: [], status: { text: 'En vuelo', tone: 'info', flying: true }, o: 'HHN', a: 'VLC', duration: 130,
       dep: null, arr: { date: '2026-09-25', time: '11:55' }, aircraft: null, updatedAgo: 'hace 1 min', stale: false };
-    expect(flightCardHtml(withRadar(card, r))).toContain('class="telemetry"');
+    expect(flightCardHtml(withRadar(card, r))).toContain('class="card now telemetry"');
   });
   it('4. emite con otro indicativo → identificación por ruta con la salida estimada, y después seguimiento por hex', async () => {
     const s = server({ pointAc: [plane()], routes: { RYR8KX: ['HHN', 'VLC'] } });

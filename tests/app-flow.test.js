@@ -91,6 +91,8 @@ async function search(number, date) {
 
 const $ = sel => document.querySelector(sel);
 const area = () => $('#forecast-area')?.textContent.replace(/\s+/g, ' ') ?? '';
+// Ruta de la ficha «Origen a Destino», con las ciudades que la ficha muestra bajo los códigos (.route-codes).
+const routeText = () => [...document.querySelectorAll('#result .route-codes .rc span')].map(s => s.textContent).join(' a ');
 
 // Almacenamiento del navegador en memoria, vacío en cada prueba (el localStorage propio de Node no sirve aquí).
 function memoryStorage() {
@@ -116,7 +118,8 @@ describe('Open-Meteo falla (429) y el radar ADS-B responde', () => {
 
     expect($('#result .flight').textContent).toContain('IB 715');
     const panel = $('.telemetry').textContent.replace(/\s+/g, ' ');
-    for (const txt of ['Volando', '830', '10.700', '300', 'Radar ADS-B', 'IBE715']) expect(panel).toContain(txt);
+    for (const txt of ['830', '10.700', '300', 'Radar ADS-B', 'IBE715']) expect(panel).toContain(txt);
+    expect($('#result .flight .status').textContent).toContain('Volando'); // «Volando» lo dice el chip del estado
     expect(area()).toContain('Puedes reintentar en unos 30 s');
     expect($('#forecast-retry')).not.toBeNull();
     expect($('#error').hidden).toBe(true); // ningún error general sustituye la ficha
@@ -195,7 +198,7 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       await advance(30000); // 90 s: la identificación ha terminado
       await until(() => $('.telemetry'), 'panel ADS-B tras la identificación');
       expect($('.telemetry').textContent).toContain('RYR12AB');
-      expect($('.telemetry').textContent).toContain('Volando'); // con el radar volando, «Volando» va en el panel
+      expect($('#result .flight .status').textContent).toContain('Volando'); // con el radar volando, lo dice el chip del estado
       expect(shell()).toEqual(SHELL_OK); // actualizar .flight no se lleva la sección Turbulencias
       expect(area()).toContain(FORECAST_UNAVAILABLE);
       expect(radarCalls().slice(1).every(u => new URL(u).searchParams.get('poll') === '1')).toBe(true);
@@ -217,11 +220,11 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       }));
       await search('FR2311', d);
       await until(() => radarCalls().length === 1 && $('.radar.muted'), 'primera respuesta');
-      expect($('.radar.muted').textContent).toBe('Localizando el avión en el radar…'); // no «Sin señal ADS-B»
+      expect($('.radar.muted').textContent).toBe('Buscando el avión en el radar…'); // no «Sin señal ADS-B»
       await advance(20000);
       expect(radarCalls()).toHaveLength(2); // el servidor dice: 429, reanudo en 100 s
       expect(shell()).toEqual(SHELL_OK);
-      expect($('.radar.muted').textContent).toBe('Localizando el avión en el radar…');
+      expect($('.radar.muted').textContent).toBe('Buscando el avión en el radar…');
       await advance(90000);
       expect(radarCalls()).toHaveLength(2); // no pregunta antes de que acabe la pausa del servidor
       await advance(15000);
@@ -257,7 +260,7 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       await advance(20000);
       expect(radarCalls()).toHaveLength(2); // la app no se rinde por el timeout
       expect(new URL(radarCalls()[1]).searchParams.get('poll')).toBe('1');
-      expect($('.radar.muted')?.textContent).toBe('Localizando el avión en el radar…'); // también con Aena en «Volando»
+      expect($('.radar.muted')?.textContent).toBe('Buscando el avión en el radar…'); // también con Aena en «Volando»
       await advance(40000);
       await until(() => $('.telemetry'), 'panel ADS-B');
       expect($('.telemetry').textContent).toContain('RYR12EV');
@@ -434,7 +437,7 @@ describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B
       expect(speed()).toBe('900km/h'); // la velocidad es la última medida, sin tocar
       await vi.advanceTimersByTimeAsync(3600000); // una hora sin lecturas nuevas
       expect(remaining()).toBe('291km'); // quieta a los 5 min de antigüedad; nunca a 0 ni negativa
-      expect($('.telemetry').textContent).toContain('Volando'); // nunca pasa a «Aterrizado» por el paso del tiempo
+      expect($('#result .flight .status').textContent).toContain('Volando'); // nunca pasa a «Aterrizado» por el paso del tiempo
       expect($('#result .status')?.textContent ?? '').not.toContain('Aterrizado');
       expect(calls.slice(before).filter(u => u.includes('/radar/') || u.includes('adsb.lol'))).toHaveLength(0); // 8) cero peticiones
     } finally { vi.useRealTimers(); }
@@ -489,7 +492,7 @@ describe('un número con varios vuelos físicos la misma fecha (CA898: GRU → M
     await openApp(network({ flights: { CA898: { name: 'Air China', updated: new Date().toISOString(), legs: [inbound, outbound] } }, openMeteo: () => tooMany }));
     await search('CA898', dep.d);
     await until(() => $('#result .flight'), 'ficha');
-    expect($('#result .flight').textContent).toContain('Madrid a');
+    expect(routeText()).toContain('Madrid a');
     expect($('#result .flight').textContent).not.toContain('Ha llegado');
     const options = [...document.querySelectorAll('.leg-switch .leg-option')];
     expect(options).toHaveLength(2);
@@ -510,7 +513,7 @@ describe('un número con varios vuelos físicos la misma fecha (CA898: GRU → M
     options[1].click();
     await until(() => $('#result .flight'), 'ficha del tramo escogido');
     expect($('#result .leg-option.selected').textContent).toContain('MAD → PEK');
-    expect($('#result .flight').textContent).toContain('Madrid a');
+    expect(routeText()).toContain('Madrid a');
     expect(shell()).toEqual(SHELL_OK);
   });
   it('un vuelo normal (un solo tramo ese día) sigue igual: sin selector', async () => {
@@ -898,7 +901,7 @@ describe('número comercial asociado por Aena: confirmación antes de usarlo', (
     click('[data-alias="accept"]');
     await until(() => $('#result .flight'), 'ficha de CJ 8462');
     expect($('#result .flight h2').textContent).toBe('CJ 8462');
-    expect($('#result .flight').textContent).toContain('Ibiza (Eivissa) a London');
+    expect(routeText()).toContain('Ibiza (Eivissa) a London');
     expect($('.leg-switch')).toBeNull(); // la otra ruta del número (LCY → IBZ) no se ofrece
     expect(adsbCalls()).toHaveLength(1);
     expect(calls.some(u => u.includes('/radar/') && !u.includes('/CJ/'))).toBe(false);
@@ -1047,8 +1050,9 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     expect($('#time-field').hidden).toBe(true); // no se pidió la hora
     const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
     expect($('#result .flight h2').textContent).toBe('UO 625');
-    for (const t of ['Airbus A321neo', 'Hong Kong Express · Tokyo a Hong Kong', 'Programado', 'HND', 'HKG', 'Salida 10:00', 'Llegada 13:05',
+    for (const t of ['Hong Kong Express · Airbus A321neo', 'Programado', 'HND', 'HKG', '10:00 Salida programada', '10:00 Programada Salida', '13:05 Programada Llegada',
       'Horario según AeroDataBox · consultado hace un momento']) expect(card).toContain(t);
+    expect(routeText()).toBe('Tokyo a Hong Kong');
     expect(card).not.toMatch(/Aena|Puerta de embarque/);
     expect(calls).toContain('data/flights/UO/625.json'); // Aena primero
     expect(schCalls()).toEqual([`${LIVE_BASE}/schedule/UO625/${d}.json`]);
@@ -1078,7 +1082,7 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     const options = [...document.querySelectorAll('.leg-option')];
     expect(options.map(o => o.querySelector('small').textContent)).toEqual(['HND → HKG · sale 10:00 · Programado', 'HKG → BKK · sale 15:00 · Programado']);
     options[1].click();
-    await until(() => $('#result .flight')?.textContent.includes('Hong Kong a Bangkok'), 'ficha del tramo escogido');
+    await until(() => routeText().includes('Hong Kong a Bangkok'), 'ficha del tramo escogido');
     expect(schCalls()).toHaveLength(1);
   });
 
@@ -1133,7 +1137,8 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     expect(schCalls()).toEqual([]);
     $('[data-alias="reject"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await until(() => $('#result .flight h2')?.textContent === 'BA 8462', 'ficha por AeroDataBox');
-    expect($('#result .flight').textContent).toContain('British Airways · Ibiza (Eivissa) a London');
+    expect($('#result .flight .hero-sub').textContent).toContain('British Airways');
+    expect(routeText()).toContain('Ibiza (Eivissa) a London');
     expect($('#result .flight .foot').textContent).toContain('Horario según AeroDataBox');
     expect(schCalls()).toHaveLength(1);
     expect(adsbCalls()).toHaveLength(1); // solo el veto del alias
@@ -1153,7 +1158,7 @@ describe('horario de AeroDataBox cuando Aena no publica el vuelo', () => {
     $('[data-alias="reject"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await until(() => $('.leg-switch'), 'selector de tramos de AeroDataBox');
     document.querySelectorAll('.leg-option')[1].click();
-    await until(() => $('#result .flight')?.textContent.includes('London a Ingliston, Edinburgh'), 'tramo escogido');
+    await until(() => routeText().includes('London a Ingliston, Edinburgh'), 'tramo escogido');
     expect($('.alias-offer')).toBeNull();
     expect(schCalls()).toHaveLength(1);
   });
@@ -1184,7 +1189,8 @@ describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
     await open(raw(), FLYING);
     await until(() => $('.telemetry'), 'panel del radar');
     const panel = $('.telemetry').textContent.replace(/\s+/g, ' ');
-    for (const t of ['Volando', '905', '11.300', '9.300', 'Radar ADS-B', 'Última señal hace 3 s', 'GIA89']) expect(panel).toContain(t);
+    for (const t of ['905', '11.300', '9.300', 'Radar ADS-B', 'Última señal 3 s', 'GIA89']) expect(panel).toContain(t);
+    expect($('#result .flight .status').textContent).toContain('Volando');
     expect($('#result .flight h2').textContent).toBe('GA 89');
     expect($('#result .flight').textContent).not.toContain('Aena');
     const key = `adb|GA89|${d}|AMS|CGK|${new Date(dep).toISOString().slice(0, 16)}Z`;
@@ -1418,9 +1424,9 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     await until(() => $('#forecast-area .summary'), 'pronóstico');
     await networkIdle();
     const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
-    expect(card).toContain('Salida 15:45');
-    expect(card).toContain('Llegada 17:10'); // hora oficial, no la del pronóstico
-    expect(card).not.toMatch(/Salida 1[56]:(0|5)[05] .*Llegada 16:5/);
+    expect(card).toContain('15:45 Programada Salida');
+    expect(card).toContain('17:10 Programada Llegada'); // hora oficial, no la del pronóstico
+    expect(card).not.toMatch(/16:5\d (Programada|Prevista) Llegada/);
     const w = windowFor(d);
     expect(w.forecastAirborneMin).toBeGreaterThan(54);
     expect(w.forecastAirborneMin).toBeLessThan(60);
@@ -1438,8 +1444,8 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     await until(() => $('#forecast-area .summary'), 'pronóstico');
     await networkIdle();
     const card = $('#result .flight').textContent.replace(/\s+/g, ' ');
-    expect(card).toContain('Salida 16:05 Programada 15:45');
-    expect(card).toContain('Llegada 17:30 Programada 17:10');
+    expect(card).toContain('15:45 Programada Salida 16:05 Prevista Salida');
+    expect(card).toContain('17:10 Programada Llegada 17:30 Prevista Llegada');
     const w = forecastWindow({ km, blockDepartureMs: localToUtcMs(d, '16:05', 'Europe/Madrid'), blockArrivalMs: localToUtcMs(d, '17:30', 'Europe/Madrid') });
     for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
   });
@@ -1501,7 +1507,7 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     await networkIdle();
     const w = forecastWindow({ km, blockDepartureMs: dep, blockArrivalMs: arr });
     for (const u of modelCalls()) expect(range(u)).toEqual([hourKey(w.forecastTakeoffMs - 3600000), hourKey(w.forecastLandingMs + 3600000)]);
-    expect($('#result .flight').textContent.replace(/\s+/g, ' ')).toContain('Salida 10:00'); // la ficha, con su hora
+    expect($('#result .flight').textContent.replace(/\s+/g, ' ')).toContain('10:00 Salida programada'); // la ficha, con su hora
     expect(Math.max(...ticks())).toBeLessThanOrEqual(w.forecastAirborneMin); // ≈ 55′, no los 85′ del bloque
   });
 

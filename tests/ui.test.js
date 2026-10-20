@@ -82,113 +82,365 @@ describe('logo de la aerolínea', () => {
 
 import { flightCardHtml } from '../js/ui.js';
 
-describe('puerta de embarque en la ficha', () => {
-  const card = (dep, extra = {}) => ({
-    al: 'IB', title: 'Iberia IB 1668', route: 'Palma a Madrid', tabs: [], status: { text: 'Programado', tone: 'ok' },
-    o: 'PMI', a: 'MAD', duration: 90, dep, arr: null, aircraft: null, ...extra,
+
+// Ficha rediseñada (spec 2026-10-20 §5.1–5.6, §5.9–5.10): hero, ruta, hora principal, resumen, Ahora, Horario y,
+// según la fase, Avión o Resumen del vuelo. Datos de los tests, nunca del código.
+const NOW = Date.parse('2026-09-24T14:00:00Z');
+const MIN = 60000;
+const card = (over = {}) => ({
+  al: 'IB', number: 'IB 1668', airline: 'Iberia', title: 'Iberia IB 1668', route: 'Palma a Madrid', tabs: [],
+  status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90, cities: { o: 'Palma', a: 'Madrid' },
+  dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D71' },
+  arr: { date: '2026-09-24', time: '19:25', est: null, late: false, terminal: '4' },
+  aircraft: 'Airbus A321', photo: null, phase: 'programado', source: 'aena', timeConfidence: 'medium', punctuality: null,
+  depFinal: false, arrFinal: false, depMs: NOW + 135 * MIN, arrMs: NOW + 225 * MIN, km: 547, ...over,
+});
+const html = (c, opts = {}) => flightCardHtml(c, { nowMs: NOW, ...opts });
+// El <details> de una tarjeta, completo (hasta su cierre).
+const block = (h, name) => {
+  const i = h.indexOf(`data-card="${name}"`);
+  if (i < 0) return '';
+  const start = h.lastIndexOf('<', i);
+  const tag = h.slice(start + 1, h.indexOf(' ', start));
+  return h.slice(start, h.indexOf(`</${tag}>`, i) + tag.length + 3);
+};
+
+describe('estructura de la ficha', () => {
+  it('orden: hero, ruta, hora principal, resumen, Ahora y Horario dentro de .flight', () => {
+    const h = html(card());
+    expect(h).toMatch(/^\s*<section class="flight"/);
+    const order = ['class="hero', 'class="route-codes', 'class="main-time', 'class="tiles', 'data-card="now"', 'data-card="schedule"'].map(s => h.indexOf(s));
+    expect(order.every(i => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
+  it('firma con valores por defecto: flightCardHtml(card) funciona igual que antes (app.js la llama así)', () => {
+    expect(flightCardHtml(card())).toContain('class="flight"');
+  });
+  it('los desplegables abiertos se indican con open (por data-card)', () => {
+    const h = html(card(), { open: new Set(['schedule']) });
+    expect(h).toMatch(/<details class="card[^"]*" data-card="schedule" open>/);
+    expect(h).not.toMatch(/data-card="now" open/);
+    expect(html(card())).not.toMatch(/data-card="schedule" open/);
+  });
+  it('desplegables con <details>/<summary> y chevron', () => {
+    const now = block(html(card()), 'now');
+    expect(now).toMatch(/^<details class="card[^"]*" data-card="now">\s*<summary/);
+    expect(now).toContain('<svg class="icon"');
+  });
+  it('sin emojis', () => {
+    const variants = [card(), card({ status: { text: 'Volando', tone: 'info', flying: true }, phase: 'en-curso',
+      radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, altFt: 35000, kmh: 830, seenS: 2, remainingKm: 300 }, radarReceivedAt: NOW }),
+    card({ photo: { thumb: 'x.jpg', artist: 'A', license: 'CC', page: 'p' } }), card({ stale: true, updatedAgo: 'hace 2 h' }),
+    card({ phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' } })];
+    for (const c of variants) expect(html(c)).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+describe('cabecera (hero): foto, número, aerolínea · modelo y estado', () => {
+  const photo = { thumb: 'https://upload.wikimedia.org/x/1000px-EI.jpg', artist: 'Pedro Aragão', license: 'CC BY-SA 3.0', page: 'https://commons.wikimedia.org/wiki/File:EI.jpg' };
+  const c = card({ al: 'EI', number: 'EI 737', airline: 'Aer Lingus', title: 'Aer Lingus EI 737', route: 'Palma a Dublín', a: 'DUB',
+    cities: { o: 'Palma', a: 'Dublín' }, aircraft: 'Airbus A320' });
+  it('foto arriba del todo, con autor y licencia (atribución obligatoria)', () => {
+    const h = html({ ...c, photo });
+    expect(h.indexOf('class="plane-photo"')).toBeLessThan(h.indexOf('<h2>'));
+    expect(h).toContain('src="https://upload.wikimedia.org/x/1000px-EI.jpg"');
+    expect(h).toContain('<figcaption>Foto: <a href="https://commons.wikimedia.org/wiki/File:EI.jpg" target="_blank" rel="noopener">Pedro Aragão</a>, CC BY-SA 3.0</figcaption>');
+  });
+  it('foto propia (img/fotos): sin figcaption', () => {
+    const h = html({ ...c, photo: { thumb: 'img/fotos/FR%20Boeing%20737-800.jpg' } });
+    expect(h).toContain('src="img/fotos/FR%20Boeing%20737-800.jpg"');
+    expect(h).not.toContain('<figcaption>');
+  });
+  it('imagen representativa y código compartido: lo dice el pie', () => {
+    expect(html({ ...c, aircraft: null, photo: { ...photo, representative: true } })).toContain('<figcaption>Imagen representativa de la aerolínea · Foto:');
+    expect(html({ ...c, photo: { ...photo, shared: true } })).toContain('Vuelo con código compartido: Aena no indica qué aerolínea lo opera. ');
+  });
+  it('sin foto: sin figura, y el número sigue con el logotipo', () => {
+    const h = html({ ...c, photo: null });
+    expect(h).not.toContain('plane-photo');
+    expect(h).toContain('src="img/logos/EI.png"');
+  });
+  it('número grande y «Aerolínea · Modelo»; operador distinto en la misma línea', () => {
+    const h = html(c);
+    expect(h).toContain('<h2>EI 737</h2>');
+    expect(h).toContain('<p class="hero-sub">Aer Lingus · Airbus A320</p>');
+    expect(html({ ...c, aircraft: null })).toContain('<p class="hero-sub">Aer Lingus</p>');
+    expect(html({ ...c, operator: 'Air Nostrum' })).toContain('<p class="hero-sub">Aer Lingus · Airbus A320 · Operado por Air Nostrum</p>');
+  });
+  it('chip del estado con su tono y la nota debajo', () => {
+    const h = html(card({ status: { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B', landing: 'confirmed-landed' }, radar: { state: 'aterrizado' } }));
+    expect(h).toMatch(/<span class="chip status tone-ok">Aterrizado<\/span>\s*<p class="status-note">Confirmado por radar ADS-B<\/p>/);
+  });
+  it('«Volando»: chip con el avión animado (icono SVG, no emoji)', () => {
+    const h = html(card({ status: { text: 'Volando', tone: 'info', flying: true }, phase: 'en-curso' }));
+    expect(h).toMatch(/<span class="chip status tone-info flying">Volando<span class="fly" aria-hidden="true"><span class="fly-plane"><svg class="icon"/);
+  });
+});
+
+describe('ruta', () => {
+  it('códigos grandes y la ciudad debajo; sin ciudad, solo el código', () => {
+    const h = html(card());
+    expect(h).toMatch(/<strong>PMI<\/strong>\s*<span>Palma<\/span>/);
+    expect(h).toMatch(/<strong>MAD<\/strong>\s*<span>Madrid<\/span>/);
+    const none = html(card({ cities: { o: null, a: 'Madrid' } }));
+    expect(none).toMatch(/<strong>PMI<\/strong>\s*<\/div>/);
+  });
+});
+
+describe('hora principal', () => {
+  it('programado: la salida, su etiqueta y «Sale en»', () => {
+    const h = html(card({ dep: { ...card().dep, est: '18:10', late: true } }));
+    expect(h).toMatch(/class="mt-time[^"]*">18:10/);
+    expect(h).toContain('Salida prevista');
+    expect(h).toMatch(/Sale en<\/span>\s*<span class="v">2 h 15 min<\/span>/);
+  });
+  it('en curso con llegada estimada por Turbi: «Llegada estimada», su nota, «+1 día» y «Llega en»', () => {
+    const h = html(card({ phase: 'en-curso', arrMs: NOW + 42 * MIN,
+      arr: { date: '2026-09-25', time: '00:40', estimated: true, note: 'Estimación Turbi actualizada en vuelo' } }));
+    expect(h).toMatch(/class="mt-time turbi">00:40<small>\+1 día<\/small>/);
+    expect(h).toContain('Llegada estimada');
+    expect(h).toContain('<p class="mt-note">Estimación Turbi actualizada en vuelo</p>');
+    expect(h).toMatch(/Llega en<\/span>\s*<span class="v">42 min<\/span>/);
+  });
+  it('cancelado: sin hora principal', () => {
+    expect(html(card({ phase: 'cancelado', status: { text: 'Cancelado', tone: 'bad' } }))).not.toContain('class="main-time');
+  });
+});
+
+describe('fila de resumen', () => {
+  it('Aena: puntualidad, fuente y confianza', () => {
+    const punctuality = { state: 'retrasado', band: 'warn', basis: 'dep', dep: { delay: 20, final: false }, arr: null };
+    const h = html(card({ punctuality }));
+    expect(h.match(/class="tile"/g)).toHaveLength(3);
+    expect(h).toMatch(/Puntualidad<\/span>\s*<span class="v">\+20 min<\/span>/);
+    expect(h).toMatch(/Fuente<\/span>\s*<span class="v">Aena<\/span>/);
+    expect(h).toMatch(/data-tone="warn"[^>]*>[\s\S]*?Confianza<\/span>\s*<span class="v">Media<\/span>/);
+  });
+  it('AeroDataBox (sin puntualidad ni confianza): una sola tarjeta, sin huecos', () => {
+    const h = html(card({ source: 'aerodatabox', timeConfidence: null, punctuality: null }));
+    expect(h.match(/class="tile"/g)).toHaveLength(1);
+    expect(h).toContain('AeroDataBox');
+  });
+  it('confianza muy baja: «Muy baja» en rojo y la línea de información limitada', () => {
+    const h = html(card({ timeConfidence: 'very-low' }));
+    expect(h).toMatch(/data-tone="bad"[^>]*>[\s\S]*?<span class="v">Muy baja<\/span>/);
+    expect(h).toContain('La información puede ser limitada o proceder de fuentes no oficiales.');
+    expect(html(card({ timeConfidence: 'high' }))).not.toContain('puede ser limitada');
+  });
+});
+
+describe('Ahora: puerta de embarque (sin radar)', () => {
   const dep = over => ({ date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D71', ...over });
-  it('línea propia y visible con la puerta', () => {
-    const h = flightCardHtml(card(dep()));
-    expect(h).toContain('Puerta de embarque');
-    expect(h).toMatch(/class="gate[^"]*"[^>]*>[\s\S]*D71/);
+  it('estado de Aena, terminal y la puerta en su línea propia', () => {
+    const now = block(html(card({ dep: dep(), status: { text: 'Embarcando', tone: 'info' } })), 'now');
+    expect(now).toContain('Embarcando');
+    expect(now).toContain('Terminal N');
+    expect(now).toContain('Puerta de embarque');
+    expect(now).toMatch(/class="gate[^"]*"[^>]*>[\s\S]*D71/);
   });
   it('solo zona (una letra): lo explica', () => {
-    const h = flightCardHtml(card(dep({ gate: 'H' })));
+    const h = html(card({ dep: dep({ gate: 'H' }) }));
     expect(h).toContain('Zona H');
     expect(h).toContain('la puerta exacta se anuncia más cerca de la salida');
   });
   it('sin asignar: lo dice, sin más explicaciones', () => {
-    const h = flightCardHtml(card(dep({ gate: null })));
+    const h = html(card({ dep: dep({ gate: null }) }));
     expect(h).toContain('Aún sin asignar');
     expect(h).not.toContain('1–2 h antes de la salida');
   });
   it('cambio de puerta destacado', () => {
-    expect(flightCardHtml(card(dep(), { gateChanged: true }))).toContain('Cambio de puerta');
-  });
-  it('pie: solo cuándo se actualizaron los datos', () => {
-    const h = flightCardHtml(card(dep(), { updatedAgo: 'hace 25 minutos', aircraft: 'Airbus A321' }));
-    expect(h).toContain('<p class="foot">Datos actualizados hace 25 minutos</p>');
-    expect(h).not.toContain('hora local de cada aeropuerto');
+    expect(html(card({ dep: dep(), gateChanged: true }))).toContain('Cambio de puerta');
   });
   it('escapa la puerta', () => {
-    expect(flightCardHtml(card(dep({ gate: '<b>' })))).not.toContain('<b>');
+    expect(html(card({ dep: dep({ gate: '<b>' }) }))).not.toContain('<b>');
+  });
+  it('vuelo del histórico o de AeroDataBox: sin puerta', () => {
+    expect(html(card({ past: true }))).not.toContain('Puerta de embarque');
+    expect(html(card({ source: 'aerodatabox', sourceNote: 'Horario según AeroDataBox · consultado hace 1 min' }))).not.toContain('Puerta de embarque');
   });
 });
 
-describe('en vuelo', () => {
-  const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Volando', tone: 'info', flying: true }, o: 'PMI', a: 'MAD', duration: 90,
-    dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D86' }, arr: null, aircraft: null };
-  it('«Volando» con el avión animado al lado', () => {
-    const html = flightCardHtml({ ...c, updatedAgo: 'hace 3 min', stale: false });
-    expect(html).toContain('class="status tone-info flying"');
-    expect(html).toMatch(/Volando<span class="fly" aria-hidden="true">/);
-  });
-  it('con datos antiguos no hay animación (no se sabe si sigue volando)', () => {
-    const html = flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true });
-    expect(html).not.toContain('class="fly"');
-    expect(html).toContain('Volando hace 2 h');
-  });
-});
-
-describe('radar', () => {
-  const c = { al: 'EI', title: 'x', route: 'y', tabs: [], status: { text: 'Volando', tone: 'info', flying: true }, o: 'PMI', a: 'DUB', duration: 160,
-    dep: { date: '2026-09-24', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null, aircraft: null, updatedAgo: 'hace 3 min', stale: false };
+describe('Ahora: radar', () => {
   const r = { state: 'volando', callsign: 'AEA039', altM: 10668, altFt: 35000, kmh: 851, seenS: 0, remainingKm: 8411, source: 'adsb.lol' };
-  it('volando: un único panel de telemetría (estado, velocidad, altitud, distancia) con fuente y señal debajo', () => {
-    const html = flightCardHtml({ ...c, radar: r });
-    expect(html).toContain('class="telemetry"');
-    expect(html.match(/class="tm-cell/g)).toHaveLength(4);
-    expect(html).toMatch(/<span class="tm-label">Estado<\/span>\s*<span class="tm-value tm-flying">Volando<span class="fly"/);
-    expect(html).toMatch(/<span class="tm-label">Velocidad<\/span>\s*<span class="tm-value">851<small>km\/h<\/small><\/span>/);
-    expect(html).toMatch(/<span class="tm-label">Altitud<\/span>\s*<span class="tm-value">10\.700<small>m<\/small><\/span>/);
-    expect(html).toMatch(/<span class="tm-label">Distancia restante<\/span>\s*<span class="tm-value tm-remaining">8\.411<small>km<\/small><\/span>/);
-    expect(html).toMatch(/<span class="tm-source" title="Datos ADS-B de adsb\.lol">Radar ADS-B<\/span>/); // proveedor solo como title
-    expect(html).toContain('<span class="tm-signal">Última señal hace 0 s · AEA039</span>');
-    expect(html).not.toContain('Según el radar');
-    expect(html).not.toMatch(/>[^<]*adsb\.lol/); // el proveedor no se muestra como texto
+  const flying = (radar = r, over = {}) => card({ phase: 'en-curso', status: { text: 'Volando', tone: 'info', flying: true }, a: 'DUB',
+    arr: null, radar, radarReceivedAt: NOW, ...over });
+  const cell = (h, label) => h.match(new RegExp(`<div class="tm-cell[^"]*">\\s*${label}[\\s\\S]*?</div>`))?.[0] ?? '';
+  it('volando: cuatro celdas (altitud, velocidad, distancia y última señal)', () => {
+    const h = html(flying());
+    expect(h.match(/class="tm-cell/g)).toHaveLength(4);
+    expect(h).toMatch(/<span class="tm-label">Velocidad<\/span>\s*<span class="tm-value">851<small>km\/h<\/small><\/span>/);
+    expect(h).toMatch(/<span class="tm-value tm-remaining">8\.411<small>km<\/small><\/span>/);
   });
-  it('avión identificado por su ruta (no por el indicativo del vuelo): se dice, en lenguaje llano', () => {
-    const html = flightCardHtml({ ...c, radar: { ...r, callsign: 'RYR12AB', hex: 'abc123', match: 'ruta' } });
-    expect(html).toContain('<span class="tm-signal">Última señal hace 0 s · RYR12AB</span>');
-    expect(html).toContain('<p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>');
-    expect(flightCardHtml({ ...c, radar: r })).not.toContain('tm-match');
+  it('altitud en pies con «ft» y los metros aparte', () => {
+    const alt = cell(html(flying()), '<span class="tm-icon">[\\s\\S]*?</span>\\s*<span class="tm-label">Altitud');
+    expect(alt).toMatch(/<span class="tm-value">35\.000<small>ft<\/small><\/span>/);
+    expect(alt).toMatch(/<small class="tm-sub">10\.700 m<\/small>/);
   });
-  it('con el panel, la etiqueta exterior «Volando» no se repite', () => {
-    const html = flightCardHtml({ ...c, radar: r });
-    expect(html).not.toContain('class="status');
-    expect(html.match(/Volando/g)).toHaveLength(1);
+  it('señal: indicador «live» con «Señal radar reciente»; antigua, «Sin señal reciente»', () => {
+    const h = html(flying());
+    expect(h).toMatch(/<span class="signal" data-signal-level="live">[\s\S]*?Señal radar reciente<\/span>/);
+    expect(h).toMatch(/Última señal<\/span>\s*<span class="tm-value">0 s<\/span>/);
+    const old = html(flying({ ...r, seenS: 400 }));
+    expect(old).toMatch(/data-signal-level="old">[\s\S]*?Sin señal reciente/);
+    expect(old).toMatch(/Última señal<\/span>\s*<span class="tm-value">6 min<\/span>/);
+    expect(html(flying({ ...r, seenS: 800 }))).toMatch(/data-signal-level="stale"/);
   });
-  it('valores dinámicos; si falta un dato, «—» (no se inventa)', () => {
-    const html = flightCardHtml({ ...c, radar: { ...r, kmh: null, remainingKm: undefined, altM: 3048, seenS: 42, callsign: 'FIN1676' } });
-    expect(html).toMatch(/Velocidad<\/span>\s*<span class="tm-value">—<\/span>/);
-    expect(html).toMatch(/Distancia restante<\/span>\s*<span class="tm-value tm-remaining">—<\/span>/);
-    expect(html).toContain('3.000<small>m</small>');
-    expect(html).toContain('Última señal hace 42 s · FIN1676');
+  it('sin instante de recepción: ni «Última señal» ni indicador inventados', () => {
+    const h = html(flying(r, { radarReceivedAt: undefined }));
+    expect(h).not.toContain('data-signal-level');
+    expect(h.match(/class="tm-cell/g)).toHaveLength(3);
   });
-  it('«Volando» de Aena sin radar (vuelo a España): sigue la etiqueta de siempre, sin panel', () => {
-    const html = flightCardHtml(c);
-    expect(html).toContain('class="status tone-info flying"');
-    expect(html).not.toContain('telemetry');
+  it('si falta un dato, su celda no está (ni «—»)', () => {
+    const h = html(flying({ ...r, kmh: null, remainingKm: undefined }));
+    expect(h).not.toContain('Velocidad');
+    expect(h).not.toContain('tm-remaining');
+    expect(h).not.toContain('—');
   });
-  it('sin señal reciente: mensaje genérico, sin un indicativo concreto (se prueban varias variantes) y sin deducir nada', () => {
-    const html = flightCardHtml({ ...c, status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-senal' } });
-    expect(html).toContain('<p class="radar muted">Sin señal ADS-B reciente para este vuelo.</p>');
-    expect(html).not.toMatch(/AEA|EIN|indicativo|aterriz/);
+  it('sin lat/lon no pasa nada (la posición es del mapa)', () => {
+    expect(html(flying({ ...r, lat: undefined, lon: undefined })).match(/class="tm-cell/g)).toHaveLength(4);
   });
-  it('señal reciente (hace poco lo vio volando): lo dice el estado; sin panel ni texto extra', () => {
-    const html = flightCardHtml({ ...c, status: { text: 'Última señal: volando hace 5 min', tone: 'info' }, radar: { state: 'reciente', ageMin: 5 } });
-    expect(html).toContain('<span class="status tone-info">Última señal: volando hace 5 min</span>');
-    expect(html).not.toContain('telemetry');
-    expect(html).not.toContain('class="radar');
+  it('al desplegar: indicativo y fuente (proveedor solo como title)', () => {
+    const now = block(html(flying()), 'now');
+    expect(now).toContain('AEA039');
+    expect(now).toMatch(/<span class="v" title="Datos ADS-B de adsb\.lol">Radar ADS-B<\/span>/);
+    expect(now).not.toMatch(/>[^<]*adsb\.lol/);
+  });
+  it('identificado por su ruta, o con otro avión: los mismos textos', () => {
+    const h = html(flying({ ...r, callsign: 'RYR12AB', match: 'ruta' }));
+    expect(h).toContain('<p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>');
+    expect(html(flying())).not.toContain('tm-match');
+    expect(html(flying({ ...r, aircraftChanged: true }))).toContain('no es el que AeroDataBox tenía asignado a este vuelo');
+  });
+  it('«Volando» lo dice el chip del estado (las celdas no lo repiten)', () => {
+    const h = html(flying());
+    expect(h).toContain('class="chip status tone-info flying"');
+    expect(h.match(/Volando/g)).toHaveLength(1);
+  });
+  it('señal reciente: chip ámbar «Última señal · hace X min», sin panel', () => {
+    const h = html(card({ phase: 'en-curso', status: { text: 'Última señal: volando hace 5 min', tone: 'info' }, radar: { state: 'reciente', ageMin: 5 } }));
+    expect(block(h, 'now')).toContain('<span class="chip tone-warn">Última señal · hace 5 min</span>');
+    expect(h).not.toContain('tm-cell');
+  });
+  it('localizando: «Buscando el avión en el radar…»', () => {
+    const h = html(card({ phase: 'en-curso', radar: { state: 'localizando' } }));
+    expect(h).toMatch(/<p class="radar muted">[\s\S]*Buscando el avión en el radar…<\/p>/);
+  });
+  it('sin señal: el texto corto de siempre, sin indicativo ni deducciones', () => {
+    const h = html(card({ phase: 'en-curso', status: { text: 'Ha salido', tone: 'info' }, radar: { state: 'sin-senal' } }));
+    expect(h).toMatch(/<p class="radar muted">[\s\S]*Sin señal ADS-B reciente para este vuelo\.<\/p>/);
+    expect(h).not.toMatch(/AEA|EIN|indicativo|aterriz/);
+    expect(h).not.toContain('tm-cell');
   });
   it('no disponible', () => {
-    expect(flightCardHtml({ ...c, radar: { state: 'no-disponible' } })).toContain('El radar no responde ahora mismo.');
+    const h = html(card({ phase: 'en-curso', radar: { state: 'no-disponible' } }));
+    expect(h).toContain('El radar no responde ahora mismo.');
+    expect(h).not.toContain('tm-cell');
   });
-  it('aterrizado: estado «Aterrizado» con su confirmación, sin panel de vuelo', () => {
-    const html = flightCardHtml({ ...c, status: { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B' }, radar: { state: 'aterrizado' } });
-    expect(html).toContain('<span class="status tone-ok">Aterrizado</span><p class="status-note">Confirmado por radar ADS-B</p>');
-    expect(html).not.toMatch(/telemetry|Volando|class="radar/);
+  it('aterrizado: sin «Ahora» ni panel', () => {
+    const h = html(card({ status: { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B', landing: 'confirmed-landed' }, radar: { state: 'aterrizado' } }));
+    expect(h).not.toContain('data-card="now"');
+    expect(h).not.toMatch(/tm-cell|class="radar/);
+  });
+});
+
+describe('datos de Aena antiguos', () => {
+  const c = card({ status: { text: 'Embarcando', tone: 'info' }, updatedAgo: 'hace 2 h', stale: true,
+    radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, altFt: 35000, kmh: 830, seenS: 2, remainingKm: 300 }, radarReceivedAt: NOW });
+  it('chip gris con «… hace X» y la línea «Datos de Aena de hace X»; sin telemetría', () => {
+    const h = html(c);
+    expect(h).toContain('<span class="chip status tone-stale">Embarcando hace 2 h</span>');
+    expect(h).toContain('Datos de Aena de hace 2 h');
+    expect(h).not.toContain('tm-cell');
+    expect(h).not.toContain('class="fly"');
+  });
+  it('datos recientes: sin aviso', () => {
+    const h = html({ ...c, stale: false, updatedAgo: 'hace 10 min', radar: null });
+    expect(h).not.toContain('Datos de Aena de hace');
+    expect(h).toContain('<span class="chip status tone-info">Embarcando</span>');
+  });
+});
+
+describe('Horario', () => {
+  it('cuatro hitos: programada, real o prevista, programada y final, prevista o estimada', () => {
+    const h = block(html(card({ dep: { ...card().dep, est: '18:10' }, depFinal: true })), 'schedule');
+    expect(h.match(/<li class="ms /g)).toHaveLength(4);
+    expect(h).toMatch(/ms-sched[\s\S]*?17:55[\s\S]*?Programada/);
+    expect(h).toMatch(/ms-real[\s\S]*?18:10[\s\S]*?Real/);
+    expect(h).toMatch(/ms-pending[\s\S]*?--:--[\s\S]*?Pendiente/);
+  });
+  it('llegada estimada por Turbi: «Estimada», sin programada ni «prevista», y su nota visible', () => {
+    const h = block(html(card({ arr: { date: '2026-09-24', time: '18:30', estimated: true, note: 'Estimación Turbi' } })), 'schedule');
+    expect(h).toMatch(/ms-turbi[\s\S]*?18:30[\s\S]*?Estimada/);
+    expect(h).toContain('Estimación Turbi');
+    expect(h).not.toMatch(/[Pp]revista/);
+  });
+  it('avisos de Aena (otra hora, llegada antes del despegue) visibles sin desplegar', () => {
+    const punctuality = { state: 'puntual', band: 'ok', basis: 'arr', dep: { sched: '17:55', time: '17:55', delay: 0, alt: ['18:02'] },
+      arr: { sched: '19:25', time: '19:25', delay: 0, beforeTakeoff: true } };
+    const h = block(html(card({ punctuality })), 'schedule');
+    const summary = h.slice(0, h.indexOf('</summary>'));
+    expect(summary).toContain('18:02');
+    expect(summary).toContain('El avión aún no ha despegado');
+  });
+  it('contenedor #punctuality en el cuerpo, con el contenido que se le pase', () => {
+    const h = block(html(card(), { punctualityBody: '<p>hoy</p>' }), 'schedule');
+    expect(h.indexOf('</summary>')).toBeLessThan(h.indexOf('<section id="punctuality">'));
+    expect(h).toContain('<section id="punctuality"><p>hoy</p></section>');
+    expect(block(html(card()), 'schedule')).toContain('<section id="punctuality"></section>');
+  });
+  it('pie: cuándo se actualizaron los datos', () => {
+    expect(html(card({ updatedAgo: 'hace 25 minutos' }))).toContain('<p class="foot">Datos actualizados hace 25 minutos</p>');
+  });
+  it('AeroDataBox: de dónde es el horario', () => {
+    expect(html(card({ source: 'aerodatabox', sourceNote: 'Horario según AeroDataBox · consultado hace 2 min' })))
+      .toContain('<p class="foot">Horario según AeroDataBox · consultado hace 2 min</p>');
+  });
+  it('vuelo del histórico: de dónde salen las horas', () => {
+    const c = card({ past: true, phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' } });
+    expect(html(c)).toContain('<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>');
+    expect(html({ ...c, arr: { date: '2026-09-24', time: '22:50', estimated: true, note: 'x' } }))
+      .toContain('<p class="foot">Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.</p>');
+    expect(html({ ...c, dep: { date: '2026-09-24', time: '08:30', estimated: true, note: 'x' } }))
+      .toContain('<p class="foot">Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.</p>');
+  });
+});
+
+describe('fases', () => {
+  it('finalizado: sin «Ahora», con «Resumen del vuelo» (distancia directa y duración real)', () => {
+    const h = html(card({ phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' }, depMs: NOW, arrMs: NOW + 85 * MIN }));
+    expect(h).not.toContain('data-card="now"');
+    const sum = block(h, 'flight-summary');
+    expect(sum).toContain('Resumen del vuelo');
+    expect(sum).toMatch(/Distancia en ruta directa<\/span>\s*<span class="v">547 km<\/span>/);
+    expect(sum).toMatch(/Duración real<\/span>\s*<span class="v">1 h 25 min<\/span>/);
+    expect(sum).not.toContain('Tiempo en el aire');
+    expect(h).not.toContain('data-card="aircraft"');
+  });
+  it('finalizado sin horas reales: sin duración (no se calcula sobre una estimación)', () => {
+    const sum = block(html(card({ phase: 'terminado', arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' } })), 'flight-summary');
+    expect(sum).not.toContain('Duración');
+  });
+  it('AeroDataBox con horas de pista: tiempo en el aire', () => {
+    const sum = block(html(card({ source: 'aerodatabox', phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' },
+      depMs: NOW, arrMs: NOW + 70 * MIN })), 'flight-summary');
+    expect(sum).toMatch(/Tiempo en el aire<\/span>\s*<span class="v">1 h 10 min<\/span>/);
+  });
+  it('programado: tarjeta «Avión»; la matrícula solo si existe (AeroDataBox)', () => {
+    const h = html(card());
+    const air = block(h, 'aircraft');
+    expect(air).toContain('Airbus A321');
+    expect(air).not.toContain('Matrícula');
+    expect(h).not.toContain('data-card="flight-summary"');
+    const adb = block(html(card({ source: 'aerodatabox', aircraftReg: 'EC-ABC', aircraftHex: '34a1b2' })), 'aircraft');
+    expect(adb).toMatch(/Matrícula<\/span>\s*<span class="v">EC-ABC<\/span>/);
+    expect(adb).toContain('34A1B2');
+  });
+  it('en curso: sin «Avión» ni «Resumen del vuelo»', () => {
+    const h = html(card({ phase: 'en-curso' }));
+    expect(h).not.toMatch(/data-card="(aircraft|flight-summary)"/);
+  });
+  it('cancelado: sin «Ahora»', () => {
+    expect(html(card({ phase: 'cancelado', status: { text: 'Cancelado', tone: 'bad' } }))).not.toContain('data-card="now"');
   });
 });
 
@@ -216,118 +468,3 @@ describe('solo la fecha pedida: si ese día no hay vuelo, se dice (nunca se salt
   });
 });
 
-describe('cabecera: foto del modelo y logo junto al número', () => {
-  const c = { al: 'EI', number: 'EI 737', airline: 'Aer Lingus', title: 'Aer Lingus EI 737', route: 'Palma a Dublín', tabs: [], status: { text: 'Programado', tone: 'ok' },
-    o: 'PMI', a: 'DUB', duration: 160, dep: { date: '2026-09-27', time: '20:55', est: null, late: false, terminal: null, gate: null }, arr: null,
-    aircraft: 'Airbus A320', photo: null };
-  const photo = { thumb: 'https://upload.wikimedia.org/x/1000px-EI.jpg', artist: 'Pedro Aragão', license: 'CC BY-SA 3.0', page: 'https://commons.wikimedia.org/wiki/File:EI.jpg' };
-  it('foto real (de esa aerolínea y ese modelo) arriba del todo, con modelo, autor y licencia', () => {
-    const html = flightCardHtml({ ...c, photo });
-    expect(html.indexOf('class="plane-photo"')).toBeLessThan(html.indexOf('class="flight-head"'));
-    expect(html).toContain('src="https://upload.wikimedia.org/x/1000px-EI.jpg"');
-    expect(html).toContain('<figcaption>Foto: <a href="https://commons.wikimedia.org/wiki/File:EI.jpg" target="_blank" rel="noopener">Pedro Aragão</a>, CC BY-SA 3.0</figcaption>');
-    expect(html).not.toContain('foto de ejemplo');
-  });
-  it('foto propia (subida a img/fotos): sin autor ni licencia, solo el modelo', () => {
-    const html = flightCardHtml({ ...c, photo: { thumb: 'img/fotos/FR%20Boeing%20737-800.jpg' } });
-    expect(html).toContain('src="img/fotos/FR%20Boeing%20737-800.jpg"');
-    expect(html).not.toContain('<figcaption>');
-  });
-  it('número de vuelo a la izquierda y logo a la derecha; aerolínea y ruta debajo', () => {
-    const html = flightCardHtml(c);
-    expect(html).toMatch(/<div class="flight-id">\s*<h2>EI 737<\/h2>\s*<img class="logo"[^>]*>\s*<\/div>/);
-    expect(html).toContain('<p>Aer Lingus · Palma a Dublín</p>');
-  });
-  it('tipo de avión justo debajo del número de vuelo', () => {
-    const html = flightCardHtml(c);
-    expect(html).toMatch(/<\/div>\s*<p class="aircraft">Airbus A320<\/p>\s*<p>Aer Lingus/);
-    expect(flightCardHtml({ ...c, aircraft: null })).not.toContain('class="aircraft"');
-  });
-  it('operada por otra aerolínea: se dice', () => {
-    expect(flightCardHtml({ ...c, operator: 'Air Nostrum' })).toContain('<p>Aer Lingus · Palma a Dublín · Operado por Air Nostrum</p>');
-  });
-  it('foto genérica de la aerolínea: «Imagen representativa de la aerolínea», sin decir que es el avión ni el modelo', () => {
-    const html = flightCardHtml({ ...c, aircraft: null, photo: { ...photo, representative: true } });
-    expect(html).toContain('<figcaption>Imagen representativa de la aerolínea · Foto:');
-    expect(html).not.toMatch(/código compartido/);
-  });
-  it('salida estimada por Turbi (solo se conoce la llegada)', () => {
-    const html = flightCardHtml({ ...c, dep: { date: '2026-09-25', time: '08:30', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' } });
-    expect(html).toContain('<p class="lbl">Salida estimada</p>');
-    expect(html).toContain('<p class="big estimated">08:30</p>');
-  });
-  it('foto por código compartido: lo dice debajo de la foto', () => {
-    expect(flightCardHtml({ ...c, photo: { ...photo, shared: true } })).toContain('Vuelo con código compartido: Aena no indica qué aerolínea lo opera. ');
-  });
-  it('sin foto real de esa aerolínea y modelo: sin foto', () => {
-    expect(flightCardHtml({ ...c, photo: null })).not.toContain('plane-photo');
-  });
-});
-
-describe('vuelo pasado (del histórico)', () => {
-  const c = { al: 'IB', number: 'IB 1668', airline: 'Iberia', title: 'x', route: 'Palma de Mallorca a Madrid', status: { text: 'Ha llegado', tone: 'ok' },
-    o: 'PMI', a: 'MAD', duration: 90, dep: { date: '2026-09-24', time: '17:55', est: '18:44', late: true, terminal: null, gate: null },
-    arr: { date: '2026-09-24', time: '19:25', est: '20:10', late: true, terminal: null }, aircraft: null, past: true };
-  it('sin puerta de embarque ni «actualizado hace»; dice de dónde salen las horas', () => {
-    const html = flightCardHtml(c);
-    expect(html).not.toContain('Puerta de embarque');
-    expect(html).toContain('<p class="foot">Horas finales publicadas por Aena y guardadas por Turbi.</p>');
-    // Si una de las horas es una estimación de Turbi, el pie no puede decir que todas son de Aena
-    expect(flightCardHtml({ ...c, arr: { date: '2026-09-24', time: '22:50', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' } }))
-      .toContain('<p class="foot">Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.</p>');
-    expect(flightCardHtml({ ...c, dep: { date: '2026-09-24', time: '08:30', estimated: true, note: 'x' } }))
-      .toContain('<p class="foot">Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.</p>');
-  });
-});
-
-describe('llegada estimada por Turbi (Aena no publica la llegada)', () => {
-  const c = { al: 'FR', title: 'x', route: 'Palma a Londres', status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'LHR', duration: 150, durationEstimated: true,
-    dep: { date: '2026-09-25', time: '17:00', est: null, late: false, terminal: null, gate: null }, aircraft: null };
-  it('antes del despegue: «Llegada estimada» y «Estimación Turbi», nunca «prevista»', () => {
-    const html = flightCardHtml({ ...c, arr: { date: '2026-09-25', time: '18:30', estimated: true, note: 'Estimación Turbi' } });
-    expect(html).toContain('<p class="lbl">Llegada estimada</p>');
-    expect(html).toContain('<p class="big estimated">18:30</p>'); // color neutro: no es un dato oficial «en hora»
-    expect(html).toContain('<p class="est-note">Estimación Turbi</p>');
-    expect(html).not.toContain('prevista');
-  });
-  it('en vuelo: «Estimación Turbi actualizada en vuelo»', () => {
-    expect(flightCardHtml({ ...c, arr: { date: '2026-09-25', time: '18:15', estimated: true, note: 'Estimación Turbi actualizada en vuelo' } }))
-      .toContain('<p class="est-note">Estimación Turbi actualizada en vuelo</p>');
-  });
-  it('llegada al día siguiente (hora local del destino)', () => {
-    expect(flightCardHtml({ ...c, arr: { date: '2026-09-26', time: '01:00', estimated: true, note: 'Estimación Turbi' } })).toContain('Llegada estimada · +1 día');
-  });
-  it('duración estimada: marcada con «≈», discreta', () => {
-    expect(flightCardHtml({ ...c, arr: null })).toContain('<em>≈ 2h 30min</em>');
-    expect(flightCardHtml({ ...c, arr: null, durationEstimated: false })).toContain('<em>2h 30min</em>');
-  });
-});
-
-describe('aterrizado estimado', () => {
-  it('«Aterrizado» con la nota de que es según la llegada estimada, y la llegada estimada visible', () => {
-    const html = flightCardHtml({ al: 'EI', title: 'x', route: 'Palma a Dublín', o: 'PMI', a: 'DUB', duration: 157, durationEstimated: true,
-      status: { text: 'Aterrizado', tone: 'ok', note: 'Según la llegada estimada por Turbi', landing: 'estimated-landed' },
-      dep: { date: '2026-09-24', time: '20:55', est: '21:12', late: true, terminal: null, gate: null },
-      arr: { date: '2026-09-24', time: '22:50', estimated: true, note: 'Estimación Turbi basada en la duración de la ruta' }, aircraft: null, past: true });
-    expect(html).toContain('<span class="status tone-ok">Aterrizado</span><p class="status-note">Según la llegada estimada por Turbi</p>');
-    expect(html).toContain('<p class="big estimated">22:50</p>');
-    expect(html).not.toMatch(/Histórico|Ha salido|telemetry/);
-  });
-});
-
-describe('datos de Aena antiguos', () => {
-  it('aviso visible si tienen más de 40 min', () => {
-    const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Programado', tone: 'ok' }, o: 'PMI', a: 'MAD', duration: 90,
-      dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D86' }, arr: null, aircraft: null };
-    expect(flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true })).toContain('Los datos de Aena son de hace 2 h: pueden haber cambiado desde entonces.');
-    expect(flightCardHtml({ ...c, updatedAgo: 'hace 10 min', stale: false })).not.toContain('pueden haber cambiado');
-  });
-  it('el estado viejo no se presenta como actual (IB1668: «Embarcando» ya aterrizado)', () => {
-    const c = { al: 'IB', title: 'x', route: 'y', tabs: [], status: { text: 'Embarcando', tone: 'info' }, o: 'PMI', a: 'MAD', duration: 90,
-      dep: { date: '2026-09-24', time: '17:55', est: null, late: false, terminal: 'N', gate: 'D86' }, arr: null, aircraft: null };
-    const old = flightCardHtml({ ...c, updatedAgo: 'hace 2 h', stale: true });
-    expect(old).toContain('<span class="status tone-stale">Embarcando hace 2 h</span>');
-    expect(old.indexOf('class="stale"')).toBeLessThan(old.indexOf('class="route-line"'));
-    expect(flightCardHtml({ ...c, updatedAgo: 'hace 5 min', stale: false })).toContain('<span class="status tone-info">Embarcando</span>');
-  });
-});

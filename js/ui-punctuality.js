@@ -1,5 +1,7 @@
-// Sección «Puntualidad»: situación de hoy y histórico del vuelo, en lenguaje llano.
+// Sección «Puntualidad» (cuerpo del «Horario» de la ficha, en #punctuality): situación de hoy y histórico del vuelo,
+// en lenguaje llano. Mismo contenido de siempre con el estilo de la ficha: datos en .kv y el histórico desplegable.
 import { esc, dateLabel } from './ui.js';
+import { icon } from './icons.js';
 import { trend, qualityLabel, DOW_LABELS, SLOT_LABELS } from './punctuality.js';
 
 const PLURAL_DAYS = ['Los domingos', 'Los lunes', 'Los martes', 'Los miércoles', 'Los jueves', 'Los viernes', 'Los sábados'];
@@ -13,6 +15,7 @@ export function signedDelay(min) {
   return min > 0 ? `+${min} min` : `${-min} min antes`;
 }
 
+const kv = (k, v) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
 const bandOf = min => (min <= 15 ? 'ok' : min <= 30 ? 'warn' : min <= 60 ? 'late' : 'bad');
 
 function nowRow(label, side, doneWord) {
@@ -69,17 +72,17 @@ function historyHtml(p) {
     <p class="pbig">${pct(d90.otp15)}</p>
     <p>de estos vuelos ${verb} con 15 min de retraso o menos${d90.quality === 'orientativa' ? ' (dato orientativo, aún hay pocos vuelos)' : ''}.</p>
     ${h.basis === 'dep' ? '<p class="note-small">Para este destino solo hay datos de salida.</p>' : ''}
-    <dl class="facts">
-      <div><dt>Retraso habitual</dt><dd>${signedDelay(d90.median)}</dd></div>
-      <div><dt>3 de cada 4</dt><dd>${within(d90.p75)}</dd></div>
-      <div><dt>9 de cada 10</dt><dd>${within(d90.p90)}</dd></div>
-      <div><dt>Cancelaciones o desvíos</dt><dd>${pct1(d90.cancelRate ?? 0)}</dd></div>
-      ${label ? `<div><dt>Valoración</dt><dd>Puntualidad ${label}</dd></div>` : ''}
-    </dl>
+    <div class="pfacts">
+      ${kv('Retraso habitual', signedDelay(d90.median))}
+      ${kv('3 de cada 4', within(d90.p75))}
+      ${kv('9 de cada 10', within(d90.p90))}
+      ${kv('Cancelaciones o desvíos', pct1(d90.cancelRate ?? 0))}
+      ${label ? kv('Valoración', `Puntualidad ${label}`) : ''}
+    </div>
     <p class="note-small">${d90.sample} vuelos analizados. El «retraso habitual» es el valor típico (la mediana), que no se deja arrastrar por unos pocos vuelos muy retrasados.</p>
     ${trendText ? `<p class="trend">${esc(trendText)}</p>` : ''}
-    <details class="explain">
-      <summary>Ver histórico <span class="info">ⓘ</span></summary>
+    <details class="pmore">
+      <summary>Ver histórico ${icon('chevron', { size: 16 })}</summary>
       <h4>Últimos 7 vuelos</h4><ul class="plist">${recent}</ul>
       <h4>Comparación</h4><ul class="pstats">${rows}</ul>
       <p class="note-small">Puntual = llega con 15 min de retraso o menos (criterio habitual en aviación). Las cancelaciones se cuentan aparte.
@@ -90,7 +93,7 @@ function historyHtml(p) {
 // p = { current, history (undefined = cargando, null = sin datos), flight, airline, route: [o, a], dow, slot, since }
 export function punctualityHtml(p) {
   return `
-    <h3 class="section">Puntualidad</h3>
+    <h4 class="p-title">Puntualidad</h4>
     ${todayHtml(p.current)}
     ${historyHtml(p)}`;
 }

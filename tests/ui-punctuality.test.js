@@ -73,6 +73,13 @@ describe('punctualityHtml', () => {
     expect(h).toContain('El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.');
     expect(h).not.toMatch(/probablemente|no cuadra|no está actualizada/);
   });
+  it('estilo de la ficha: datos con .kv (.k / .v), sin título de sección (va dentro del «Horario») ni emojis', () => {
+    const h = punctualityHtml(base);
+    expect(h).toMatch(/<div class="kv"><span class="k">Retraso habitual<\/span><span class="v">\+6 min<\/span><\/div>/);
+    expect(h).not.toContain('h3 class="section"');
+    expect(h).toMatch(/<details class="pmore">\s*<summary>Ver histórico/);
+    expect(h).not.toMatch(/\p{Extended_Pictographic}|ⓘ/u);
+  });
   it('cargando', () => {
     expect(punctualityHtml({ ...base, history: undefined })).toContain('Buscando el historial');
   });

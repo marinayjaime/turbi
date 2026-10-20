@@ -81,11 +81,11 @@ details[open] > .card-head .icon { transform: rotate(90deg); }
   font-size: 13px; font-weight: 600; line-height: 1.3; white-space: nowrap;
 }
 .dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
-.chip.tone-ok, .tone-ok { background: rgba(23, 134, 74, 0.10); color: var(--ok); }
-.chip.tone-info, .tone-info { background: rgba(26, 111, 224, 0.10); color: var(--accent); }
-.chip.tone-warn, .tone-warn { background: rgba(179, 106, 0, 0.10); color: var(--warn); }
-.chip.tone-bad, .tone-bad { background: rgba(208, 52, 44, 0.10); color: var(--bad); }
-.chip.tone-stale, .tone-stale { background: var(--field); color: var(--muted); }
+.chip.tone-ok { background: rgba(23, 134, 74, 0.10); color: var(--ok); }
+.chip.tone-info { background: rgba(26, 111, 224, 0.10); color: var(--accent); }
+.chip.tone-warn { background: rgba(179, 106, 0, 0.10); color: var(--warn); }
+.chip.tone-bad { background: rgba(208, 52, 44, 0.10); color: var(--bad); }
+.chip.tone-stale { background: var(--field); color: var(--muted); }
 .dot.tone-ok { background: var(--ok); }
 .dot.tone-info { background: var(--accent); }
 .dot.tone-warn { background: var(--warn); }
@@ -221,76 +221,179 @@ button { font: inherit; cursor: pointer; }
 .actions { display: flex; gap: 12px; }
 .actions:not(:has(button:not([hidden]))) { display: none; } /* sin botones visibles, no ocupa sitio */
 
-/* Ficha del vuelo */
-.flight { margin-bottom: 8px; }
-.flight-head { display: flex; flex-direction: column; gap: 4px; }
-.flight-id { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.flight-head .logo { height: 44px; width: auto; max-width: 55%; object-fit: contain; object-position: right center; }
-/* Foto del modelo: ocupa toda la parte de arriba del panel (anula su margen de 20 px). */
-.plane-photo { margin: -20px -20px 16px; }
-.plane-photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; background: var(--field); }
-.plane-photo figcaption { padding: 6px 20px 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
+/* ---- Ficha del vuelo (.flight): una pila de tarjetas sobre el fondo, como en la referencia ----
+   #result deja de ser una tarjeta cuando lleva la ficha: cada bloque (cabecera, Ahora, Horario…) es su propia .card.
+   Las pantallas de elección (selector de tramos, alias) siguen siendo tarjeta por sí mismas (ver más abajo). */
+#result.panel { background: none; border: 0; box-shadow: none; padding: 0; border-radius: 0; }
+/* Provisional hasta la Tarea 5 (tarjeta de Turbulencias): mientras #forecast-area no tenga su propia .card, se pinta
+   como tarjeta para no dejar el pronóstico suelto sobre el fondo. Se apaga sola en cuanto contenga una .card. */
+#forecast-area:not(:has(> .card)) { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px; }
+#forecast-area:empty { display: none; }
+#result > .summary > h3.section:first-of-type { margin-top: 8px; border-top: 0; padding-top: 0; }
+.flight { margin-bottom: 16px; }
+
+/* Cabecera: foto arriba, a sangre, que se funde con el blanco; atribución pequeña debajo (obligatoria). */
+.flight-main { padding: 0 0 18px; overflow: hidden; }
+.plane-photo { position: relative; margin: 0; }
+.plane-photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--field); }
+.plane-photo::after { content: ""; position: absolute; left: 0; right: 0; top: 0; aspect-ratio: 16 / 9; pointer-events: none;
+  background: linear-gradient(to bottom, transparent 62%, rgba(255, 255, 255, 0.85) 94%, #fff); }
+.plane-photo figcaption { position: relative; z-index: 1; padding: 2px 20px 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
 .plane-photo figcaption a { color: inherit; }
-.summary > * + .flight .plane-photo { margin-top: 0; }
-.summary > * + .flight .plane-photo img { border-radius: 14px; }
-.flight-head h2 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
-.flight-head p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
-.flight-head p.aircraft { margin-top: -2px; color: var(--text); font-size: 16px; font-weight: 600; }
-.tabs { display: flex; gap: 4px; overflow-x: auto; margin: 16px -20px 0; padding: 0 20px; border-bottom: 1px solid var(--border); scrollbar-width: none; }
-.tabs::-webkit-scrollbar { display: none; }
-.tabs button { flex: none; border: 0; background: none; padding: 10px 10px 12px; font-size: 15px; color: var(--muted); border-bottom: 2px solid transparent; }
-.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.status { display: inline-block; margin-top: 16px; padding: 4px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
-/* Tonos del estado (.status.tone-…): los mismos de .chip, definidos en las piezas base. */
-.status-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
-/* Panel de telemetría del radar: una sola ficha, siempre en cuadrícula 2×2 (la ficha nunca pasa de 480 px). */
-.telemetry { margin: 14px 0 6px; padding: 14px 16px 10px; border-radius: 16px; background: var(--field); border: 1px solid var(--border); }
-.tm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
-.tm-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.tm-label { font-size: 12px; color: var(--muted); }
-.tm-value { display: inline-flex; align-items: baseline; gap: 4px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; font-size: clamp(19px, 5.4vw, 22px); }
-.tm-value small { font-size: 13px; font-weight: 500; color: var(--muted); }
-.tm-flying { align-items: center; gap: 4px; color: var(--accent); }
-.tm-flying .fly { width: 34px; }
-.tm-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 12px; padding-top: 9px;
-  border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
-.tm-source { font-weight: 600; color: var(--text); }
-.tm-match { margin: 6px 0 0; font-size: 12px; line-height: 1.35; color: var(--muted); }
-.radar { margin: 10px 0 0; font-size: 14px; line-height: 1.4; color: var(--text); }
-.radar.muted { color: var(--muted); }
-/* En vuelo: un avión cruza en bucle junto al texto (decorativo; no indica la posición real). */
-.status.flying { display: inline-flex; align-items: center; gap: 6px; }
-.fly { position: relative; display: inline-block; width: 44px; height: 16px; overflow: hidden;
+.hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 20px 0; }
+.hero:not(:has(.plane-photo)) .hero-head { padding-top: 20px; }
+.hero-id { min-width: 0; }
+.hero-num { display: flex; align-items: center; gap: 10px; }
+.hero-num h2 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.hero-num .logo { height: 26px; width: auto; max-width: 96px; object-fit: contain; }
+.hero:has(.plane-photo) .logo { display: none; } /* con foto, el logotipo sobra; si la foto falla, su figura se va y vuelve */
+.hero-sub { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
+.hero-status { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; max-width: 52%; text-align: right; }
+.hero-status .chip { white-space: normal; text-align: right; }
+.status-note { margin: 0; font-size: 12px; line-height: 1.3; color: var(--muted); }
+.stale { display: flex; align-items: center; gap: 6px; margin: 12px 20px 0; padding: 8px 12px; border-radius: 10px;
+  background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 13px; font-weight: 500; }
+/* En vuelo: un avión cruza en bucle junto al texto del chip (decorativo; no indica la posición real). */
+.chip.flying { gap: 4px; }
+.fly { position: relative; display: inline-block; width: 36px; height: 16px; overflow: hidden;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
           mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent); }
-.fly-plane { position: absolute; left: 0; top: -1px; font-size: 14px; line-height: 16px; animation: fly 2.4s linear infinite; }
+.fly-plane { position: absolute; left: 0; top: 1px; line-height: 0; animation: fly 2.4s linear infinite; }
 @keyframes fly {
   0% { transform: translate(-16px, 1px); }
-  25% { transform: translate(-1px, -1px); }
-  50% { transform: translate(14px, 1px); }
-  75% { transform: translate(29px, -1px); }
-  100% { transform: translate(44px, 1px); }
+  25% { transform: translate(-3px, -1px); }
+  50% { transform: translate(10px, 1px); }
+  75% { transform: translate(23px, -1px); }
+  100% { transform: translate(36px, 1px); }
 }
+
+/* Ruta: códigos grandes, ciudad debajo, avión en medio. */
+.route-codes { display: flex; align-items: flex-start; gap: 16px; padding: 16px 20px 0; }
+.route-codes .rc { display: flex; flex-direction: column; min-width: 0; }
+.route-codes .rc-to { text-align: left; }
+.route-codes strong { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.route-codes .rc span { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.rc-arrow { flex: none; display: grid; place-items: center; height: 33px; color: var(--accent); }
+
+/* Hora principal: grande a la izquierda; la cuenta atrás o la duración a la derecha. */
+.main-time { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 16px 20px 0; }
+.mt-main { display: flex; flex-direction: column; min-width: 0; }
+.mt-time { font-size: 40px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.mt-time.turbi { color: var(--accent); } /* estimación de Turbi: no es un dato oficial */
+.mt-time small { margin-left: 6px; font-size: 14px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+.mt-label { font-size: 14px; color: var(--muted); }
+.mt-note { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.mt-aside { flex: none; text-align: right; }
+.mt-aside .kv { align-items: flex-end; }
+.mt-aside .v { font-size: 18px; }
+
+/* Fila de resumen: tres en una fila; por debajo de ~340 px se reparten en dos líneas. Sin dato, sin tarjeta. */
+.tiles { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px 20px 0; }
+.tile { flex: 1 1 92px; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 9px 8px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--card); }
+.tile > .icon { color: var(--muted); }
+.tile .k { font-size: 11px; }
+.tile .v { font-size: 13px; line-height: 1.2; }
+.tile[data-tone="ok"] .v, .tile[data-tone="ok"] > .icon { color: var(--ok); }
+.tile[data-tone="warn"] .v, .tile[data-tone="late"] .v, .tile[data-tone="warn"] > .icon, .tile[data-tone="late"] > .icon { color: var(--warn); }
+.tile[data-tone="bad"] .v, .tile[data-tone="bad"] > .icon { color: var(--bad); }
+.limited { display: flex; align-items: flex-start; gap: 8px; margin: 10px 20px 0; padding: 10px 12px; border-radius: 12px;
+  background: var(--field); font-size: 12px; line-height: 1.4; color: var(--muted); }
+.limited .icon, .ms-alert .icon, .stale .icon { margin-top: 1px; }
+
+/* Desplegables: <details> con la cabecera (título · aviso · chevron) y lo esencial en el <summary>; el resto, al abrir. */
+.card-sum { display: block; list-style: none; cursor: pointer; }
+.card-sum::-webkit-details-marker { display: none; }
+.card-head .card-title { flex: 1; min-width: 0; }
+details[open] > .card-sum .card-head > .icon:last-child { transform: rotate(90deg); }
+.card-body { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); display: grid; gap: 10px; }
+details[open] > .card-body { animation: card-in var(--ease); }
+@keyframes card-in { from { opacity: 0; transform: translateY(-4px); } }
+h3.card-head { text-transform: none; letter-spacing: -0.01em; margin: 0 0 14px; }
+.card-body .kv { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; }
+.card-body .kv .k { font-size: 13px; }
+.card-body .kv .v { font-size: 14px; text-align: right; }
+
+/* «Ahora». */
+.signal { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.tm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); margin-top: 14px; }
+.tm-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 0 4px; text-align: center; }
+.tm-cell + .tm-cell { border-left: 1px solid var(--border); }
+.tm-icon { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 4px; border-radius: 50%;
+  background: rgba(26, 111, 224, 0.08); color: var(--accent); }
+.tm-label { font-size: 12px; color: var(--muted); }
+.tm-value { display: inline-flex; align-items: baseline; gap: 2px; font-size: 16px; font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tm-value small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.tm-sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tm-grid.is-stale { opacity: 0.5; } /* desde STALE_MIN: la última lectura, atenuada */
+.tm-old { margin: 10px 0 0; font-size: 12px; color: var(--warn); text-align: center; }
+.tm-match { margin: 0; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.radar { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 14px; line-height: 1.4; }
+.radar.muted { color: var(--muted); }
+.radar-recent { margin: 12px 0 0; }
+.dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+.now-ground { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.now-ground > .icon { color: var(--accent); }
+.now-ground p { margin: 0; }
+.now-title { font-size: 16px; font-weight: 600; }
+.now-title small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.now-meta { font-size: 13px; color: var(--muted); }
+/* Puerta de embarque: línea propia, con el valor grande. */
+.gate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--field); }
+.gate-k { font-size: 12px; color: var(--muted); width: 100%; }
+.gate-v { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+.gate.pending .gate-v { font-size: 16px; font-weight: 600; color: var(--muted); }
+.gate small { font-size: 12px; color: var(--muted); width: 100%; }
+.tag.warn { background: var(--warn); }
+
+/* «Horario»: cuatro hitos sobre una línea. Gris = programada; verde = real o final; azul = estimación Turbi;
+   contorno azul marino = prevista por Aena; gris claro y «--:--» = pendiente. El tramo hasta un hito real o
+   estimado toma su color. */
+.milestones { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 16px 0 0; padding: 0; list-style: none; }
+.ms { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; }
+.ms + .ms::before { content: ""; position: absolute; top: 5px; left: -50%; width: 100%; height: 2px; background: var(--lvl0); }
+.ms-real + .ms-real::before, .ms-sched + .ms-real::before { background: var(--ok); }
+.ms + .ms-turbi::before { background: var(--accent); }
+.ms-dot { position: relative; z-index: 1; width: 12px; height: 12px; border-radius: 50%; background: var(--card); border: 2px solid var(--faint); }
+.ms-real .ms-dot { background: var(--ok); border-color: var(--ok); }
+.ms-turbi .ms-dot { background: var(--accent); border-color: var(--accent); }
+.ms-aena-est .ms-dot { border-color: var(--text); }
+.ms-pending .ms-dot { background: var(--lvl0); border-color: var(--lvl0); }
+.ms-time { margin-top: 10px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ms-time small { margin-left: 2px; font-size: 10px; color: var(--muted); }
+.ms-real .ms-time { color: var(--ok); }
+.ms-turbi .ms-time { color: var(--accent); }
+.ms-pending .ms-time { color: var(--faint); font-weight: 500; }
+.ms-cap, .ms-side { font-size: 11px; line-height: 1.3; color: var(--muted); }
+.ms-pending .ms-cap { color: var(--faint); }
+.ms-note { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
+.ms-alert { display: flex; align-items: flex-start; gap: 6px; margin: 10px 0 0; font-size: 13px; line-height: 1.35; color: var(--warn); }
+.flight .foot { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
+
+/* «Avión» (antes de salir). */
+.ac-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.ac-thumb { flex: none; width: 96px; height: 60px; border-radius: 10px; object-fit: cover; background: var(--field); }
+.ac-id { flex: 1; min-width: 0; }
+.ac-id p { margin: 0; }
+.ac-model { font-size: 16px; font-weight: 600; }
+.ac-airline { font-size: 13px; color: var(--muted); }
+.ac-row .kv { flex: none; text-align: right; }
+.ac-row .kv .v { font-size: 13px; }
+
+/* «Resumen del vuelo» (finalizado). */
+.fs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
+.fs-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0 6px; text-align: center; }
+.fs-item + .fs-item { border-left: 1px solid var(--border); }
+.fs-item > .icon { color: var(--accent); }
+.fs-item .kv { align-items: center; }
+
 @media (prefers-reduced-motion: reduce) {
-  .fly-plane { animation: none; transform: translate(14px, 0); }
+  .fly-plane { animation: none; transform: translate(10px, 0); }
+  .dot.pulse, details[open] > .card-body { animation: none; }
 }
-.route-line { display: flex; align-items: center; gap: 12px; margin: 18px 0 6px; }
-.route-line strong { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
-.route-line .line { flex: 1; position: relative; height: 1px; background: var(--border); }
-.route-line .line em { position: absolute; left: 50%; top: -22px; transform: translateX(-50%); font-style: normal; font-size: 13px; color: var(--muted); white-space: nowrap; }
-.route-line .plane { position: absolute; left: 0; top: -11px; font-size: 18px; color: var(--accent); }
-.sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
-.side + .side { border-left: 1px solid var(--border); padding-left: 16px; }
-.side p { margin: 0; }
-.side .lbl { font-size: 13px; color: var(--muted); }
-.side .big { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; color: var(--ok); }
-.side .big.late { color: var(--warn); }
-.side .big.estimated { color: var(--text); } /* estimación Turbi: sin el verde de «en hora» de Aena */
-.side .was { font-size: 13px; color: var(--muted); text-decoration: line-through; }
-.side .est-note { font-size: 13px; color: var(--muted); }
-.side .meta { font-size: 14px; margin-top: 6px; }
-.flight .foot { font-size: 12px; color: var(--muted); margin: 16px 0 0; }
 /* Títulos de sección (Puntualidad, Turbulencias, Condiciones por altitud…): se distinguen del texto con tamaño,
    negrita, color de texto y una línea que separa cada sección. Subtítulos dentro de una sección: un escalón menos. */
 h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(--border);
@@ -358,15 +461,30 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .facts .conf p { font-weight: 400; }
 .bar button.seg.missing { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,0.18) 0 3px, transparent 3px 7px); }
 
-/* ---- Puntualidad ---- */
-.prow { display: grid; grid-template-columns: 4.6em auto auto 1fr; gap: 8px; align-items: baseline; padding: 6px 0; font-size: 16px; }
+/* ---- Puntualidad (cuerpo del «Horario», #punctuality) ---- */
+#punctuality > :first-child { margin-top: 0; }
+.p-title { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.prow { display: grid; grid-template-columns: 4.6em auto auto 1fr; gap: 8px; align-items: baseline; padding: 6px 0; font-size: 15px;
+  font-variant-numeric: tabular-nums; }
 .prow .pk { font-size: 13px; color: var(--muted); }
 .prow small { color: var(--muted); font-size: 12px; }
 .pdelay { font-weight: 600; font-size: 14px; }
 .pband-ok { color: var(--ok); } .pband-warn { color: var(--warn); } .pband-late { color: var(--warn); } .pband-bad { color: var(--bad); }
-.pbadge { display: inline-block; margin: 8px 0 0; padding: 5px 12px; border-radius: 10px; font-weight: 600; font-size: 14px; background: var(--field); }
-.pbig { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 0 0; }
-.pbig + p { margin: 0 0 8px; color: var(--muted); font-size: 15px; }
+.pbadge { display: inline-block; margin: 8px 0 0; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; background: var(--field); }
+.pbadge.pband-ok { background: rgba(23, 134, 74, 0.10); }
+.pbadge.pband-warn, .pbadge.pband-late { background: rgba(179, 106, 0, 0.10); }
+.pbadge.pband-bad { background: rgba(208, 52, 44, 0.10); }
+.pbig { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.pbig + p { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.pfacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.pfacts .kv { padding: 10px 12px; border-radius: 12px; background: var(--field); }
+.pfacts .kv .v { font-size: 15px; }
+.pmore { margin-top: 12px; font-size: 14px; }
+.pmore > summary { display: inline-flex; align-items: center; gap: 4px; list-style: none; cursor: pointer; color: var(--accent); font-weight: 600; }
+.pmore > summary::-webkit-details-marker { display: none; }
+.pmore > summary .icon { transition: transform var(--ease); }
+.pmore[open] > summary .icon { transform: rotate(90deg); }
+.pmore h4 { margin: 14px 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .plist, .pstats { list-style: none; margin: 4px 0; padding: 0; font-size: 14px; }
 .plist li { padding: 4px 0; }
 .plist .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; background: currentColor; }
@@ -374,27 +492,27 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .plist .dot.pband-late { background: var(--warn); } .plist .dot.pband-bad { background: var(--bad); }
 .pstats li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .pstats li span:last-child { color: var(--muted); text-align: right; }
-#punctuality { margin-bottom: 8px; }
-
-/* Puerta de embarque */
-.gate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--field); }
-.gate-k { font-size: 13px; color: var(--muted); width: 100%; }
-.gate-v { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
-.gate.pending .gate-v { font-size: 18px; font-weight: 600; color: var(--muted); }
-.gate small { font-size: 12px; color: var(--muted); width: 100%; }
-.tag.warn { background: var(--warn); }
 .mismatch { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; line-height: 1.4; }
-.stale { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 
-/* Varios vuelos físicos con el mismo número y fecha: se escoge el tramo por su ruta. */
-.leg-switch { display: flex; flex-direction: column; gap: 8px; margin: 0 0 36px; } /* 16 px + los −20 px de .plane-photo */
-.leg-switch:last-child { margin-bottom: 0; } /* selector solo (sin ficha debajo): sin hueco al final del panel */
-.leg-title { margin: 0; font-weight: 600; }
-.alias-offer { display: flex; flex-direction: column; gap: 8px; }
-.alias-route { margin: 0; }
-.alias-route small { color: var(--muted); margin-left: 6px; }
-.leg-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 10px 14px;
-  border-radius: 12px; border: 1px solid var(--border); background: var(--card); color: inherit;
-  font: inherit; cursor: pointer; }
-.leg-option small { color: var(--muted); }
+/* Varios vuelos físicos con el mismo número y fecha: se escoge el tramo por su ruta. Pantalla de elección (sin ficha
+   debajo): tarjeta con opciones grandes. Encima de la ficha: una fila compacta de chips de ruta que se desplaza. */
+.leg-switch { display: flex; gap: 8px; margin: 0 0 12px; overflow-x: auto; scrollbar-width: none; }
+.leg-switch::-webkit-scrollbar { display: none; }
+.leg-switch .leg-title { display: none; } /* encima de la ficha, los chips bastan */
+.leg-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; font: inherit; cursor: pointer;
+  color: inherit; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow);
+  flex: none; padding: 8px 14px; border-radius: 999px; transition: border-color var(--ease), box-shadow var(--ease); }
+.leg-option strong { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.leg-option small { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .leg-option.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.leg-option.selected strong { color: var(--accent); }
+.leg-switch:last-child, .alias-offer { flex-direction: column; overflow: visible; gap: 10px; margin: 0;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+.leg-switch:last-child .leg-title { display: block; }
+.leg-switch:last-child .leg-option { width: 100%; padding: 14px 16px; border-radius: 14px; box-shadow: none; }
+.leg-switch:last-child .leg-option strong { font-size: 16px; white-space: normal; }
+.leg-switch:last-child .leg-option small { white-space: normal; }
+.leg-title { margin: 0; font-weight: 600; }
+.alias-offer { display: flex; }
+.alias-route { margin: 0; padding: 12px 14px; border-radius: 14px; background: var(--field); }
+.alias-route small { color: var(--muted); margin-left: 6px; }
