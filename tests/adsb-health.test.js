@@ -18,6 +18,8 @@ describe('/health.adsb', () => {
     expect(h.adsb).toEqual({
       blocked: false, blockedUntil: null, retryInSec: 0, last429At: null, lastSuccessAt: null, lastErrorAt: null,
       lastError: null, lastStatus: null, rateLimitedCount: 0, successCount: 0, failedCount: 0, backoffStrikes: 0, lastCooldownSec: null,
+      lastAttemptAt: null, lastAttemptEndpoint: null, lastFailureKind: null, localRateLimitedCount: 0,
+      attemptsByEndpoint: {}, rateLimitedByEndpoint: {}, lastRateLimitHeaders: null, last429Headers: null,
       pendingRadar: 0, pendingIdentification: 0,
     });
     expect(h.radar).toMatchObject({ requests: 0, cacheHits: 0, directLookups: 0, directFound: 0,
@@ -82,5 +84,77 @@ describe('/health.adsb', () => {
     release();
     await Promise.all(all);
     expect(health().adsb).toMatchObject({ pendingRadar: 0, pendingIdentification: 0, successCount: 3 });
+  });
+});
+
+// Diagnóstico del 429 desde Render (20/10/2026): adsb.lol publica sus límites en cabeceras (x-ratelimit-*, sin
+// Retry-After). /health guarda las de la última respuesta y las del último 429 real, saneadas y con lista cerrada.
+describe('/health.adsb: diagnóstico de los límites de adsb.lol', () => {
+  const RL = { 'x-ratelimit-limit': '4, 4;w=1, 60;w=60, 500;w=86400', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '41234', 'x-envoy-ratelimited': 'true' };
+
+  it('lastAttemptAt y lastAttemptEndpoint solo cuando sale una petición real a adsb.lol', async () => {
+    await adsbGet('/callsign/RYR1104', { fetchFn: vi.fn(async () => res(200)) });
+    expect(health().adsb).toMatchObject({ lastAttemptAt: new Date(T0).toISOString(), lastAttemptEndpoint: 'callsign', attemptsByEndpoint: { callsign: 1 } });
+    await adsbGet('/callsign/X', { fetchFn: vi.fn(async () => res(429, RL)) });
+    vi.setSystemTime(T0 + 5000);
+    const fetchFn = vi.fn();
+    await adsbGet('/hex/abc', { fetchFn }); // en pausa: respuesta local, sin llamar
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(health().adsb).toMatchObject({ lastAttemptAt: new Date(T0).toISOString(), lastAttemptEndpoint: 'callsign', attemptsByEndpoint: { callsign: 2 } });
+  });
+
+  it('un 429 real y una respuesta local «rate-limited» se cuentan por separado', async () => {
+    await adsbGet('/point/1/1/150', { fetchFn: vi.fn(async () => res(429, RL)), priority: 'identificacion' });
+    await adsbGet('/hex/abc', { fetchFn: vi.fn() });
+    await adsbGet('/callsign/X', { fetchFn: vi.fn() });
+    expect(health().adsb).toMatchObject({ rateLimitedCount: 1, localRateLimitedCount: 2, lastFailureKind: 'rate-limit', lastError: '429',
+      rateLimitedByEndpoint: { point: 1 }, attemptsByEndpoint: { point: 1 } });
+  });
+
+  it('guarda las cabeceras de límite del último 429 y de la última respuesta', async () => {
+    await adsbGet('/callsign/X', { fetchFn: vi.fn(async () => res(200, { 'x-ratelimit-limit': '4, 4;w=1, 60;w=60, 500;w=86400', 'x-ratelimit-remaining': '3', 'x-ratelimit-reset': '1' })) });
+    expect(health().adsb.lastRateLimitHeaders).toEqual({ at: new Date(T0).toISOString(), status: 200, endpoint: 'callsign',
+      'x-ratelimit-limit': '4, 4;w=1, 60;w=60, 500;w=86400', 'x-ratelimit-remaining': '3', 'x-ratelimit-reset': '1' });
+    expect(health().adsb.last429Headers).toBeNull();
+    vi.setSystemTime(T0 + 6000);
+    await adsbGet('/point/1/1/150', { fetchFn: vi.fn(async () => res(429, RL)) });
+    const a = health().adsb;
+    expect(a.last429Headers).toEqual({ at: new Date(T0 + 6000).toISOString(), status: 429, endpoint: 'point', ...RL });
+    expect(a.lastRateLimitHeaders).toEqual(a.last429Headers);
+  });
+
+  it('el 429 de adsb.lol sin Retry-After sigue con la pausa actual (no se usa x-ratelimit-reset todavía)', async () => {
+    await adsbGet('/callsign/X', { fetchFn: vi.fn(async () => res(429, RL)) });
+    expect(health().adsb).toMatchObject({ blocked: true, retryInSec: ADSB_DEFAULT_COOLDOWN_MS / 1000, lastCooldownSec: ADSB_DEFAULT_COOLDOWN_MS / 1000 });
+  });
+
+  it('tipos de fallo: rate-limit, http, timeout, network y parse', async () => {
+    const kinds = [];
+    const run = async fetchFn => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); await adsbGet('/hex/a', { fetchFn }); kinds.push(health().adsb.lastFailureKind); };
+    await run(vi.fn(async () => res(429)));
+    await run(vi.fn(async () => res(503)));
+    await run(vi.fn(async () => res(403)));
+    await run(vi.fn(async () => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); }));
+    await run(vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    await run(vi.fn(async () => ({ ...res(200), json: async () => { throw new SyntaxError('bad json'); } })));
+    expect(kinds).toEqual(['rate-limit', 'http', 'http', 'timeout', 'network', 'parse']);
+  });
+
+  it('ningún dato sensible: solo cabeceras de la lista, sin cookies, URL, indicativo ni IP; valores saneados', async () => {
+    const headers = { ...RL, 'set-cookie': 'globe-reapi-sticky3=secreto; HttpOnly', 'x-forwarded-for': '10.1.2.3', authorization: 'Bearer x',
+      'x-ratelimit-reset': '1\r\nX-Inyectada: sí' + 'x'.repeat(300), server: 'istio-envoy' };
+    await adsbGet('/callsign/SECRETO123', { fetchFn: vi.fn(async () => res(429, headers)) });
+    const json = JSON.stringify(health());
+    for (const bad of ['secreto', 'sticky', '10.1.2.3', 'Bearer', 'SECRETO123', 'api.adsb.lol', 'X-Inyectada: sí', 'istio']) expect(json).not.toContain(bad);
+    const h = health().adsb.last429Headers;
+    expect(Object.keys(h).sort()).toEqual(['at', 'endpoint', 'status', 'x-envoy-ratelimited', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset']);
+    expect(h['x-ratelimit-reset'].length).toBeLessThanOrEqual(120);
+    expect(h['x-ratelimit-reset']).toMatch(/^[\w ,;=.:/-]*$/);
+  });
+
+  it('las trazas (URL completa de adsb.lol) cuentan como endpoint «trace», sin guardar la URL', async () => {
+    await adsbGet('https://adsb.lol/data/traces/5e/trace_full_4d225e.json', { fetchFn: vi.fn(async () => res(200)) });
+    expect(health().adsb).toMatchObject({ lastAttemptEndpoint: 'trace', attemptsByEndpoint: { trace: 1 } });
+    expect(JSON.stringify(health())).not.toContain('4d225e');
   });
 });

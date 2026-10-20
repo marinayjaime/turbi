@@ -31,9 +31,16 @@ export const ADSB_RECOVERY_SUCCESSES = 5; // aciertos seguidos para volver a la 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const CANCELLED = Symbol('cancelada por un 429');
 
-// Telemetría para /health (solo contadores y fechas: nada de IP, cabeceras ni URLs).
+// Telemetría para /health (contadores, fechas y, para diagnosticar los 429, las cabeceras de límite de una lista cerrada:
+// nada de IP, cookies, URLs ni indicativos).
+//  - lastAttemptAt / lastAttemptEndpoint / attemptsByEndpoint: solo peticiones que de verdad salen hacia adsb.lol;
+//  - rateLimitedCount: 429 reales de adsb.lol; localRateLimitedCount: respuestas «rate-limited» del propio limitador
+//    (pausa activa o consulta cancelada) sin llamar al proveedor;
+//  - lastRateLimitHeaders: cabeceras de límite de la última respuesta que las traía; last429Headers: las del último 429.
 const freshStats = () => ({ last429At: null, lastSuccessAt: null, lastErrorAt: null, lastError: null, lastStatus: null,
-  rateLimitedCount: 0, successCount: 0, failedCount: 0, backoffStrikes: 0, lastCooldownSec: null });
+  rateLimitedCount: 0, successCount: 0, failedCount: 0, backoffStrikes: 0, lastCooldownSec: null,
+  lastAttemptAt: null, lastAttemptEndpoint: null, lastFailureKind: null, localRateLimitedCount: 0,
+  attemptsByEndpoint: {}, rateLimitedByEndpoint: {}, lastRateLimitHeaders: null, last429Headers: null });
 
 export function createLimiter(minIntervalMs = ADSB_MIN_INTERVAL_MS, { identifyIntervalMs = ADSB_IDENTIFY_INTERVAL_MS,
   maxPerWindow = ADSB_MAX_PER_WINDOW, windowMs = ADSB_WINDOW_MS } = {}) {
@@ -135,6 +142,32 @@ function retryAfterMs(res) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
+// Cabeceras de límite que se guardan para /health (lista cerrada; adsb.lol, 20/10/2026: x-ratelimit-limit
+// «4, 4;w=1, 60;w=60, 500;w=86400», x-ratelimit-remaining, x-ratelimit-reset y x-envoy-ratelimited en los 429, sin
+// Retry-After). Valor: solo la primera línea, caracteres seguros y como mucho 120.
+const RATE_LIMIT_HEADERS = ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'x-ratelimit-policy', 'x-envoy-ratelimited',
+  'retry-after', 'ratelimit', 'ratelimit-limit', 'ratelimit-remaining', 'ratelimit-reset', 'ratelimit-policy'];
+const safeValue = v => String(v).split(/[\r\n]/)[0].replace(/[^\w ,;=.:/-]/g, '').slice(0, 120);
+function rateLimitHeaders(res) {
+  const out = {};
+  for (const name of RATE_LIMIT_HEADERS) {
+    const v = res.headers?.get?.(name);
+    if (v !== null && v !== undefined) out[name] = safeValue(v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Tipo de consulta, nunca la URL: 'callsign' | 'hex' | 'point' | … | 'trace' | 'other'.
+const ENDPOINTS = new Set(['callsign', 'hex', 'point', 'reg', 'type', 'sqk', 'mil', 'ladd', 'pia', 'icao', 'closest', 'radius']);
+export function endpointKind(path) {
+  if (/^https?:\/\//.test(path)) return /\/traces\//.test(path) ? 'trace' : 'other';
+  const first = String(path).split('/').filter(Boolean)[0];
+  return ENDPOINTS.has(first) ? first : 'other';
+}
+
+// Tipo de fallo para el diagnóstico: 'rate-limit' | 'http' | 'timeout' | 'network' | 'parse'.
+const FAILURE_KIND = { 429: 'rate-limit', 'invalid-json': 'parse', timeout: 'timeout', network: 'network' };
+
 // Tipo simple de fallo: '429' | '403' | '4xx' | '5xx' | 'timeout' | 'network' | 'invalid-json'.
 const statusKind = s => (s === 429 ? '429' : s === 403 ? '403' : s >= 500 ? '5xx' : '4xx');
 const errorKind = err => (err?.name === 'TimeoutError' || err?.name === 'AbortError' ? 'timeout' : err instanceof SyntaxError ? 'invalid-json' : 'network');
@@ -142,6 +175,7 @@ function recordError(limiter, kind) {
   const st = limiter.stats;
   st.lastError = kind;
   st.lastErrorAt = new Date().toISOString();
+  st.lastFailureKind = FAILURE_KIND[kind] ?? 'http';
   if (kind === '429') { st.rateLimitedCount++; st.last429At = st.lastErrorAt; } else st.failedCount++;
 }
 
@@ -161,15 +195,29 @@ export function adsbHealth(limiter = adsbLimiter, nowMs = Date.now()) {
 // GET a adsb.lol (API v2 o trazas) a través del limitador. Resultado: { data } | { error: 'rate-limited' } (429 o pausa activa: no se
 // reintenta) | { error: 'failed' } (red, 5xx…: no se sabe nada).
 export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, priority = 'radar' } = {}) {
-  if (limiter.isBlocked()) return { error: 'rate-limited' };
+  const local = () => { limiter.stats.localRateLimitedCount++; return { error: 'rate-limited' }; }; // sin llamar a adsb.lol
+  if (limiter.isBlocked()) return local();
+  const endpoint = endpointKind(path);
   const out = await limiter.schedule(async () => {
-    if (limiter.isBlocked()) return { error: 'rate-limited' };
+    if (limiter.isBlocked()) return local();
+    const st = limiter.stats;
     try {
       // Rutas de la API v2 o, para las trazas públicas del mismo proveedor, una URL completa de adsb.lol.
       const url = /^https:\/\/([a-z0-9-]+\.)*adsb\.lol\//.test(path) ? path : `${ADSB}${path}`;
+      st.lastAttemptAt = new Date().toISOString(); // sale de verdad hacia adsb.lol
+      st.lastAttemptEndpoint = endpoint;
+      st.attemptsByEndpoint[endpoint] = (st.attemptsByEndpoint[endpoint] ?? 0) + 1;
       const res = await fetchFn(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { Accept: 'application/json', 'User-Agent': UA } });
-      limiter.stats.lastStatus = res.status;
-      if (res.status === 429) { recordError(limiter, '429'); limiter.rateLimited(retryAfterMs(res)); return { error: 'rate-limited' }; }
+      st.lastStatus = res.status;
+      const rl = rateLimitHeaders(res);
+      if (rl) st.lastRateLimitHeaders = { at: new Date().toISOString(), status: res.status, endpoint, ...rl };
+      if (res.status === 429) {
+        st.rateLimitedByEndpoint[endpoint] = (st.rateLimitedByEndpoint[endpoint] ?? 0) + 1;
+        st.last429Headers = { at: new Date().toISOString(), status: 429, endpoint, ...(rl ?? {}) };
+        recordError(limiter, '429');
+        limiter.rateLimited(retryAfterMs(res)); // pausa de siempre: x-ratelimit-reset solo se observa, no se usa todavía
+        return { error: 'rate-limited' };
+      }
       if (!res.ok) { recordError(limiter, statusKind(res.status)); return { error: 'failed' }; }
       const data = await res.json();
       limiter.stats.successCount++;
@@ -181,5 +229,5 @@ export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, pr
       return { error: 'failed' };
     }
   }, { priority });
-  return out === CANCELLED ? { error: 'rate-limited' } : out;
+  return out === CANCELLED ? local() : out;
 }
