@@ -225,7 +225,7 @@ describe('cabecera (hero): foto, número, aerolínea · modelo y estado', () => 
   });
   it('«Volando»: chip con el avión animado (icono SVG, no emoji)', () => {
     const h = html(card({ status: { text: 'Volando', tone: 'info', flying: true }, phase: 'en-curso' }));
-    expect(h).toMatch(/<span class="chip status tone-info flying">Volando<span class="fly" aria-hidden="true"><span class="fly-plane"><svg class="icon"/);
+    expect(h).toMatch(/<span class="chip status tone-info flying">En vuelo<span class="fly" aria-hidden="true"><span class="fly-plane"><svg class="icon"/);
   });
 });
 
@@ -371,10 +371,11 @@ describe('Ahora: radar', () => {
     expect(html(flying())).not.toContain('tm-match');
     expect(html(flying({ ...r, aircraftChanged: true }))).toContain('no es el que AeroDataBox tenía asignado a este vuelo');
   });
-  it('«Volando» lo dice el chip del estado (las celdas no lo repiten)', () => {
+  it('«En vuelo» lo dice el chip del estado (las celdas no lo repiten)', () => {
     const h = html(flying());
     expect(h).toContain('class="chip status tone-info flying"');
-    expect(h.match(/Volando/g)).toHaveLength(1);
+    expect(h.match(/En vuelo/g)).toHaveLength(1);
+    expect(h).not.toMatch(/Volando/);
   });
   it('señal reciente: chip ámbar «Última señal · hace X min», sin panel', () => {
     const h = html(card({ phase: 'en-curso', status: { text: 'Última señal: volando hace 5 min', tone: 'info' }, radar: { state: 'reciente', ageMin: 5 } }));
@@ -557,6 +558,20 @@ describe('solo la fecha pedida: si ese día no hay vuelo, se dice (nunca se salt
 });
 
 
+// Mapeo de presentación del chip: «Volando» (valor interno de Aena FLY y de withRadar) se lee «En vuelo»; el resto, igual.
+import { statusLabel } from '../js/ui.js';
+describe('texto visible del chip de estado', () => {
+  it('«Volando» → «En vuelo»; los demás estados no cambian', () => {
+    expect(statusLabel('Volando')).toBe('En vuelo');
+    for (const t of ['Puerta cerrada', 'Embarcando', 'Aterrizado', 'Ha salido', 'Cancelado', 'Última señal: volando hace 5 min']) expect(statusLabel(t)).toBe(t);
+  });
+  it('Aena FLY («Volando») en la ficha se ve como «En vuelo», también con datos antiguos', () => {
+    const fly = { text: 'Volando', tone: 'info', flying: true };
+    expect(html(card({ status: fly, phase: 'en-curso' }))).toMatch(/class="chip status tone-info flying">En vuelo</);
+    expect(html(card({ status: fly, stale: true, updatedAgo: 'hace 50 min' }))).toMatch(/class="chip status tone-stale">En vuelo hace 50 min</);
+  });
+});
+
 // Prueba real en iPhone (FR1104, 20/10/2026): Aena seguía en «Puerta cerrada» con el avión ya en el aire. El estado del
 // chip principal sale de withRadar (js/radar.js), sin otra lógica: una lectura ADS-B «volando» gana al estado de puerta
 // de Aena; un radar sin lectura actual (sin señal, buscando, avistamiento antiguo) no convierte el vuelo en «Volando».
@@ -567,9 +582,11 @@ describe('estado principal: radar «volando» frente al estado de puerta de Aena
   const cer = () => card({ status: { text: 'Puerta cerrada', tone: 'warn' }, phase: 'pendiente' });
   const flying = { state: 'volando', callsign: 'RYR4AB', altFt: 31000, altM: 9449, kmh: 820, seenS: 3, remainingKm: 900, source: 'adsb.lol' };
 
-  it('Aena «Puerta cerrada» + radar volando → el chip dice «Volando», no «Puerta cerrada»', () => {
-    const h = html({ ...withRadar(cer(), flying, null, NOW), radarReceivedAt: NOW });
-    expect(chip(h)).toBe('Volando');
+  it('Aena «Puerta cerrada» + radar volando → el chip dice «En vuelo», no «Puerta cerrada»', () => {
+    const merged = withRadar(cer(), flying, null, NOW);
+    expect(merged.status.text).toBe('Volando'); // el valor interno no cambia: solo el texto visible
+    const h = html({ ...merged, radarReceivedAt: NOW });
+    expect(chip(h)).toBe('En vuelo');
     expect(h).not.toMatch(/class="chip status[^"]*">\s*Puerta cerrada/);
   });
 
@@ -581,6 +598,6 @@ describe('estado principal: radar «volando» frente al estado de puerta de Aena
   ])('sin lectura actual (%s) → sigue «Puerta cerrada»', (_, radar, lastSeen) => {
     const h = html(withRadar(cer(), radar, lastSeen, NOW));
     expect(chip(h)).toBe('Puerta cerrada');
-    expect(chip(h)).not.toBe('Volando');
+    expect(chip(h)).not.toBe('En vuelo');
   });
 });

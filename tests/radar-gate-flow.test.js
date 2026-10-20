@@ -96,7 +96,7 @@ describe('ficha: ADS-B corrige los estados de puerta retrasados', () => {
   it('ULL + ADS-B volando a 8.000 m → «Volando» y panel completo', () => {
     const html = flightCardHtml(withRadar(base(ls1246()), flying));
     expect(html).toContain('class="card now telemetry"');
-    expect(html).toMatch(/class="chip status tone-info flying">Volando/);
+    expect(html).toMatch(/class="chip status tone-info flying">En vuelo/);
     expect(html).not.toContain('Última llamada');
   });
   it('CER («Puerta cerrada») + ADS-B volando → «Volando»', () => {

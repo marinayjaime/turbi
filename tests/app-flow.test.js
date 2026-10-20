@@ -119,7 +119,7 @@ describe('Open-Meteo falla (429) y el radar ADS-B responde', () => {
     expect($('#result .flight').textContent).toContain('IB 715');
     const panel = $('.telemetry').textContent.replace(/\s+/g, ' ');
     for (const txt of ['830', '10.700', '300', 'Radar ADS-B', 'IBE715']) expect(panel).toContain(txt);
-    expect($('#result .flight .status').textContent).toContain('Volando'); // «Volando» lo dice el chip del estado
+    expect($('#result .flight .status').textContent).toContain('En vuelo'); // «Volando» lo dice el chip del estado
     expect(area()).toContain('Puedes reintentar en unos 30 s');
     expect($('#forecast-retry')).not.toBeNull();
     expect($('#error').hidden).toBe(true); // ningún error general sustituye la ficha
@@ -198,7 +198,7 @@ describe('radar: el servidor identifica el avión por su ruta en segundo plano (
       await advance(30000); // 90 s: la identificación ha terminado
       await until(() => $('.telemetry'), 'panel ADS-B tras la identificación');
       expect($('.telemetry').textContent).toContain('RYR12AB');
-      expect($('#result .flight .status').textContent).toContain('Volando'); // con el radar volando, lo dice el chip del estado
+      expect($('#result .flight .status').textContent).toContain('En vuelo'); // con el radar volando, lo dice el chip del estado
       expect(shell()).toEqual(SHELL_OK); // actualizar .flight no se lleva la sección Turbulencias
       expect(area()).toContain(FORECAST_UNAVAILABLE);
       expect(radarCalls().slice(1).every(u => new URL(u).searchParams.get('poll') === '1')).toBe(true);
@@ -459,7 +459,7 @@ describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B
       expect(speed()).toBe('900km/h'); // la velocidad es la última medida, sin tocar
       await vi.advanceTimersByTimeAsync(3600000); // una hora sin lecturas nuevas
       expect(remaining()).toBe('291km'); // quieta a los 5 min de antigüedad; nunca a 0 ni negativa
-      expect($('#result .flight .status').textContent).toContain('Volando'); // nunca pasa a «Aterrizado» por el paso del tiempo
+      expect($('#result .flight .status').textContent).toContain('En vuelo'); // nunca pasa a «Aterrizado» por el paso del tiempo
       expect($('#result .status')?.textContent ?? '').not.toContain('Aterrizado');
       expect(calls.slice(before).filter(u => u.includes('/radar/') || u.includes('adsb.lol'))).toHaveLength(0); // 8) cero peticiones
     } finally { vi.useRealTimers(); }
@@ -1215,7 +1215,7 @@ describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
     await until(() => $('.telemetry'), 'panel del radar');
     const panel = $('.telemetry').textContent.replace(/\s+/g, ' ');
     for (const t of ['905', '11.300', '9.300', 'Radar ADS-B', 'Última señal 3 s', 'GIA89']) expect(panel).toContain(t);
-    expect($('#result .flight .status').textContent).toContain('Volando');
+    expect($('#result .flight .status').textContent).toContain('En vuelo');
     expect($('#result .flight h2').textContent).toBe('GA 89');
     expect($('#result .flight').textContent).not.toContain('Aena');
     const key = `adb|GA89|${d}|AMS|CGK|${new Date(dep).toISOString().slice(0, 16)}Z`;

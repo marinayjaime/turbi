@@ -70,12 +70,17 @@ function photoHtml(c) {
       </figure>`;
 }
 
+// Texto visible del chip: solo presentación. Internamente Turbi sigue usando «Volando» (Aena FLY y withRadar) en su lógica,
+// comparaciones y tests funcionales; en la nueva interfaz se lee «En vuelo».
+const STATUS_LABEL = { Volando: 'En vuelo' };
+export const statusLabel = text => STATUS_LABEL[text] ?? text;
+
 // Chip del estado real (presentStatus / withRadar / withLanding) con su nota debajo. Un estado viejo («Embarcando» de
 // hace 2 h) no se presenta como actual: chip gris con de cuándo es, y sin el avión animado (no se sabe si sigue volando).
 function statusHtml(c) {
-  if (c.stale) return `<span class="chip status tone-stale">${esc(c.status.text)} ${esc(c.updatedAgo)}</span>`;
+  if (c.stale) return `<span class="chip status tone-stale">${esc(statusLabel(c.status.text))} ${esc(c.updatedAgo)}</span>`;
   const fly = c.status.flying ? `<span class="fly" aria-hidden="true"><span class="fly-plane">${icon('plane', { size: 14 })}</span></span>` : '';
-  return `<span class="chip status tone-${esc(c.status.tone)}${c.status.flying ? ' flying' : ''}">${esc(c.status.text)}${fly}</span>${
+  return `<span class="chip status tone-${esc(c.status.tone)}${c.status.flying ? ' flying' : ''}">${esc(statusLabel(c.status.text))}${fly}</span>${
     c.status.note ? `\n          <p class="status-note">${esc(c.status.note)}</p>` : ''}`;
 }
 
