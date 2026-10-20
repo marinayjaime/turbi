@@ -5,7 +5,7 @@
 // no cambia la prioridad Aena / ETA Turbi / AeroDataBox (la hora es la que ya trae card.dep / card.arr), no decide
 // aterrizajes (status.landing o la fase) y no duplica umbrales del radar (se importan de eta.js y radar-distance.js).
 import { STALE_MIN } from './eta.js';
-import { receiptAgeS, MAX_EXTRAPOLATION_S } from './radar-distance.js';
+import { receiptAgeS, cachedAgeS, MAX_EXTRAPOLATION_S } from './radar-distance.js';
 import { formatLocal } from './time.js';
 
 const MIN = 60000;
@@ -132,6 +132,9 @@ export function milestones(card) {
 // lo que lleva en pantalla. Solo envejece la presentación: no pide nada ni cambia el estado del radar.
 const radarAgeS = (radar, receivedAtMs, nowMs) => receiptAgeS(radar, receivedAtMs) + Math.max(0, nowMs - receivedAtMs) / 1000;
 
+// Antigüedad legible: segundos por debajo del minuto, minutos a partir de ahí (la de «Última señal» y la de la posición).
+export const ageText = ageS => ageS < 60 ? `${Math.floor(ageS)} s` : `${Math.floor(ageS / 60)} min`;
+
 // «Última señal» en vivo (§10 bis): live por debajo de MAX_EXTRAPOLATION_S (la distancia aún se mueve), stale desde
 // STALE_MIN (la ETA pasa a «la última disponible»), old entre medias. Fuera de «volando», null.
 export function signalState(radar, receivedAtMs, nowMs) {
@@ -139,16 +142,24 @@ export function signalState(radar, receivedAtMs, nowMs) {
   const ageS = radarAgeS(radar, receivedAtMs, nowMs);
   if (!Number.isFinite(ageS)) return null; // sin instante de recepción no hay antigüedad: no se inventa «NaN min»
   const level = ageS < MAX_EXTRAPOLATION_S ? 'live' : ageS >= STALE_MIN * 60 ? 'stale' : 'old';
-  const text = ageS < 60 ? `${Math.floor(ageS)} s` : `${Math.floor(ageS / 60)} min`;
-  return { ageS, level, text };
+  return { ageS, level, text: ageText(ageS) };
 }
 
-// Avión en el mapa: la posición recibida tal cual, solo con «volando» y si tiene PLANE_MAX_AGE_S o menos. Una posición
-// antigua nunca se pinta (ni «última posición»): sin avión, solo la ruta y los aeropuertos. Sin interpolar.
+// Antigüedad REAL de la posición en nowMs: posAgeS (seen_pos de adsb.lol al leerla) más la caché del servidor (misma
+// cuenta `checked` que receiptAgeS) más lo que lleva en pantalla. Nunca seenS: el último mensaje puede ser reciente
+// con la posición vieja. null si no está «volando», sin posAgeS finito o sin instante de recepción válido.
+export function positionAgeS(radar, receivedAtMs, nowMs) {
+  if (radar?.state !== 'volando' || !Number.isFinite(radar.posAgeS) || radar.posAgeS < 0 || !Number.isFinite(receivedAtMs)) return null;
+  return radar.posAgeS + cachedAgeS(radar, receivedAtMs) + Math.max(0, nowMs - receivedAtMs) / 1000;
+}
+
+// Avión en el mapa: la posición recibida tal cual, solo con «volando» y si la POSICIÓN tiene PLANE_MAX_AGE_S o menos.
+// Una posición antigua (o de antigüedad desconocida) nunca se pinta, ni como «última posición»: sin avión, solo la
+// ruta y los aeropuertos. Sin interpolar.
 export function planeOnMap(radar, receivedAtMs, nowMs) {
-  if (radar?.state !== 'volando' || !Number.isFinite(radar.lat) || !Number.isFinite(radar.lon)) return null;
-  const ageS = radarAgeS(radar, receivedAtMs, nowMs);
-  if (!Number.isFinite(ageS) || ageS > PLANE_MAX_AGE_S) return null; // antigüedad desconocida = posición no fiable
+  if (!Number.isFinite(radar?.lat) || !Number.isFinite(radar.lon)) return null;
+  const ageS = positionAgeS(radar, receivedAtMs, nowMs);
+  if (ageS === null || ageS > PLANE_MAX_AGE_S) return null;
   return { lat: radar.lat, lon: radar.lon };
 }
 

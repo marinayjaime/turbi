@@ -252,11 +252,14 @@ Cada uno tiene un caso en una página de prueba local (§11).
 
 ## 9. Ampliación del radar: posición del avión
 - `server/radar.mjs` → `flyingResult` (el único sitio que construye `state: 'volando'`; lo usan el indicativo, el hex
-  y AeroDataBox) añade `lat` y `lon` (redondeados a 4 decimales) **solo** si `a.lat` y `a.lon` son finitos y la
-  posición es reciente (`seen_pos ≤ 60 s`). Si no, los campos no aparecen. No cambia nada más: ni la identificación,
-  ni la selección, ni el *polling*, ni la ETA, ni los estados.
-- Frontend: pinta el avión solo con `state === 'volando'` y `lat` / `lon` finitos; en cualquier otro caso, la ruta sin
-  avión. Nunca interpola.
+  y AeroDataBox) añade `lat` y `lon` (redondeados a 4 decimales) y `posAgeS` (`Math.round(a.seen_pos)`, la antigüedad
+  REAL de la posición; decisión de Jaime, 20/10/2026) **solo** si `a.lat`, `a.lon` y `a.seen_pos` son finitos y
+  `seen_pos ≤ 60 s`. Los tres campos van juntos; si no, ninguno aparece. Sin `seen_pos` no hay posición: `seen` (último
+  mensaje) ya no la sustituye. No cambia nada más: ni la identificación, ni la selección, ni el *polling*, ni la ETA,
+  ni los estados, ni `seenS`.
+- Frontend: pinta el avión solo con `state === 'volando'`, `lat` / `lon` y `posAgeS` finitos y una antigüedad de la
+  posición (`posAgeS` + caché del servidor + tiempo desde la recepción; nunca `seenS`) de 60 s o menos; en cualquier
+  otro caso, la ruta sin avión. Nunca interpola. «Última señal» sigue midiendo el último mensaje (`seenS`).
 - Tests: `flyingResult` con coordenadas válidas, sin coordenadas, con coordenadas no finitas y con una posición antigua;
   el contrato de la respuesta (`radar-states`, `radar-adb`); y la presentación del mapa con y sin avión.
 - Sin deploy: el *Manual Deploy* de Render se hará al validar el rediseño. Hasta entonces, el frontend funciona con el

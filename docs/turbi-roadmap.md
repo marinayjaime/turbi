@@ -9,10 +9,10 @@ Fuente de verdad única del roadmap de Turbi (no crear otros archivos de roadmap
 - Avisos meteorológicos visibles y antigüedad de los datos en la interfaz principal; sin avión en el mapa con posición de más de 60 s.
 - Consulta centrada (`.screen` con `100dvh`, `100svh` con el teclado abierto) y safe areas; fondo sin `img/sky.jpg`.
 - Versionado: `BUILD_ID = '2026-10-20.1'`, caché `turbi-v82` y `?v=` actualizados en `index.html` y `sw.js`.
-- Sin cambios en búsqueda, fuentes, radar, ETA, estados ni backend, salvo `lat`/`lon` en la respuesta del radar.
+- Sin cambios en búsqueda, fuentes, radar, ETA, estados ni backend, salvo `lat`/`lon`/`posAgeS` en la respuesta del radar.
 
 ### Pendiente
-- **Manual Deploy de Render** para que el radar devuelva `lat`/`lon` en su respuesta (el front ya lo espera: sin `lat`/`lon` pinta el mapa con la ruta y los aeropuertos, sin el avión).
+- **Manual Deploy de Render** para que el radar devuelva `lat`/`lon`/`posAgeS` en su respuesta (el front ya lo espera: sin ellos pinta el mapa con la ruta y los aeropuertos, sin el avión).
 - Validar en un iPhone real (las capturas de Chrome headless no sustituyen esta prueba), en Safari y en la PWA instalada:
   - [ ] Safe areas arriba y abajo con la barra de estado `default` (en la PWA `env(safe-area-inset-top)` puede valer 0).
   - [ ] Consulta centrada con el teclado abierto y cerrado.

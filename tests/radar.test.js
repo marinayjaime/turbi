@@ -181,35 +181,42 @@ describe('pocas consultas a adsb.lol con códigos compartidos', () => {
 describe('posición del avión en la respuesta', () => {
   const base = { alt_baro: 35000, gs: 450, seen: 3, seen_pos: 5 };
   const dest = [40.47, -3.56];
-  it('lat/lon con 4 decimales si la posición tiene ≤ 60 s', () => {
-    const r = flyingResult({ ...base, lat: 39.123456, lon: 2.987654 }, 'IBE1', dest);
+  const sinPosicion = r => { for (const k of ['lat', 'lon', 'posAgeS']) expect(r).not.toHaveProperty(k); };
+  it('lat/lon con 4 decimales y posAgeS (seen_pos redondeado) si la posición tiene ≤ 60 s', () => {
+    const r = flyingResult({ ...base, lat: 39.123456, lon: 2.987654, seen_pos: 5.4 }, 'IBE1', dest);
     expect(POSITION_MAX_AGE_S).toBe(60);
     expect(r.lat).toBe(39.1235);
     expect(r.lon).toBe(2.9877);
+    expect(r.posAgeS).toBe(5);
   });
-  it('con seen_pos de 60 s exactos (el límite) sí hay lat/lon', () => {
-    expect(flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 60 }, 'IBE1', dest)).toMatchObject({ lat: 39.1, lon: 2.9 });
+  it('con seen_pos de 60 s exactos (el límite) están los tres campos', () => {
+    expect(flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 60 }, 'IBE1', dest)).toMatchObject({ lat: 39.1, lon: 2.9, posAgeS: 60 });
   });
-  it('con seen_pos de 61 s no hay claves lat/lon', () => {
-    const r = flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 61 }, 'IBE1', dest);
-    expect(r).not.toHaveProperty('lat');
-    expect(r).not.toHaveProperty('lon');
+  it('con seen_pos de 61 s no hay ninguno de los tres', () => {
+    sinPosicion(flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 61 }, 'IBE1', dest));
   });
-  it('sin lat/lon no hay claves y el resto queda igual', () => {
+  it('sin lat/lon no hay ninguno de los tres y el resto queda igual', () => {
     const r = flyingResult({ ...base }, 'IBE1', dest);
-    expect(r).not.toHaveProperty('lat');
-    expect(r).not.toHaveProperty('lon');
+    sinPosicion(r);
     expect(r).toMatchObject({ state: 'volando', callsign: 'IBE1', altFt: 35000, kmh: 833, seenS: 3 });
     expect(r).not.toHaveProperty('remainingKm');
   });
-  it('con lat NaN no hay claves', () => {
-    const r = flyingResult({ ...base, lat: NaN, lon: 2.9 }, 'IBE1', dest);
-    expect(r).not.toHaveProperty('lat');
-    expect(r).not.toHaveProperty('lon');
+  it('con lat NaN no hay ninguno de los tres', () => {
+    sinPosicion(flyingResult({ ...base, lat: NaN, lon: 2.9 }, 'IBE1', dest));
   });
-  it('sin seen_pos se usa seen', () => {
+  it('seen_pos NaN no da posición', () => {
+    sinPosicion(flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: NaN }, 'IBE1', dest));
+  });
+  // Cambio de regla (decisión de Jaime, 20/10/2026): antes, sin seen_pos se usaba seen (último mensaje) como sustituto.
+  // Un mensaje reciente no prueba que la posición lo sea, así que sin seen_pos no hay posición.
+  it('sin seen_pos no hay posición aunque seen sea reciente (no se usa seen como sustituto)', () => {
     const { seen_pos, ...sin } = base;
-    expect(flyingResult({ ...sin, seen: 10, lat: 39.1, lon: 2.9 }, 'IBE1', dest)).toMatchObject({ lat: 39.1, lon: 2.9 });
-    expect(flyingResult({ ...sin, seen: 70, lat: 39.1, lon: 2.9 }, 'IBE1', dest)).not.toHaveProperty('lat');
+    const r = flyingResult({ ...sin, seen: 10, lat: 39.1, lon: 2.9 }, 'IBE1', dest);
+    sinPosicion(r);
+    expect(r.seenS).toBe(10);
+    expect(r.remainingKm).toBeGreaterThan(0); // la distancia restante no cambia
+  });
+  it('seen reciente con seen_pos antiguo: tampoco', () => {
+    sinPosicion(flyingResult({ ...base, seen: 1, seen_pos: 90, lat: 39.1, lon: 2.9 }, 'IBE1', dest));
   });
 });

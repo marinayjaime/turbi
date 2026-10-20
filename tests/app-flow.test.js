@@ -1618,7 +1618,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
       const { d, leg } = flyingLeg();
-      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
+      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, posAgeS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
       await search('IB715', d);
       await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
       await networkIdle();
@@ -1642,13 +1642,34 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     } finally { vi.useRealTimers(); }
   });
 
+  it('seenS 1 y posAgeS 50: el avión está y desaparece a los ~10 s (manda la posición); cero peticiones', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { L, log } = fakeLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 1, posAgeS: 50, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
+      await networkIdle();
+      expect(planeOnScreen(log)).toBe(true);
+      const before = calls.length;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(planeOnScreen(log)).toBe(true); // ~55 s de posición
+      await vi.advanceTimersByTimeAsync(10000); // ~65 s: la posición pasa de 60 s con el último mensaje de hace 16 s
+      expect(planeOnScreen(log)).toBe(false);
+      expect($('[data-signal-level="live"]')).not.toBeNull();
+      expect(calls.slice(before).filter(u => !u.includes('/flights/'))).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('primeros 60 s: el contador solo reescribe «Última señal» (Detalles avanzados no se repinta: ni foco ni toques se pierden)', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
       const { d, leg } = flyingLeg();
-      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
+      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, posAgeS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
       await search('IB715', d);
       await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
       await networkIdle();

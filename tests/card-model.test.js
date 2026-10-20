@@ -2,7 +2,7 @@
 // legPhase, presentStatus, withRadar, withLanding, currentPunctuality y el pronóstico. Los `card` son literales.
 import { describe, it, expect } from 'vitest';
 import { flightPhase, mainTime, formatCountdown, sourceLabel, confidenceInfo, punctualityTile, summaryTiles, milestones,
-  signalState, planeOnMap, turbulenceBars, roughestSpan, weatherAlerts } from '../js/card-model.js';
+  signalState, planeOnMap, positionAgeS, turbulenceBars, roughestSpan, weatherAlerts } from '../js/card-model.js';
 import { adbPhase } from '../js/adb.js';
 import { distanceReference, receiptAgeS } from '../js/radar-distance.js';
 
@@ -16,7 +16,7 @@ const card = over => ({
   depMs: NOW + 120 * MIN, arrMs: NOW + 200 * MIN, ...over,
 });
 const turbiArr = { date: '2026-10-20', time: '11:35', estimated: true, note: 'Estimación Turbi actualizada en vuelo' };
-const volando = over => ({ state: 'volando', seenS: 5, checked: new Date(NOW).toISOString(), lat: 40.1, lon: -3.2, remainingKm: 300, kmh: 800, ...over });
+const volando = over => ({ state: 'volando', seenS: 5, checked: new Date(NOW).toISOString(), lat: 40.1, lon: -3.2, posAgeS: 5, remainingKm: 300, kmh: 800, ...over });
 
 describe('flightPhase', () => {
   it('cancelado y desviado', () => {
@@ -229,20 +229,52 @@ describe('signalState', () => {
   });
 });
 
+describe('positionAgeS', () => {
+  it('posAgeS + tiempo en la caché del servidor + tiempo desde que se recibió', () => {
+    expect(positionAgeS(volando({ posAgeS: 5 }), NOW, NOW)).toBe(5);
+    expect(positionAgeS(volando({ posAgeS: 5 }), NOW, NOW + 7000)).toBe(12);
+    expect(positionAgeS(volando({ posAgeS: 5, checked: new Date(NOW - 30000).toISOString() }), NOW, NOW + 2000)).toBe(37);
+  });
+  it('no usa seenS: con seenS 40 y posAgeS 5 cuenta 5', () => {
+    expect(positionAgeS(volando({ seenS: 40, posAgeS: 5 }), NOW, NOW)).toBe(5);
+  });
+  it('null sin posAgeS finito, sin instante de recepción o fuera de «volando»', () => {
+    expect(positionAgeS(volando({ posAgeS: undefined }), NOW, NOW)).toBeNull();
+    expect(positionAgeS(volando({ posAgeS: NaN }), NOW, NOW)).toBeNull();
+    expect(positionAgeS(volando(), undefined, NOW)).toBeNull();
+    expect(positionAgeS(volando(), NaN, NOW)).toBeNull();
+    expect(positionAgeS(volando({ state: 'reciente' }), NOW, NOW)).toBeNull();
+    expect(positionAgeS(null, NOW, NOW)).toBeNull();
+  });
+});
+
 describe('planeOnMap', () => {
   it('sin lat → null', () => {
     expect(planeOnMap(volando({ lat: undefined }), NOW, NOW)).toBeNull();
   });
-  it('seenS 5 recibido ahora → la posición recibida, tal cual', () => {
-    expect(planeOnMap(volando(), NOW, NOW)).toEqual({ lat: 40.1, lon: -3.2 });
+  it('posAgeS 5 recibido ahora → la posición recibida, tal cual', () => {
+    expect(planeOnMap(volando({ posAgeS: 5 }), NOW, NOW)).toEqual({ lat: 40.1, lon: -3.2 });
   });
-  it('a los 60 s aún se pinta; a los 61 s de antigüedad, no', () => {
-    expect(planeOnMap(volando(), NOW, NOW + 55000)).toEqual({ lat: 40.1, lon: -3.2 });
-    expect(planeOnMap(volando(), NOW, NOW + 56000)).toBeNull();
+  it('posAgeS 55: a los 5 s sigue; 6 s después (61 s de antigüedad) → null', () => {
+    expect(planeOnMap(volando({ posAgeS: 55 }), NOW, NOW + 5000)).toEqual({ lat: 40.1, lon: -3.2 });
+    expect(planeOnMap(volando({ posAgeS: 55 }), NOW, NOW + 6000)).toBeNull();
+  });
+  it('seenS 1 y posAgeS 55: desaparece a los ~5 s, no a los ~59 (manda la posición, no el último mensaje)', () => {
+    const r = volando({ seenS: 1, posAgeS: 55 });
+    expect(planeOnMap(r, NOW, NOW + 4000)).not.toBeNull();
+    expect(planeOnMap(r, NOW, NOW + 6000)).toBeNull();
+  });
+  it('sin posAgeS pero con seenS → null (seenS nunca sustituye)', () => {
+    expect(planeOnMap(volando({ seenS: 1, posAgeS: undefined }), NOW, NOW)).toBeNull();
+  });
+  it('checked suma el tiempo en la caché del servidor', () => {
+    const r = volando({ posAgeS: 5, checked: new Date(NOW - 50000).toISOString() });
+    expect(planeOnMap(r, NOW, NOW)).toEqual({ lat: 40.1, lon: -3.2 }); // 55 s
+    expect(planeOnMap(r, NOW, NOW + 6000)).toBeNull(); // 61 s
   });
   it('sin instante de recepción (undefined o NaN) → null: un avión de antigüedad desconocida no se pinta', () => {
-    expect(planeOnMap(volando({ seenS: 400, lat: 1, lon: 2 }), undefined, NOW)).toBeNull();
-    expect(planeOnMap(volando({ seenS: 5 }), NaN, NOW)).toBeNull();
+    expect(planeOnMap(volando({ lat: 1, lon: 2 }), undefined, NOW)).toBeNull();
+    expect(planeOnMap(volando(), NaN, NOW)).toBeNull();
   });
   it('estado «reciente» → null', () => {
     expect(planeOnMap(volando({ state: 'reciente' }), NOW, NOW)).toBeNull();

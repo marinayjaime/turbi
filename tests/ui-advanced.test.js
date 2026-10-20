@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 const NOW = Date.parse('2026-10-20T08:00:00Z');
 const card = over => ({ source: 'aena', aircraft: 'Modelo X', airline: 'Aerolínea Y', ...over });
 const volando = over => ({ state: 'volando', seenS: 5, callsign: 'ABC123', altFt: 30000, altM: 9144, kmh: 800, vRateFpm: -640,
-  lat: 40.12346, lon: -3.5, match: 'ruta', ...over });
+  lat: 40.12346, lon: -3.5, posAgeS: 5, match: 'ruta', ...over });
 const has = (html, key) => html.includes(`data-card="adv-${key}"`);
 const text = html => html.replace(/<[^>]+>/g, ''); // el texto que se lee (la antigüedad va en su <span class="adv-age">)
 
@@ -53,6 +53,16 @@ describe('advancedFlightHtml', () => {
       expect(html).toContain(`-3.5000 · hace ${s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`}`);
     }
   });
+  it('la antigüedad de la Posición sale de posAgeS, no de la señal (seenS 1, posAgeS 50: a los 20 s el avión ya no está)', () => {
+    const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 1, posAgeS: 50 }), radarReceivedAt: NOW }), { nowMs: NOW + 20000 }));
+    expect(html).toContain('-3.5000 · hace 1 min'); // 70 s de posición
+    expect(html).toContain('hace 21 s'); // «Última señal» sigue midiendo el último mensaje
+    expect(html).not.toMatch(/km\/h · hace/);
+  });
+  it('con la posición aún reciente (posAgeS 50, 5 s después) no lleva antigüedad aunque el mensaje sea más viejo', () => {
+    const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 40, posAgeS: 50 }), radarReceivedAt: NOW }), { nowMs: NOW + 5000 }));
+    expect(html).not.toContain('-3.5000 · hace');
+  });
   it('«Última señal» lleva su clase propia (el contador de app.js solo reescribe su valor)', () => {
     const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
     expect(html).toContain('<div class="kv adv-signal"><span class="k">Última señal</span><span class="v">hace 5 s</span></div>');
@@ -60,7 +70,7 @@ describe('advancedFlightHtml', () => {
   it.each([['old', 6], ['stale', 13]])('señal %s: altitud, velocidades y posición llevan «· hace X min» (nunca parecen actuales)', (_lvl, min) => {
     const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW + min * 60000 });
     for (const v of ['9.144 m', '800 km/h', '-640 ft/min', '-3.5000']) expect(text(html)).toContain(`${v} · hace ${min} min`);
-    expect(html.match(/<span class="adv-age"> · hace \d+ min<\/span>/g)).toHaveLength(4);
+    expect(html.match(/<span class="adv-age"[^>]*> · hace \d+ min<\/span>/g)).toHaveLength(4);
     expect(html).toContain('ABC123</span>'); // el indicativo no envejece
   });
   it('radar sin posición: no inventa lat/lon', () => {

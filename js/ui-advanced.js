@@ -4,7 +4,7 @@
 // nuevo (la antigüedad de la señal sale de signalState, de card-model.js).
 import { esc, thousands } from './ui.js';
 import { icon } from './icons.js';
-import { signalState, planeOnMap } from './card-model.js';
+import { signalState, planeOnMap, positionAgeS, ageText } from './card-model.js';
 import { agoText } from './storage.js';
 import { BUILD_ID } from './build.js';
 
@@ -62,8 +62,12 @@ function adsbRows(c, nowMs) {
   if (Number.isFinite(r.vRateFpm)) rows.push(row('Velocidad vertical', `${r.vRateFpm > 0 ? '+' : ''}${thousands(Math.round(r.vRateFpm))} ft/min${aged}`));
   // .adv-signal: el contador de señal de app.js reescribe solo este valor cada segundo (sin repintar #adv-flight).
   if (sig) rows.push(row('Última señal', `hace ${esc(sig.text)}`, 'adv-signal'));
-  // La posición envejece antes: en cuanto el mapa quita el avión (planeOnMap null, más de 60 s), lleva su antigüedad.
-  const posAged = sig && !planeOnMap(r, c.radarReceivedAt, nowMs) ? age : aged;
+  // La posición envejece antes: en cuanto el mapa quita el avión (planeOnMap null, más de 60 s), lleva su antigüedad
+  // REAL (posAgeS, no la del último mensaje). data-pos: el contador de app.js la reescribe con la de la posición.
+  // Sin posAgeS (respuesta antigua en caché) no hay antigüedad de la posición: se usa la de la señal, como un dato más.
+  const posAge = positionAgeS(r, c.radarReceivedAt, nowMs);
+  const posAged = !sig || planeOnMap(r, c.radarReceivedAt, nowMs) ? aged
+    : posAge === null ? age : `<span class="adv-age" data-pos>${esc(ageSuffix({ text: ageText(posAge) }))}</span>`;
   if (Number.isFinite(r.lat) && Number.isFinite(r.lon)) rows.push(row('Posición', `${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}${posAged}`));
   if (MATCH[r.match]) rows.push(row('Identificación', MATCH[r.match]));
   return rows;

@@ -166,10 +166,13 @@ export function flyingResult(a, callsign, dest) {
   // instantánea como velocidad media hasta el destino.
   if (dest && Number.isFinite(a.lat) && Number.isFinite(a.lon)) out.remainingKm = Math.round(distanceKm([a.lat, a.lon], dest));
   // Posición medida (sin interpolar ni extrapolar): el frontend la pinta tal cual. Si es más antigua de 60 s, no se
-  // envía (las claves no existen) para no dibujar un avión donde ya no está.
-  if (Number.isFinite(a.lat) && Number.isFinite(a.lon) && (a.seen_pos ?? a.seen ?? Infinity) <= POSITION_MAX_AGE_S) {
+  // envía (las claves no existen) para no dibujar un avión donde ya no está. posAgeS es la antigüedad REAL de la
+  // posición (seen_pos de adsb.lol), distinta de seenS (último mensaje); los tres campos van juntos y, sin seen_pos,
+  // no hay posición: seen no la sustituye (un mensaje reciente no prueba que la posición lo sea).
+  if (Number.isFinite(a.lat) && Number.isFinite(a.lon) && Number.isFinite(a.seen_pos) && a.seen_pos <= POSITION_MAX_AGE_S) {
     out.lat = Math.round(a.lat * 1e4) / 1e4;
     out.lon = Math.round(a.lon * 1e4) / 1e4;
+    out.posAgeS = Math.round(a.seen_pos);
   }
   return out;
 }

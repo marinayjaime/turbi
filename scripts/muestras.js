@@ -79,7 +79,7 @@ const onTime = { state: 'sin-cambios', text: 'Sin cambios sobre el horario progr
   dep: sideP('17:55', '17:55', 0, false, 'PMI'), arr: sideP('19:25', '19:25', 0, false, 'MAD', { beforeTakeoff: true }) };
 const departed = { state: 'puntual', text: 'Salió puntual', band: 'ok', basis: 'dep', dep: sideP('17:55', '18:03', 8, true, 'PMI'), arr: null };
 const volando = (now, over = {}) => ({ state: 'volando', altFt: 35000, altM: 10668, kmh: 812, remainingKm: 286, seenS: 20,
-  checked: iso(now), callsign: 'IBE1668', match: 'indicativo', lat: 39.92, lon: 0.31, vRateFpm: 0, source: 'adsb.lol', ...over });
+  checked: iso(now), callsign: 'IBE1668', match: 'indicativo', lat: 39.92, lon: 0.31, posAgeS: 5, vRateFpm: 0, source: 'adsb.lol', ...over });
 const turbiArr = (time, note = 'Estimación Turbi actualizada en vuelo') => ({ date: DAY, time, estimated: true, note });
 // Vuelo en curso con la llegada estimada por Turbi (Aena no la publica), el radar viéndolo y la salida real.
 const inFlight = (now, over = {}) => base({

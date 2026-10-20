@@ -30,9 +30,14 @@ export function distanceReference(radar, receivedAtMs) {
 // (js/card-model.js), para que la ficha, la distancia y el mapa envejezcan con una sola cuenta.
 export function receiptAgeS(radar, receivedAtMs) {
   const seenS = Number.isFinite(radar?.seenS) && radar.seenS >= 0 ? radar.seenS : 0;
+  return seenS + cachedAgeS(radar, receivedAtMs);
+}
+
+// Segundos que la respuesta pasó en la caché del servidor (recepción − checked); 0 sin `checked` válido o con uno
+// futuro. Es el término común de receiptAgeS (seenS) y de la antigüedad de la posición (posAgeS, js/card-model.js).
+export function cachedAgeS(radar, receivedAtMs) {
   const checkedMs = typeof radar?.checked === 'string' ? Date.parse(radar.checked) : NaN;
-  const cachedS = Number.isFinite(checkedMs) ? Math.max(0, receivedAtMs - checkedMs) / 1000 : 0;
-  return seenS + cachedS;
+  return Number.isFinite(checkedMs) ? Math.max(0, receivedAtMs - checkedMs) / 1000 : 0;
 }
 
 // Distancia visible en nowMs. { km, moving }: moving = false cuando ya no se extrapola (freno, señal antigua…).

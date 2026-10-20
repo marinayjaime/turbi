@@ -22,7 +22,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
-import { flightPhase, signalState, planeOnMap } from './card-model.js';
+import { flightPhase, signalState, planeOnMap, positionAgeS, ageText } from './card-model.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
@@ -965,18 +965,22 @@ function startSignal(card, stale) {
     const planeGone = plane && !planeOnMap(card.radar, card.radarReceivedAt, now);
     if (planeGone) { plane = false; routeMap?.setPlane(null); }
     if (key !== painted) { painted = key; paintSignal(flight, sig); }
-    if (sig.level !== level || planeGone) { level = sig.level; paintAdvancedFlight(card); } else paintAdvancedAge(sig);
+    if (sig.level !== level || planeGone) { level = sig.level; paintAdvancedFlight(card); } else paintAdvancedAge(sig, positionAgeS(card.radar, card.radarReceivedAt, now));
     signalTimer = setTimeout(tick, TICK_MS);
   };
   signalTimer = setTimeout(tick, TICK_MS);
 }
 // Solo los textos de antigüedad de Datos ADS-B (mismo texto que advancedFlightHtml): el resto de #adv-flight no se toca.
-function paintAdvancedAge(sig) {
+function paintAdvancedAge(sig, posAgeS) {
   const el = $in('adv-flight');
   if (!el) return;
   const value = el.querySelector('.adv-signal .v');
   if (value && value.textContent !== `hace ${sig.text}`) value.textContent = `hace ${sig.text}`;
-  for (const age of el.querySelectorAll('.adv-age')) if (age.textContent !== ageSuffix(sig)) age.textContent = ageSuffix(sig);
+  // La posición lleva su propia antigüedad (data-pos): la de posAgeS, no la del último mensaje.
+  for (const age of el.querySelectorAll('.adv-age')) {
+    const text = ageSuffix(age.hasAttribute('data-pos') && posAgeS !== null ? { text: ageText(posAgeS) } : sig);
+    if (age.textContent !== text) age.textContent = text;
+  }
 }
 // Solo el indicador, la celda «Última señal» y la marca de lectura antigua: la distancia (.tm-remaining) es del otro
 // contador y no se toca. Mismo HTML que la tarjeta (signalHtml / tmOldHtml de js/ui.js).
