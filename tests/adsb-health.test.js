@@ -1,7 +1,7 @@
 // /health: diagnóstico de adsb.lol sin hacer ninguna consulta nueva a adsb.lol. Se actualiza en el acceso
 // centralizado (server/adsb.mjs), así cubre las consultas por indicativo, zona y hex.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { adsbLimiter, adsbGet, ADSB_DEFAULT_COOLDOWN_MS } from '../server/adsb.mjs';
+import { adsbLimiter, adsbGet, adsbHealth, ADSB_DEFAULT_COOLDOWN_MS } from '../server/adsb.mjs';
 import { createState, handle } from '../server/live.mjs';
 
 const T0 = Date.parse('2026-09-25T10:00:00Z');
@@ -9,6 +9,7 @@ beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: T0 }); adsbLimiter.
 afterEach(() => vi.useRealTimers());
 
 const health = () => JSON.parse(handle(createState(), '/health').body);
+const adsbHealthNow = () => adsbHealth();
 const res = (status, headers = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: k => headers[k.toLowerCase()] ?? null }, json: async () => ({ ac: [] }) });
 
 describe('/health.adsb', () => {
@@ -134,10 +135,11 @@ describe('/health.adsb: diagnóstico de los límites de adsb.lol', () => {
     await run(vi.fn(async () => res(429)));
     await run(vi.fn(async () => res(503)));
     await run(vi.fn(async () => res(403)));
+    await run(vi.fn(async () => res(404)));
     await run(vi.fn(async () => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); }));
     await run(vi.fn(async () => { throw new TypeError('fetch failed'); }));
     await run(vi.fn(async () => ({ ...res(200), json: async () => { throw new SyntaxError('bad json'); } })));
-    expect(kinds).toEqual(['rate-limit', 'http', 'http', 'timeout', 'network', 'parse']);
+    expect(kinds).toEqual(['rate-limit', 'http', 'http', 'http', 'timeout', 'network', 'parse']);
   });
 
   it('ningún dato sensible: solo cabeceras de la lista, sin cookies, URL, indicativo ni IP; valores saneados', async () => {
@@ -150,6 +152,34 @@ describe('/health.adsb: diagnóstico de los límites de adsb.lol', () => {
     expect(Object.keys(h).sort()).toEqual(['at', 'endpoint', 'status', 'x-envoy-ratelimited', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset']);
     expect(h['x-ratelimit-reset'].length).toBeLessThanOrEqual(120);
     expect(h['x-ratelimit-reset']).toMatch(/^[\w ,;=.:/-]*$/);
+  });
+
+  it('una identificación cancelada por un 429 cuenta como respuesta local, no como 429 ni como intento', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const radar = adsbGet('/callsign/X', { fetchFn: vi.fn(async () => { await gate; return res(429, RL); }) });
+    const identify = adsbGet('/point/1/1/150', { fetchFn: vi.fn(), priority: 'identificacion' });
+    await Promise.resolve();
+    release();
+    expect(await radar).toEqual({ error: 'rate-limited' });
+    expect(await identify).toEqual({ error: 'rate-limited' });
+    expect(health().adsb).toMatchObject({ rateLimitedCount: 1, localRateLimitedCount: 1, attemptsByEndpoint: { callsign: 1 }, rateLimitedByEndpoint: { callsign: 1 } });
+  });
+
+  it('una URL completa que no es de adsb.lol nunca se etiqueta como traza', async () => {
+    const { endpointKind } = await import('../server/adsb.mjs');
+    expect(endpointKind('https://adsb.lol/data/traces/5e/trace_full_4d225e.json')).toBe('trace');
+    expect(endpointKind('https://otro.example/traces/x')).toBe('other');
+    expect(endpointKind('/RYR123/x')).toBe('other');
+    expect(endpointKind('/point/1/2/3?k=v')).toBe('point');
+  });
+
+  it('/health devuelve copias: modificar la respuesta no cambia el estado interno', async () => {
+    await adsbGet('/callsign/X', { fetchFn: vi.fn(async () => res(429, RL)) });
+    const h = adsbHealthNow();
+    h.attemptsByEndpoint.callsign = 99;
+    h.last429Headers['x-ratelimit-reset'] = 'x';
+    expect(adsbHealthNow()).toMatchObject({ attemptsByEndpoint: { callsign: 1 }, last429Headers: { 'x-ratelimit-reset': '41234' } });
   });
 
   it('las trazas (URL completa de adsb.lol) cuentan como endpoint «trace», sin guardar la URL', async () => {

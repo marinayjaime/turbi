@@ -159,8 +159,9 @@ function rateLimitHeaders(res) {
 
 // Tipo de consulta, nunca la URL: 'callsign' | 'hex' | 'point' | … | 'trace' | 'other'.
 const ENDPOINTS = new Set(['callsign', 'hex', 'point', 'reg', 'type', 'sqk', 'mil', 'ladd', 'pia', 'icao', 'closest', 'radius']);
+const ADSB_URL = /^https:\/\/([a-z0-9-]+\.)*adsb\.lol\//;
 export function endpointKind(path) {
-  if (/^https?:\/\//.test(path)) return /\/traces\//.test(path) ? 'trace' : 'other';
+  if (/^https?:\/\//.test(path)) return ADSB_URL.test(path) && /\/traces\//.test(path) ? 'trace' : 'other';
   const first = String(path).split('/').filter(Boolean)[0];
   return ENDPOINTS.has(first) ? first : 'other';
 }
@@ -186,7 +187,7 @@ export function adsbHealth(limiter = adsbLimiter, nowMs = Date.now()) {
     blocked,
     blockedUntil: blocked ? new Date(limiter.blockedUntil).toISOString() : null,
     retryInSec: blocked ? Math.ceil((limiter.blockedUntil - nowMs) / 1000) : 0,
-    ...limiter.stats,
+    ...structuredClone(limiter.stats), // copia: /health nunca expone los objetos internos del limitador
     pendingRadar: limiter.pendingOf('radar'),
     pendingIdentification: limiter.pendingOf('identificacion'),
   };
@@ -203,7 +204,7 @@ export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, pr
     const st = limiter.stats;
     try {
       // Rutas de la API v2 o, para las trazas públicas del mismo proveedor, una URL completa de adsb.lol.
-      const url = /^https:\/\/([a-z0-9-]+\.)*adsb\.lol\//.test(path) ? path : `${ADSB}${path}`;
+      const url = ADSB_URL.test(path) ? path : `${ADSB}${path}`;
       st.lastAttemptAt = new Date().toISOString(); // sale de verdad hacia adsb.lol
       st.lastAttemptEndpoint = endpoint;
       st.attemptsByEndpoint[endpoint] = (st.attemptsByEndpoint[endpoint] ?? 0) + 1;
@@ -220,9 +221,9 @@ export async function adsbGet(path, { fetchFn = fetch, limiter = adsbLimiter, pr
       }
       if (!res.ok) { recordError(limiter, statusKind(res.status)); return { error: 'failed' }; }
       const data = await res.json();
-      limiter.stats.successCount++;
+      st.successCount++;
       limiter.succeeded();
-      limiter.stats.lastSuccessAt = new Date().toISOString();
+      st.lastSuccessAt = new Date().toISOString();
       return { data };
     } catch (err) {
       recordError(limiter, errorKind(err));
