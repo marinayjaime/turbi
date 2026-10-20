@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { needsRadar, findOnRadar } from '../server/radar.mjs';
+import { needsRadar, findOnRadar, flyingResult, POSITION_MAX_AGE_S } from '../server/radar.mjs';
 import { adsbLimiter } from '../server/adsb.mjs';
 // El limitador global de adsb.lol sin espera en las pruebas (su separación se prueba aparte, en tests/adsb.test.js).
 beforeEach(() => { adsbLimiter.reset({ minIntervalMs: 0, identifyIntervalMs: 0, maxPerWindow: Infinity }); });
@@ -175,5 +175,38 @@ describe('pocas consultas a adsb.lol con códigos compartidos', () => {
     const group = ['IB|IBE|1668', 'I2|IBS|1668', 'VY|VLG|5273', 'QR|QTR|5079', 'LA|LAN|1760', 'CZ|CSN|1353'].map(x => sib(...x.split('|')));
     await findOnRadar({ leg: group[0], siblings: group, fetchFn: f, pauseMs: 0 });
     expect(asked(f)).toEqual(['IBE1668', 'IBS1668', 'VLG5273', 'QTR5079']);
+  });
+});
+
+describe('posición del avión en la respuesta', () => {
+  const base = { alt_baro: 35000, gs: 450, seen: 3, seen_pos: 5 };
+  const dest = [40.47, -3.56];
+  it('lat/lon con 4 decimales si la posición tiene ≤ 60 s', () => {
+    const r = flyingResult({ ...base, lat: 39.123456, lon: 2.987654 }, 'IBE1', dest);
+    expect(POSITION_MAX_AGE_S).toBe(60);
+    expect(r.lat).toBe(39.1235);
+    expect(r.lon).toBe(2.9877);
+  });
+  it('con seen_pos de 61 s no hay claves lat/lon', () => {
+    const r = flyingResult({ ...base, lat: 39.1, lon: 2.9, seen_pos: 61 }, 'IBE1', dest);
+    expect(r).not.toHaveProperty('lat');
+    expect(r).not.toHaveProperty('lon');
+  });
+  it('sin lat/lon no hay claves y el resto queda igual', () => {
+    const r = flyingResult({ ...base }, 'IBE1', dest);
+    expect(r).not.toHaveProperty('lat');
+    expect(r).not.toHaveProperty('lon');
+    expect(r).toMatchObject({ state: 'volando', callsign: 'IBE1', altFt: 35000, kmh: 833, seenS: 3 });
+    expect(r).not.toHaveProperty('remainingKm');
+  });
+  it('con lat NaN no hay claves', () => {
+    const r = flyingResult({ ...base, lat: NaN, lon: 2.9 }, 'IBE1', dest);
+    expect(r).not.toHaveProperty('lat');
+    expect(r).not.toHaveProperty('lon');
+  });
+  it('sin seen_pos se usa seen', () => {
+    const { seen_pos, ...sin } = base;
+    expect(flyingResult({ ...sin, seen: 10, lat: 39.1, lon: 2.9 }, 'IBE1', dest)).toMatchObject({ lat: 39.1, lon: 2.9 });
+    expect(flyingResult({ ...sin, seen: 70, lat: 39.1, lon: 2.9 }, 'IBE1', dest)).not.toHaveProperty('lat');
   });
 });

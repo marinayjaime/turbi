@@ -10,6 +10,7 @@ import { radarGate, legTimes, aenaTz } from '../js/radar-gate.js';
 import { corridor } from './identify.mjs'; // solo dentro de funciones (el ciclo de módulos es seguro)
 
 export const MAX_SEEN_S = 180; // en zonas con poca cobertura las señales llegan más espaciadas
+export const POSITION_MAX_AGE_S = 60; // la posición del avión solo se expone si se midió hace ≤ 60 s
 const PAUSE_MS = 1500; // espera antes de reintentar (adsb.lol responde 429 si se le pregunta demasiado seguido)
 const RETRIES = 2;
 const MAX_LOOKUPS = 4; // heurística: como mucho 4 indicativos por vuelo (códigos compartidos)
@@ -164,5 +165,11 @@ export function flyingResult(a, callsign, dest) {
   // Solo datos medidos: la llegada estimada la calcula la app (js/eta.js), con suavizado y sin tomar la velocidad
   // instantánea como velocidad media hasta el destino.
   if (dest && Number.isFinite(a.lat) && Number.isFinite(a.lon)) out.remainingKm = Math.round(distanceKm([a.lat, a.lon], dest));
+  // Posición medida (sin interpolar ni extrapolar): el frontend la pinta tal cual. Si es más antigua de 60 s, no se
+  // envía (las claves no existen) para no dibujar un avión donde ya no está.
+  if (Number.isFinite(a.lat) && Number.isFinite(a.lon) && (a.seen_pos ?? a.seen ?? Infinity) <= POSITION_MAX_AGE_S) {
+    out.lat = Math.round(a.lat * 1e4) / 1e4;
+    out.lon = Math.round(a.lon * 1e4) / 1e4;
+  }
   return out;
 }
