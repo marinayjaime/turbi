@@ -10,8 +10,8 @@ import { startStatusRefresh, refreshMode } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc, flightCardHtml, missingDateText, thousands } from './ui.js';
-import { distanceReference, startRemainingTicker } from './radar-distance.js';
+import { renderResult, esc, flightCardHtml, missingDateText, thousands, signalHtml, tmOldHtml } from './ui.js';
+import { distanceReference, startRemainingTicker, TICK_MS } from './radar-distance.js';
 import { buildProfile } from './altitude.js';
 import { forecastWindow } from './airtime.js';
 import { forecastView, aviationView } from './forecast.js';
@@ -21,7 +21,9 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
   weatherAlertsHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
-import { renderMap } from './map.js';
+import { createRouteMap, wireMapCard, mapTitle } from './map.js';
+import { flightPhase, signalState, planeOnMap } from './card-model.js';
+import { advancedFlightHtml, advancedHistoryHtml } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
@@ -197,6 +199,7 @@ function showChoice(html) {
   ++runId; // nada de una consulta anterior puede pintar encima
   stopRadarPoll();
   stopStatusRefresh();
+  clearFicha();
   currentView = null;
   els.refresh.hidden = true;
   els.changeTime.hidden = true;
@@ -445,8 +448,9 @@ function turbiEta(q, ctx, radar = null) {
 let radarPoll = null;
 function stopRadarPoll() { radarPoll?.cancel(); radarPoll = null; stopDistance(); }
 // Distancia restante «en vivo» (js/radar-distance.js): solo repinta el número; cero peticiones.
+// El contador de señal (más abajo) va con ella: se para y se reinicia a la vez, con cada lectura real.
 let distanceTicker = null;
-function stopDistance() { distanceTicker?.stop(); distanceTicker = null; }
+function stopDistance() { distanceTicker?.stop(); distanceTicker = null; stopSignal(); }
 
 // Vuelo de AeroDataBox: «ha aterrizado» solo con la hora real (de pista) de llegada; si solo pasó la prevista, se dice así.
 function adbArrivalNote(q, profile) {
@@ -502,9 +506,13 @@ function paintRadar(q, flight, radar, ctx, stale) {
     const eta = turbiEta(q, ctx, radar);
     rememberEta(etaKey(q), eta);
     // Nueva ETA visible → el estado se recalcula con ella (y el radar, si lo ve, sigue mandando).
+    // La hora principal («Llega en») y la «Confianza» de la ficha siguen a esa misma ETA (js/card-model.js): arrMs es
+    // la llegada visible en UTC y timeConfidence, la confianza que ya da eta.js (como en flightCard).
     const base = etaSide(eta)
-      ? { ...flight, arr: etaSide(eta), status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: eta.ms }) }
-      : { ...flight, arr: null, status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: null }) };
+      ? { ...flight, arr: etaSide(eta), arrMs: eta.ms, timeConfidence: eta.confidence ?? null,
+        status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: eta.ms }) }
+      : { ...flight, arr: null, arrMs: null, timeConfidence: eta?.confidence ?? null,
+        status: presentStatus({ leg: q.leg, city: q.destination.city, visibleArrivalMs: null }) };
     card = withRadar(base, radar, recallSighting(radarKey(q)));
   }
   // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
@@ -516,10 +524,10 @@ function paintRadar(q, flight, radar, ctx, stale) {
   if (card !== flight && card.radar?.state === 'volando') card = { ...card, radarReceivedAt: receivedAt };
   const el = els.result.querySelector('.flight');
   if (stale() || card === flight || !el) return;
-  // Solo se sustituye la tarjeta .flight: la puntualidad y la sección Turbulencias (#forecast-area) no se tocan.
-  el.outerHTML = flightCardHtml(card);
-  // Cada lectura real es la nueva referencia de la distancia (la anterior estimación se descarta en el acto).
+  // Cada lectura real es la nueva referencia de la distancia y de la señal (las anteriores se descartan en el acto).
   stopDistance();
+  // Solo se sustituye la tarjeta .flight (con su estado: repaintFlight): la sección Turbulencias no se toca.
+  repaintFlight(card, stale);
   if (card.radar?.state === 'volando') {
     distanceTicker = startRemainingTicker({
       ref: distanceReference(card.radar, receivedAt),
@@ -536,6 +544,10 @@ function paintRadar(q, flight, radar, ctx, stale) {
   const note = els.result.querySelector('.note');
   const replacement = Number.isFinite(landedAt) ? LANDED_NOTE : radarNote(radar);
   if (replacement && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(note?.textContent)) note.textContent = replacement;
+  // Aterrizado según el radar con el pronóstico de esta consulta en pantalla: se conserva, con su etiqueta (§10.2).
+  if (card.radar?.state === 'aterrizado' && forecastOnScreen() && !$in('forecast-area').querySelector('.pre-landing')) {
+    paintForecastSection(currentView, { preLanding: true });
+  }
 }
 
 // Estado oficial de Aena mientras el vuelo está en curso (js/status-refresh.js): solo /flights/AL/N.json, siempre el
@@ -584,8 +596,14 @@ async function applyAenaLeg(q, leg, updated, stale) {
   if (aenaFinal(leg)) {
     // Aena gana: fuera la telemetría, el radar y la distancia animada.
     stopRadarPoll();
-    el.outerHTML = flightCardHtml(flight);
+    repaintFlight(flight, stale);
     const flags = [leg.st, leg.std, leg.sta];
+    // Llegada final con el pronóstico de esta consulta ya pintado: se conserva con «Previsión mostrada antes del
+    // aterrizaje» (§10.2), sin calcular ni pedir nada. Cancelado o desviado: la nota, aunque lo hubiera.
+    if (!flags.includes('CAN') && !flags.includes('DES') && forecastOnScreen()) {
+      paintForecastSection(currentView, { preLanding: true });
+      return;
+    }
     const note = flags.includes('CAN') ? 'Vuelo cancelado.' : flags.includes('DES') ? 'Vuelo desviado.'
       : endedNote(leg) ?? arrivalNote({ leg, officialMs, eta, departureMs, nowMs: Date.now() });
     const area = $in('forecast-area');
@@ -595,7 +613,7 @@ async function applyAenaLeg(q, leg, updated, stale) {
   // Sin estado final: con el radar mostrando «Volando», su telemetría manda y no se toca (la distancia sigue su curso).
   if (q.lastRadar?.state === 'volando') return;
   if (q.lastRadar) paintRadar(q, flight, q.lastRadar, q.etaCtx, stale);
-  else el.outerHTML = flightCardHtml(flight);
+  else repaintFlight(flight, stale);
 }
 
 async function loadPunctualityHistory(q, punct, stale) {
@@ -643,6 +661,7 @@ async function run(q) {
   const token = ++runId;
   stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
   stopStatusRefresh(); // y de refrescar el estado de Aena
+  clearFicha(); // y su mapa
   const stale = () => token !== runId;
   els.refresh.hidden = false;
   show('loading');
@@ -667,6 +686,7 @@ async function run(q) {
       currentView = null;
       els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
       show('result');
+      initFicha(q, flight, stale);
       watchAena(q, stale);
       await Promise.all([safely(() => loadPunctualityHistory(q, punct, stale)), safely(() => showRadar(q, flight, stale, etaCtx))]);
       return;
@@ -678,6 +698,7 @@ async function run(q) {
       currentView = null;
       els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight, punctuality: punct });
       show('result');
+      initFicha(q, flight, stale);
       watchAena(q, stale);
       const ctx = { q, profile, forecastProfile, flight, punct, oTz, dTz, etaCtx, departureMs, durationMin, rel, stale };
       lastForecastCtx = ctx;
@@ -759,7 +780,8 @@ async function loadForecastSection(ctx) {
   if (stale() || !area()) return;
   Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
   currentView = view;
-  area().innerHTML = forecastSectionHtml(view, Date.now());
+  // Si el radar ya dio el vuelo por aterrizado mientras se calculaba, el pronóstico llega con su etiqueta (§10.2).
+  paintForecastSection(view, { preLanding: Boolean(shownCard) && flightPhase(shownCard) === 'finalizado' });
   await safely(() => forecastExtras(view, q, stale));
 }
 
@@ -791,35 +813,179 @@ async function runLegacy(q, air, times, flight, rel, stale) {
 const $in = id => els.result.querySelector(`#${id}`);
 const safely = async fn => { try { await fn(); } catch { /* mejora opcional: si falla, no pasa nada */ } };
 
+// ---- Presentación de la ficha (rediseño, spec 2026-10-20 §9 bis, §10.2 y §10 bis) ----
+// Solo cómo se pinta: nada de aquí decide cuándo se consulta el radar o Aena, qué nota se muestra ni la ETA.
+let shownCard = null; // la tarjeta del vuelo que hay en pantalla (armazón, repaintFlight o pronóstico guardado)
+let routeMap = null; // el mapa Leaflet de la ficha: uno solo, sobre el #map de la ficha actual
+let mapToken = 0; // un mapa que termina de crearse cuando su ficha ya no está se destruye en el acto
+let signalTimer = null;
+
+function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; }
+// La ficha deja de estar (otra búsqueda, «Nueva consulta», pantalla de elección, pronóstico guardado): fuera su mapa.
+// No va en stopRadarPoll: applyAenaLeg para el radar con la llegada final y el mapa se queda («Ruta realizada»).
+function clearFicha() { destroyMap(); stopSignal(); shownCard = null; }
+
+// Qué desplegables (data-card) están abiertos en toda la ficha, Detalles avanzados incluidos.
+const openCards = () => new Set([...els.result.querySelectorAll('details[data-card][open]')].map(d => d.dataset.card));
+
+function wireSpeak(view) {
+  const btn = $in('speak');
+  if (!btn || !canSpeak()) return;
+  btn.hidden = false;
+  btn.onclick = () => speak(buildSpeech({ from: view.fromCity, to: view.toCity, summary: view.summary, confidence: view.confidence.level }));
+}
+
+// Detalles avanzados: las categorías de la ficha (#adv-flight) y el historial (#adv-history), con lo que ya hay.
+function paintAdvancedFlight(card, open = openCards()) {
+  const el = $in('adv-flight');
+  if (el) el.innerHTML = advancedFlightHtml(card, { open, nowMs: Date.now() });
+}
+function paintHistory(view = currentView, open = openCards()) {
+  const el = $in('adv-history');
+  if (el) el.innerHTML = advancedHistoryHtml({ queriedAt: view?.queriedAt, aenaUpdatedAgo: shownCard?.updatedAgo ?? null, trend: view?.trend ?? null }, Date.now(), { open });
+}
+// METAR/TAF, SIGMET y PIREP en «El tiempo en los aeropuertos»: la categoría solo se ve con contenido.
+function paintAviation(view) {
+  const el = $in('aviation');
+  if (!el) return;
+  el.innerHTML = aviationHtml(view.aviation, Date.now());
+  const cat = el.closest('details[data-card="adv-weather"]');
+  if (cat) cat.hidden = !el.innerHTML.trim();
+}
+
+// §10.2: ¿está en pantalla el pronóstico de ESTA consulta? (currentView vuelve a null al empezar cada búsqueda.)
+const forecastOnScreen = () => Boolean(currentView && $in('forecast-area')?.querySelector('[data-card="turbulence"]'));
+// Pinta (o repinta) la tarjeta de Turbulencias con la vista ya calculada, conservando sus desplegables. Sin peticiones.
+function paintForecastSection(view, { preLanding = false } = {}) {
+  const area = $in('forecast-area');
+  if (!area) return;
+  area.innerHTML = forecastSectionHtml(view, Date.now(), { preLanding, open: openCards() });
+  wireSpeak(view);
+}
+
+// Mapa de la ficha (Ruta prevista / Radar / Ruta realizada): se crea en cuanto se pinta el armazón, con la ruta en
+// círculo máximo (sin meteorología) y los aeropuertos; setForecast la colorea cuando hay pronóstico y setPlane pone o
+// quita el avión. Leaflet es prescindible: si no carga, la tarjeta se queda sin mapa y nada más cambia.
+function mountMap(q, stale) {
+  const card = $in('map-card'), el = $in('map');
+  if (!card || !el || !q?.origin || !q?.destination) return;
+  destroyMap();
+  const token = mapToken;
+  wireMapCard(card, { invalidate: () => routeMap?.invalidate() }); // el mapa aún se está creando: se busca al pulsar
+  let route;
+  try { route = buildRoute(q.origin, q.destination, 0).points; } catch { return; }
+  createRouteMap(el, { origin: q.origin, destination: q.destination, route }).then(m => {
+    if (token !== mapToken || stale()) { m.destroy(); return; }
+    routeMap = m;
+    if (currentView?.route) m.setForecast(currentView);
+    m.setPlane(shownCard ? planeOnMap(shownCard.radar, shownCard.radarReceivedAt, Date.now()) : null);
+  }).catch(() => {});
+}
+
+// Lo común del armazón (ficha con pronóstico o con nota): Detalles avanzados y el mapa.
+function initFicha(q, flight, stale) {
+  shownCard = flight;
+  paintAdvancedFlight(flight);
+  paintHistory(null);
+  mountMap(q, stale);
+  startSignal(flight, stale);
+}
+
+// Repinta la tarjeta del vuelo SIN perder estado (§9 bis): los desplegables abiertos, el nodo #punctuality ya cargado
+// (su historial llega aparte) y el scroll. Con ella, Detalles avanzados, el título del mapa, el avión y la señal.
+// Sustituye a todos los `outerHTML = flightCardHtml(...)`: no cambia cuándo ni por qué se repinta.
+function repaintFlight(card, stale) {
+  const el = els.result.querySelector('.flight');
+  if (!el) return;
+  const open = openCards();
+  const scroller = document.scrollingElement;
+  const top = scroller?.scrollTop ?? 0, resultTop = els.result.scrollTop;
+  const punct = el.querySelector('#punctuality');
+  punct?.remove();
+  el.outerHTML = flightCardHtml(card, { open, nowMs: Date.now() });
+  const slot = els.result.querySelector('.flight #punctuality');
+  if (punct && slot) slot.replaceWith(punct);
+  shownCard = card;
+  paintAdvancedFlight(card, open);
+  paintHistory(currentView, open);
+  const title = $in('map-card')?.querySelector('.card-title');
+  if (title) title.textContent = mapTitle(flightPhase(card));
+  routeMap?.setPlane(planeOnMap(card.radar, card.radarReceivedAt, Date.now()));
+  if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
+  if (els.result.scrollTop !== resultTop) els.result.scrollTop = resultTop;
+  startSignal(card, stale);
+}
+
+// Contador de señal (§10 bis.2): como el radar deja de sondear tras una lectura «volando», la ficha envejece en
+// pantalla. Temporizador encadenado de 1 s (como el de la distancia, nunca setInterval) mientras haya «volando» y la
+// ficha se vea: repinta el indicador y «Última señal» (y Detalles avanzados) cuando cambia el texto, marca «Ahora» como
+// antigua desde STALE_MIN y quita el avión del mapa cuando su posición pasa de 60 s. Cero peticiones.
+function stopSignal() { if (signalTimer !== null) clearTimeout(signalTimer); signalTimer = null; }
+function startSignal(card, stale) {
+  stopSignal();
+  if (!signalState(card?.radar, card?.radarReceivedAt, Date.now())) return; // solo «volando» con instante de recepción
+  let plane = planeOnMap(card.radar, card.radarReceivedAt, Date.now()) !== null;
+  let painted = null;
+  const tick = () => {
+    signalTimer = null;
+    const flight = els.result.querySelector('.flight');
+    if (stale() || shownCard !== card || !flight || els.result.closest('[hidden]')) return;
+    const now = Date.now();
+    const sig = signalState(card.radar, card.radarReceivedAt, now);
+    if (!sig) return;
+    const key = `${sig.level}|${sig.text}`;
+    if (key !== painted) { painted = key; paintSignal(flight, sig); paintAdvancedFlight(card); }
+    if (plane && !planeOnMap(card.radar, card.radarReceivedAt, now)) { plane = false; routeMap?.setPlane(null); }
+    signalTimer = setTimeout(tick, TICK_MS);
+  };
+  signalTimer = setTimeout(tick, TICK_MS);
+}
+// Solo el indicador, la celda «Última señal» y la marca de lectura antigua: la distancia (.tm-remaining) es del otro
+// contador y no se toca. Mismo HTML que la tarjeta (signalHtml / tmOldHtml de js/ui.js).
+function paintSignal(flight, sig) {
+  const indicator = flight.querySelector('.signal');
+  if (indicator) indicator.outerHTML = signalHtml(sig);
+  const cell = flight.querySelector('.tm-signal .tm-value');
+  if (cell) cell.textContent = sig.text;
+  const stale = sig.level === 'stale';
+  flight.querySelector('.now')?.classList.toggle('aged', stale);
+  const grid = flight.querySelector('.tm-grid');
+  grid?.classList.toggle('is-stale', stale);
+  flight.querySelector('.tm-old')?.remove();
+  if (stale) grid?.insertAdjacentHTML('afterend', tmOldHtml(sig));
+}
+
 // Pinta el pronóstico y después, sin bloquear, añade lo secundario (cada cosa solo actualiza su hueco).
 async function showForecast(view, q, stale, saved = false) {
   currentView = view;
   // Guardado: la tendencia era la de aquel momento, así que no se muestra.
-  renderForecast(els.result, saved ? { ...view, saved, trend: null } : view, Date.now());
+  const shown = saved ? { ...view, saved, trend: null } : view;
+  renderForecast(els.result, shown, Date.now());
   show('result');
-  const speakBtn = $in('speak');
-  if (canSpeak()) {
-    speakBtn.hidden = false;
-    speakBtn.onclick = () => speak(buildSpeech({ from: view.fromCity, to: view.toCity, summary: view.summary, confidence: view.confidence.level }));
-  }
-  if (saved) return; // guardado: tal cual, sin pedir nada a la red
+  wireSpeak(view);
+  // Detalles avanzados con lo que ya trae la vista (frescura, Aviation Weather y, si hay ficha, sus datos).
+  shownCard = view.flight ?? null;
+  if (shownCard) paintAdvancedFlight(shownCard);
+  paintHistory(shown);
+  const fresh = $in('fresh');
+  if (fresh) fresh.innerHTML = freshnessHtml(view, Date.now());
+  paintAviation(view);
+  if (saved) return; // guardado: tal cual, sin pedir nada a la red (ni el mapa)
+  mountMap(q, stale);
   await forecastExtras(view, q, stale);
 }
 
 // Lo que completa el pronóstico ya pintado: voz, tendencia, lugares, hora de los modelos, meteorología aeronáutica,
 // mapa y guardado para sin conexión. (Puntualidad y radar van con la ficha, no aquí.)
 async function forecastExtras(view, q, stale) {
-  const speakBtn = $in('speak');
-  if (speakBtn && canSpeak()) {
-    speakBtn.hidden = false;
-    speakBtn.onclick = () => speak(buildSpeech({ from: view.fromCity, to: view.toCity, summary: view.summary, confidence: view.confidence.level }));
-  }
+  wireSpeak(view);
   saveLast(view, view.queriedAt);
   await safely(async () => {
     const snaps = recordSnapshot(flightKey(q), { t: view.queriedAt, maxLevel: view.summary.maxLevel, verdict: view.summary.verdict, confidence: view.confidence.level });
     view.trend = forecastTrend(snaps, Date.now());
     const el = $in('trend');
     if (view.trend && el) { el.textContent = view.trend; el.hidden = false; }
+    if (!stale()) paintHistory(view); // la consulta y la tendencia, también en «Historial de actualizaciones»
   });
   await Promise.all([
     safely(async () => {
@@ -836,13 +1002,14 @@ async function forecastExtras(view, q, stale) {
       view.aviation = aviationView(await loadAviation(), view, Date.now());
       if (stale()) return;
       $in('wx-alerts').innerHTML = weatherAlertsHtml(view.aviation); // línea compacta de avisos en la tarjeta (§10 bis.1)
-      const aviation = $in('aviation'); // sin hueco hasta que la Tarea 8 lo lleve a Detalles avanzados
-      if (aviation) aviation.innerHTML = aviationHtml(view.aviation, Date.now());
+      paintAviation(view); // el detalle, en Detalles avanzados
     }),
   ]);
   if (stale()) return;
   saveLast(view, view.queriedAt);
-  safely(() => renderMap($in('map'), view));
+  // El mapa ya está (se crea con el armazón): ahora la ruta coloreada por nivel y los avisos. Si Leaflet aún no ha
+  // cargado, mountMap aplica currentView al crearlo.
+  if (routeMap && view === currentView) safely(async () => routeMap.setForecast(view));
 }
 
 async function submit() {
@@ -931,13 +1098,14 @@ for (const input of [els.origin, els.destination]) {
   });
 }
 
-els.back.addEventListener('click', () => { stopRadarPoll(); stopStatusRefresh(); setNotice(); show('query'); });
+els.back.addEventListener('click', () => { stopRadarPoll(); stopStatusRefresh(); clearFicha(); setNotice(); show('query'); });
 els.savedLink.addEventListener('click', () => {
   const last = loadLast();
   if (!last) return;
   runId++; // una consulta en curso ya no debe pintar encima
   stopRadarPoll();
   stopStatusRefresh();
+  clearFicha();
   els.refresh.hidden = false;
   showForecast(last.view, null, () => true, last.savedAt).catch(() => {});
 });
@@ -950,6 +1118,19 @@ els.retry.addEventListener('click', () => (lastQuery ? run(lastQuery) : submit()
 // Reintentar solo la sección de turbulencias (la ficha se queda como está).
 els.result.addEventListener('click', e => {
   if (e.target.closest('#forecast-retry') && lastForecastCtx) { allowRetry(); loadForecastSection(lastForecastCtx); }
+});
+// «Ver detalles» de la línea de avisos (tarjeta de Turbulencias, §10 bis.1): abre Detalles avanzados y «El tiempo en
+// los aeropuertos» y lleva hasta ella. El botón está dentro del <summary>: no pliega ni despliega la tarjeta.
+els.result.addEventListener('click', e => {
+  if (!e.target.closest('[data-open="adv-weather"]')) return;
+  e.preventDefault();
+  const adv = els.result.querySelector('details[data-card="advanced"]');
+  const weather = els.result.querySelector('details[data-card="adv-weather"]');
+  if (!adv || !weather) return;
+  adv.open = true;
+  weather.open = true;
+  const calm = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  weather.scrollIntoView?.({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
 });
 
 // Valores por defecto: hoy y la próxima hora en punto.

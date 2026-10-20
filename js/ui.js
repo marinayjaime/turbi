@@ -159,8 +159,8 @@ function gateHtml(c) {
 }
 
 // Celda de telemetría: icono, etiqueta y valor (unidad en <small>); extra, una línea pequeña aparte (los metros).
-const tmCell = (name, label, value, cls = '', extra = '') => `
-          <div class="tm-cell"><span class="tm-icon">${icon(name, { size: 18 })}</span>
+const tmCell = (name, label, value, cls = '', extra = '', cellCls = '') => `
+          <div class="tm-cell${cellCls}"><span class="tm-icon">${icon(name, { size: 18 })}</span>
             <span class="tm-label">${label}</span>
             <span class="tm-value${cls}">${value}</span>${extra}</div>`;
 
@@ -180,21 +180,31 @@ function flyingNowHtml(c, r, nowMs, open) {
     r.kmh ? tmCell('speed', 'Velocidad', `${esc(r.kmh)}<small>km/h</small>`) : '',
     // .tm-remaining: el contador de app.js reescribe su primer nodo (el número) cada segundo.
     Number.isFinite(r.remainingKm) ? tmCell('distance', 'Restante', `${thousands(r.remainingKm)}<small>km</small>`, ' tm-remaining') : '',
-    sig ? tmCell('signal', 'Última señal', esc(sig.text)) : '',
+    // .tm-signal: el contador de señal de app.js reescribe su valor cada segundo (sin repintar la tarjeta).
+    sig ? tmCell('signal', 'Última señal', esc(sig.text), '', '', ' tm-signal') : '',
   ].join('');
-  const live = sig?.level === 'live';
-  const signal = sig ? `<span class="signal" data-signal-level="${sig.level}"><span class="dot tone-${live ? 'ok' : 'warn'}"></span>${
-    live ? 'Señal radar reciente' : 'Sin señal reciente'}</span>` : '';
-  const summary = `${head('Ahora', signal)}
-          <div class="tm-grid${sig?.level === 'stale' ? ' is-stale' : ''}">${cells}
-          </div>${sig?.level === 'stale' ? `
-          <p class="tm-old">Datos del radar de hace ${esc(sig.text)}</p>` : ''}`;
+  const stale = sig?.level === 'stale';
+  const summary = `${head('Ahora', signalHtml(sig))}
+          <div class="tm-grid${stale ? ' is-stale' : ''}">${cells}
+          </div>${stale ? tmOldHtml(sig) : ''}`;
   const body = `${r.callsign ? kv('Indicativo', esc(r.callsign)) : ''}${
     kv('Fuente', 'Radar ADS-B', ` title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}"`)}${
     r.match === 'ruta' ? '\n          <p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>' : ''}${
     r.aircraftChanged ? '\n          <p class="tm-match">Avión localizado por su indicativo: no es el que AeroDataBox tenía asignado a este vuelo.</p>' : ''}`;
-  return details('now', 'now telemetry', open, summary, body);
+  return details('now', `now telemetry${stale ? ' aged' : ''}`, open, summary, body);
 }
+
+// Indicador de señal (verde mientras la distancia aún se mueve, ámbar después) y la línea «Datos del radar de hace X»
+// desde STALE_MIN. Exportados para el contador de señal de app.js, que los repinta en su sitio cada segundo con el
+// mismo HTML que la tarjeta (sin peticiones ni repintar el resto). Sin señal (sig null), nada.
+export function signalHtml(sig) {
+  if (!sig) return '';
+  const live = sig.level === 'live';
+  return `<span class="signal" data-signal-level="${sig.level}"><span class="dot tone-${live ? 'ok' : 'warn'}"></span>${
+    live ? 'Señal radar reciente' : 'Sin señal reciente'}</span>`;
+}
+export const tmOldHtml = sig => `
+          <p class="tm-old">Datos del radar de hace ${esc(sig.text)}</p>`;
 
 // Mensaje corto del radar cuando no hay telemetría (mismos textos de siempre). null: el radar no dice nada.
 function radarLineHtml(r) {

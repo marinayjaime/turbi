@@ -47,13 +47,16 @@ function adsbRows(c, nowMs) {
   const r = c.radar;
   if (r?.state !== 'volando') return [];
   const rows = [];
-  if (r.callsign) rows.push(row('Indicativo', esc(r.callsign)));
-  if (Number.isFinite(r.altFt)) rows.push(row('Altitud', `${thousands(Math.round(r.altFt))} ft${Number.isFinite(r.altM) ? ` · ${thousands(Math.round(r.altM))} m` : ''}`));
-  if (Number.isFinite(r.kmh)) rows.push(row('Velocidad', `${thousands(Math.round(r.kmh))} km/h`));
-  if (Number.isFinite(r.vRateFpm)) rows.push(row('Velocidad vertical', `${r.vRateFpm > 0 ? '+' : ''}${thousands(Math.round(r.vRateFpm))} ft/min`));
   const sig = signalState(r, c.radarReceivedAt, nowMs);
+  // Lectura que ya no es reciente (old / stale): altitud, velocidades y posición llevan su antigüedad para que nunca
+  // parezcan actuales (§10 bis.2). El indicativo y la identificación no envejecen.
+  const aged = sig && sig.level !== 'live' ? ` · hace ${esc(sig.text)}` : '';
+  if (r.callsign) rows.push(row('Indicativo', esc(r.callsign)));
+  if (Number.isFinite(r.altFt)) rows.push(row('Altitud', `${thousands(Math.round(r.altFt))} ft${Number.isFinite(r.altM) ? ` · ${thousands(Math.round(r.altM))} m` : ''}${aged}`));
+  if (Number.isFinite(r.kmh)) rows.push(row('Velocidad', `${thousands(Math.round(r.kmh))} km/h${aged}`));
+  if (Number.isFinite(r.vRateFpm)) rows.push(row('Velocidad vertical', `${r.vRateFpm > 0 ? '+' : ''}${thousands(Math.round(r.vRateFpm))} ft/min${aged}`));
   if (sig) rows.push(row('Última señal', `hace ${sig.text}`));
-  if (Number.isFinite(r.lat) && Number.isFinite(r.lon)) rows.push(row('Posición', `${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}`));
+  if (Number.isFinite(r.lat) && Number.isFinite(r.lon)) rows.push(row('Posición', `${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}${aged}`));
   if (MATCH[r.match]) rows.push(row('Identificación', MATCH[r.match]));
   return rows;
 }
@@ -112,15 +115,16 @@ export function advancedHistoryHtml({ queriedAt, aenaUpdatedAgo, trend } = {}, n
 }
 
 // Armazón de la tarjeta, cerrada salvo que `open` diga lo contrario. Los huecos los rellenan app.js (#adv-flight,
-// #adv-history) y forecastExtras (#aviation, #fresh). «El tiempo en los aeropuertos» es una categoría fija con su hueco
-// y #adv-sources acoge la frescura del pronóstico (se oculta por CSS mientras #fresh está vacío).
+// #adv-history) y forecastExtras (#aviation, #fresh). «El tiempo en los aeropuertos» es una categoría fija con su hueco:
+// nace oculta (hidden) y app.js la muestra cuando #aviation tiene contenido; #adv-sources acoge la frescura del
+// pronóstico (se oculta por CSS mientras #fresh está vacío).
 export function advancedShellHtml({ open = new Set() } = {}) {
   return `
     <details class="card adv" data-card="advanced"${isOpen(open, 'advanced')}>
       <summary class="card-sum"><div class="card-head"><h3 class="card-title">Detalles avanzados</h3>${icon('chevron', { size: 18 })}</div></summary>
       <div class="card-body adv-cats">
         <div id="adv-flight"></div>
-        <details data-card="adv-weather"${isOpen(open, 'adv-weather')}>
+        <details data-card="adv-weather"${isOpen(open, 'adv-weather')} hidden>
           <summary class="adv-sum">${icon('turbulence', { size: 18 })}<span class="adv-title">El tiempo en los aeropuertos</span>${icon('chevron', { size: 16 })}</summary>
           <div class="adv-body"><div id="aviation"></div></div>
         </details>

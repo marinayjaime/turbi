@@ -3,7 +3,9 @@
 import { esc, flightCardHtml, formatDuration, TURB_LEVELS, DISCLAIMER, turbCardHtml, turbPlainCardHtml, turbGeneralHtml,
   turbTimelineHtml, segListHtml } from './ui.js';
 import { icon } from './icons.js';
-import { roughestSpan, weatherAlerts } from './card-model.js';
+import { roughestSpan, weatherAlerts, flightPhase } from './card-model.js';
+import { mapCardHtml } from './map.js';
+import { advancedShellHtml } from './ui-advanced.js';
 import { CAUSE_LABELS } from './turbi-index.js';
 import { NO_PIREPS } from './aviation-weather.js';
 import { agoText } from './storage.js';
@@ -229,12 +231,18 @@ function headHtml(view, nowMs) {
     </div>`;
 }
 
-// Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar), puntualidad y la
-// tarjeta de turbulencias aún calculando.
+// Bloques que siguen a #forecast-area, en su orden fijo (§9 bis): la tarjeta del mapa (título según la fase) y
+// «Detalles avanzados». Nunca cambian de sitio: un vuelo que pasa de programado a en curso y a finalizado no recrea el
+// nodo de Leaflet, y cuando una nota sustituye al pronóstico ni el mapa ni los detalles desaparecen.
+const afterForecastHtml = (phase, { map = true } = {}) => `${map ? `
+    ${mapCardHtml(phase)}` : ''}${advancedShellHtml()}`;
+
+// Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar), puntualidad, la
+// tarjeta de turbulencias aún calculando, el mapa y Detalles avanzados.
 export function flightShellHtml({ flight, punctuality = null }) {
   return `${headHtml({ flight, punctuality })}
     <div id="forecast-area">${forecastLoadingHtml()}
-    </div>`;
+    </div>${afterForecastHtml(flightPhase(flight))}`;
 }
 
 // Ficha con aviso (vuelo terminado, sin hora de llegada, cancelado, demasiado lejano…): no hay previsión que calcular,
@@ -242,7 +250,7 @@ export function flightShellHtml({ flight, punctuality = null }) {
 export function flightNoteHtml({ flight, punctuality = null, note }) {
   return `${headHtml({ flight, punctuality })}
     <div id="forecast-area">${forecastNoteHtml(note)}
-    </div>`;
+    </div>${afterForecastHtml(flightPhase(flight))}`;
 }
 
 export function forecastUnavailableHtml(err) {
@@ -258,9 +266,8 @@ export function forecastUnavailableHtml(err) {
 }
 
 // Contenido de #forecast-area con pronóstico: la tarjeta de Turbulencias (§5.7) y, fuera de ella, el aviso legal.
-// open: los data-card abiertos (los conserva el repintado). preLanding: Tarea 8 (§10.2).
-// #fresh se queda aquí de momento, al final y fuera de la tarjeta: app.js aún escribe en él y app-flow lo espera; la
-// Tarea 7 lo lleva a Detalles avanzados. #aviation y #map ya no se generan aquí (Tareas 6–8).
+// open: los data-card abiertos (los conserva el repintado). preLanding (§10.2): el pronóstico que ya estaba en pantalla
+// cuando el vuelo aterriza, con su etiqueta. #fresh y #aviation viven en Detalles avanzados y #map en su tarjeta.
 export function forecastSectionHtml(view, nowMs, { preLanding = false, open = new Set() } = {}) {
   const s = view.summary;
   const span = roughestSpan(view);
@@ -276,14 +283,15 @@ export function forecastSectionHtml(view, nowMs, { preLanding = false, open = ne
         <section id="altitudes">${altitudeHtml(view.altitudes)}</section>
         <div class="pills">${explainHtml(s.headline)}</div>`;
   return `${turbCardHtml({ open, preLanding, summary, body })}
-    <p id="fresh" class="fresh">${freshnessHtml(view, nowMs)}</p>
     ${DISCLAIMER}`;
 }
 
-// Todo junto (pronóstico guardado sin conexión y consultas manuales).
+// Todo junto (pronóstico guardado sin conexión y consultas manuales), con el mismo orden de bloques que la ficha.
+// El guardado no lleva mapa: sin conexión no se pide nada a la red (ni Leaflet ni teselas), como antes.
 export function renderForecast(el, view, nowMs) {
   el.innerHTML = `${headHtml(view, nowMs)}
-    <div id="forecast-area">${forecastSectionHtml(view, nowMs)}</div>`;
+    <div id="forecast-area">${forecastSectionHtml(view, nowMs)}</div>${
+  afterForecastHtml(view.flight ? flightPhase(view.flight) : 'programado', { map: !view.saved })}`;
 }
 
 export { formatDuration };

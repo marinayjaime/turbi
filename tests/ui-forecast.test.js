@@ -156,11 +156,20 @@ describe('renderForecast', () => {
   it('monta todas las secciones y el aviso orientativo; escapa HTML', () => {
     const el = { innerHTML: '' };
     renderForecast(el, { ...view, title: '<b>x</b>' }, NOW);
-    for (const id of ['trend', 'speak', 'timeline', 'seg-detail', 'altitudes', 'fresh']) expect(el.innerHTML).toContain(`id="${id}"`); // #fresh: provisional, hasta la Tarea 7
-    for (const id of ['aviation', 'map']) expect(el.innerHTML).not.toContain(`id="${id}"`); // van a sus tarjetas (Tareas 6–8)
+    for (const id of ['trend', 'speak', 'timeline', 'seg-detail', 'altitudes', 'fresh']) expect(el.innerHTML).toContain(`id="${id}"`);
+    // Tarea 8: el mismo orden de bloques que la ficha. #fresh y #aviation, en Detalles avanzados; #map, en su tarjeta.
+    const ids = [...el.innerHTML.matchAll(/id="(forecast-area|map-card|adv-sources|aviation)"/g)].map(m => m[1]);
+    expect(ids).toEqual(['forecast-area', 'map-card', 'aviation', 'adv-sources']);
+    expect(el.innerHTML.match(/id="fresh"/g)).toHaveLength(1); // un único #fresh (antes también en la sección)
     expect(el.innerHTML).toContain('Estimación orientativa para pasajeros');
     expect(el.innerHTML).not.toContain('<b>x</b>');
     expect(el.innerHTML).not.toMatch(/no pone en peligro|no pasa nada/);
+  });
+  it('pronóstico guardado: sin mapa (sin conexión no se pide nada), con Detalles avanzados', () => {
+    const el = { innerHTML: '' };
+    renderForecast(el, { ...view, saved: NOW - 3600000 }, NOW);
+    expect(el.innerHTML).not.toContain('id="map"');
+    expect(el.innerHTML).toContain('data-card="advanced"');
   });
 });
 
@@ -199,7 +208,16 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
   it('la sección del pronóstico no incluye la ficha (se inserta sin tocarla)', () => {
     const html = forecastSectionHtml({ ...view, flight }, NOW);
     expect(html).not.toContain('class="flight"');
-    for (const id of ['trend', 'timeline', 'altitudes', 'fresh']) expect(html).toContain(`id="${id}"`); // #fresh: provisional, hasta la Tarea 7
+    for (const id of ['trend', 'timeline', 'altitudes']) expect(html).toContain(`id="${id}"`);
+    expect(html).not.toContain('id="fresh"'); // Tarea 8: #fresh vive en Detalles avanzados (si no, id duplicado)
+  });
+  it('armazón y ficha con nota: .flight, #forecast-area, el mapa y Detalles avanzados, en ese orden', () => {
+    for (const html of [flightShellHtml({ flight, punctuality }), flightNoteHtml({ flight, punctuality, note: 'x' })]) {
+      const root = dom(html).body;
+      const blocks = [...root.children].map(c => (c.matches('.summary') ? 'flight' : c.id || c.dataset.card));
+      expect(blocks).toEqual(['flight', 'forecast-area', 'map-card', 'advanced']);
+      expect(root.querySelector('#map-card .card-title').textContent).toBe('Radar'); // en curso (radar volando)
+    }
   });
 });
 

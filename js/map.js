@@ -47,8 +47,10 @@ const TITLES = { programado: 'Ruta prevista', cancelado: 'Ruta prevista', 'en-cu
 
 // Tarjeta del mapa, independiente del pronóstico. #map-facts nace vacío (lo rellena la integración si hay datos);
 // el botón de cerrar solo se ve ampliada (CSS) y ocupa el sitio del de ampliar.
+export const mapTitle = phase => TITLES[phase] ?? TITLES.programado;
+
 export function mapCardHtml(phase) {
-  const title = TITLES[phase] ?? TITLES.programado;
+  const title = mapTitle(phase);
   return `<section class="card map-card" id="map-card">
   <h3 class="card-head"><span class="card-title">${esc(title)}</span>
     <button type="button" class="map-btn" data-map="expand" aria-label="Ampliar el mapa">${icon('expand')}</button>
@@ -113,16 +115,4 @@ export async function createRouteMap(el, { origin, destination, route }) {
     invalidate() { map.invalidateSize(); },
     destroy() { map.remove(); },
   };
-}
-
-// Compatibilidad hasta la Tarea 8 (app.js la llama): mapa de la vista con su pronóstico, sin avión.
-export async function renderMap(el, view) {
-  const route = view.route;
-  const rm = await createRouteMap(el, {
-    origin: { iata: view.originIata, lat: route[0].lat, lon: route[0].lon },
-    destination: { iata: view.destinationIata, lat: route.at(-1).lat, lon: route.at(-1).lon },
-    route,
-  });
-  rm.setForecast(view);
-  return rm;
 }

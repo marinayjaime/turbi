@@ -618,7 +618,10 @@ describe('refresco del estado oficial de Aena mientras el vuelo está en curso (
       render.updated = new Date(T + 600000).toISOString();
       await advance(330000); // 630 s
       await until(() => statusText().includes('En tierra'), 'estado En tierra');
-      expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+      // §10.2 (Tarea 8): el pronóstico de esta consulta ya estaba pintado, así que se conserva con su etiqueta en vez de
+      // sustituirse por la nota «Este vuelo ya ha aterrizado.» (sin pronóstico pintado, la nota sigue igual).
+      expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
+      expect(area()).toContain('Previsión mostrada antes del aterrizaje');
       expect(shell()).toEqual(SHELL_OK);
       expect(meteoCalls()).toHaveLength(meteo); // ni una consulta más a Open-Meteo
       const after = renderCalls().length;
@@ -1545,5 +1548,247 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     await networkIdle();
     expect($('#result .sub').textContent).toMatch(/· 10:00–/); // la hora escrita (bloque), no la del despegue estimado
     expect(Math.max(...ticks())).toBeLessThan(60);
+  });
+});
+
+// Integración del rediseño (Tarea 8): repintado con estado, mapa con el avión, señal en vivo y previsión tras aterrizar.
+// Leaflet se simula con un `L` falso: se cuentan los mapas creados y destruidos y los marcadores del avión.
+function fakeLeaflet() {
+  const log = { maps: 0, mapsRemoved: 0, markers: [] };
+  const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
+  const L = {
+    map: () => { log.maps++; return { fitBounds() {}, invalidateSize() {}, remove() { log.mapsRemoved++; } }; },
+    tileLayer: layer, polyline: layer, polygon: layer, circleMarker: layer,
+    latLngBounds: () => ({ pad() { return this; } }),
+    divIcon: o => o,
+    marker: ll => {
+      const m = { ...layer(), ll, removed: false, setLatLng(p) { this.ll = p; return this; }, remove() { this.removed = true; } };
+      log.markers.push(m);
+      return m;
+    },
+  };
+  return { L, log };
+}
+const planeOnScreen = log => log.markers.some(m => !m.removed);
+
+describe('integración del rediseño: repintado, mapa, señal en vivo y previsión tras aterrizar', () => {
+  const flyingLeg = () => {
+    const dep = Date.now() - 60 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N' } };
+  };
+  const flights = leg => ({ IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } });
+
+  it('el orden de bloques es fijo: selector, .flight, Turbulencias, mapa y Detalles avanzados', async () => {
+    const { L } = fakeLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
+    await search('IB715', d);
+    await until(() => $('.telemetry') && area().includes(FORECAST_UNAVAILABLE), 'ficha completa');
+    const blocks = [...$('#result').children].map(c => (c.matches('.summary') ? '.flight' : c.id || c.dataset.card));
+    expect(blocks).toEqual(['.flight', 'forecast-area', 'map-card', 'advanced']);
+    expect($('#map-card .card-title').textContent).toBe('Radar'); // en curso
+  });
+
+  it('repintado conserva desplegables: «Horario» abierto y el historial de puntualidad siguen tras una lectura «volando»', async () => {
+    const { d, leg } = flyingLeg();
+    let releaseRadar;
+    const base = network({ flights: flights(leg), openMeteo: () => tooMany });
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return new Promise(r => { releaseRadar = () => r(json(RADAR_FLYING)); }); }
+      return base(url, o);
+    }));
+    await search('IB715', d);
+    await until(() => $('#punctuality')?.textContent.includes('Todavía no hay suficiente historial') && releaseRadar, 'historial cargado');
+    $('details[data-card="schedule"]').open = true;
+    $('details[data-card="advanced"]').open = true;
+    releaseRadar();
+    await until(() => $('.telemetry'), 'panel ADS-B');
+    expect($('details[data-card="schedule"]').open).toBe(true);
+    expect($('details[data-card="advanced"]').open).toBe(true);
+    expect($('#punctuality').textContent).toContain('Todavía no hay suficiente historial'); // el nodo cargado, no uno vacío
+    expect($('#adv-flight [data-card="adv-adsb"]')).not.toBeNull(); // Detalles avanzados también se repinta
+  });
+
+  it('señal envejece: «old» a los 6 min, «stale» y .aged a los 13; el avión se quita pasados 60 s; cero peticiones', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { L, log } = fakeLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
+      await networkIdle();
+      expect($('[data-signal-level="live"]')).not.toBeNull();
+      expect(planeOnScreen(log)).toBe(true); // posición de 5 s: el avión está en el mapa
+      const before = calls.length;
+      await vi.advanceTimersByTimeAsync(60000); // 65 s de antigüedad
+      expect(planeOnScreen(log)).toBe(false); // se quita: solo la ruta y los aeropuertos
+      expect($('[data-signal-level="live"]')).not.toBeNull(); // la señal aún se considera reciente (< 300 s)
+      await vi.advanceTimersByTimeAsync(5 * 60000); // 6 min y 5 s
+      expect($('[data-signal-level="old"]')).not.toBeNull();
+      expect($('.flight .tm-signal .tm-value').textContent).toBe('6 min');
+      expect($('.flight .now').classList.contains('aged')).toBe(false);
+      await vi.advanceTimersByTimeAsync(7 * 60000); // 13 min
+      expect($('[data-signal-level="stale"]')).not.toBeNull();
+      expect($('.flight .now').classList.contains('aged')).toBe(true);
+      expect($('#adv-flight').textContent).toContain('hace 13 min'); // Detalles avanzados tampoco parece actual
+      expect(planeOnScreen(log)).toBe(false);
+      // El contador no pide nada: solo puede haber refrescos de Aena (su propio temporizador), nunca radar ni meteorología.
+      expect(calls.slice(before).filter(u => !u.includes('/flights/'))).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('mapa sin coordenadas: la tarjeta del mapa existe y no hay avión', async () => {
+    const { L, log } = fakeLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
+    await search('IB715', d);
+    await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
+    await networkIdle();
+    expect($('#map-card #map')).not.toBeNull();
+    expect(log.markers).toHaveLength(0);
+  });
+
+  it('otra búsqueda o «Nueva consulta» destruyen el mapa: nunca dos mapas a la vez', async () => {
+    const { L, log } = fakeLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
+    await search('IB715', d);
+    await until(() => log.maps === 1, 'primer mapa');
+    await search('IB715', d);
+    await until(() => log.maps === 2, 'segundo mapa');
+    expect(log.mapsRemoved).toBe(1);
+    $('#back').click();
+    expect(log.mapsRemoved).toBe(2);
+  });
+
+  it('«Ver detalles» de los avisos abre Detalles avanzados y «El tiempo en los aeropuertos»', async () => {
+    const t = dayOf(Date.now() + 24 * 3600000);
+    const leg = { d: t, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${t}T17:55`, sa: '19:25', ea: `${t}T19:25`, st: 'SCH', ac: 'A21N' };
+    const base = network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk });
+    const pirep = { items: [{ lat: 40, lon: -0.5, fl: 360, t: Date.now() - 600000, int: 'MOD', raw: 'UA /OV x' }] };
+    await openApp(vi.fn((url, o) => (String(url) === 'data/aviation/pirep.json' ? (calls.push(String(url)), Promise.resolve(json(pirep))) : base(url, o))));
+    await search('IB1668', t);
+    await until(() => $('[data-open="adv-weather"]'), 'línea de avisos');
+    const weather = $('details[data-card="adv-weather"]');
+    expect(weather.hidden).toBe(false); // con #aviation relleno, la categoría se ve
+    expect(weather.open).toBe(false);
+    $('[data-open="adv-weather"]').click();
+    expect($('details[data-card="advanced"]').open).toBe(true);
+    expect(weather.open).toBe(true);
+  });
+
+  it('sin datos de Aviation Weather, «El tiempo en los aeropuertos» no se ve', async () => {
+    const t = dayOf(Date.now() + 24 * 3600000);
+    const leg = { d: t, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${t}T17:55`, sa: '19:25', ea: `${t}T19:25`, st: 'SCH', ac: 'A21N' };
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
+    await search('IB1668', t);
+    await until(() => $('#forecast-area [data-card="turbulence"]') && $('#fresh')?.textContent.trim(), 'pronóstico completo');
+    await networkIdle();
+    expect($('#aviation').innerHTML).toBe('');
+    expect($('details[data-card="adv-weather"]').hidden).toBe(true);
+    expect(document.querySelectorAll('#fresh')).toHaveLength(1); // un único #fresh, en Detalles avanzados
+    expect($('#adv-sources #fresh').textContent).toContain('Consulta realizada');
+  });
+
+  describe('previsión tras el aterrizaje (§10.2)', () => {
+    const T = Date.parse('2026-09-26T12:00:00Z');
+    const D = '2026-09-26';
+    const flyLeg = over => ({ d: D, o: 'MLA', a: 'BCN', sd: null, sa: '14:40', ea: `${D}T14:40`, st: 'FLY', sta: 'FLY', ac: '738W', ...over });
+    function app(render, radar = null) {
+      const base = network({ flights: { FR1526: { name: 'Ryanair', updated: new Date(T).toISOString(), legs: [flyLeg()] } }, radar, openMeteo: openMeteoOk });
+      return vi.fn((url, o) => {
+        const u = String(url);
+        if (u.startsWith(`${LIVE_BASE}/flights/`)) { calls.push(u); return Promise.resolve(json({ name: 'Ryanair', updated: render.updated, legs: render.legs })); }
+        return base(url, o);
+      });
+    }
+    const meteoCalls = () => calls.filter(u => u.includes('open-meteo'));
+    const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: T, shouldAdvanceTime: true });
+
+    it('aterriza con pronóstico (Aena LND): se conserva con «Previsión mostrada antes del aterrizaje» y sin pedir nada a Open-Meteo', async () => {
+      fake();
+      try {
+        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+        await openApp(app(render));
+        await search('FR1526', D);
+        await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
+        await networkIdle();
+        $('details[data-card="turbulence"]').open = true;
+        const meteo = meteoCalls().length;
+        render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
+        render.updated = new Date(T + 600000).toISOString();
+        await advance(630000);
+        await until(() => ($('#result .status')?.textContent ?? '').includes('En tierra'), 'En tierra');
+        expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
+        expect($('#forecast-area [data-card="turbulence"]').open).toBe(true); // el desplegable sigue como estaba
+        expect(area()).toContain('Previsión mostrada antes del aterrizaje');
+        expect($('#forecast-area .note')).toBeNull();
+        expect(meteoCalls()).toHaveLength(meteo);
+        expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('aterriza según el radar (lectura «aterrizado») con pronóstico: se conserva con la misma etiqueta', async () => {
+      fake();
+      try {
+        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+        let releaseRadar;
+        const base = app(render);
+        await openApp(vi.fn((url, o) => {
+          const u = String(url);
+          if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return new Promise(r => { releaseRadar = () => r(json({ state: 'aterrizado', seenS: 30 })); }); }
+          return base(url, o);
+        }));
+        await search('FR1526', D);
+        await until(() => $('#forecast-area [data-card="turbulence"]') && releaseRadar, 'pronóstico');
+        await networkIdle();
+        const meteo = meteoCalls().length;
+        releaseRadar();
+        await until(() => area().includes('Previsión mostrada antes del aterrizaje'), 'etiqueta tras el aterrizaje');
+        expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
+        expect(meteoCalls()).toHaveLength(meteo);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('cancelado con pronóstico (Aena CAN): la nota «Vuelo cancelado.» y ninguna tarjeta de pronóstico', async () => {
+      fake();
+      try {
+        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+        await openApp(app(render));
+        await search('FR1526', D);
+        await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
+        await networkIdle();
+        render.legs = [flyLeg({ st: 'CAN', sta: 'CAN' })];
+        render.updated = new Date(T + 600000).toISOString();
+        await advance(630000);
+        await until(() => $('#forecast-area .note'), 'nota');
+        expect($('#forecast-area .note').textContent).toBe('Vuelo cancelado.');
+        expect($('#forecast-area [data-card="turbulence"]')).toBeNull();
+        expect($('#map-card')).not.toBeNull(); // el mapa y los detalles no desaparecen
+        expect($('details[data-card="advanced"]')).not.toBeNull();
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('abre un vuelo ya terminado: la nota corta de siempre y ningún pronóstico', async () => {
+      const dep = Date.now() - 4 * 3600000, arr = dep + 75 * 60000;
+      const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, MAD);
+      const leg = { d, o: 'PMI', a: 'MAD', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, st: 'LND', std: 'BOR', sta: 'LND', ac: '738W' };
+      await openApp(network({ flights: { UX6031: { name: 'Air Europa', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
+      await search('UX6031', d);
+      await until(() => $('#forecast-area .note'), 'nota');
+      await networkIdle();
+      expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+      expect($('[data-card="turbulence"]')).toBeNull();
+      expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
+      expect(meteoCalls()).toHaveLength(0);
+      expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+    });
   });
 });

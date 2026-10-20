@@ -19,6 +19,7 @@ describe('advancedShellHtml', () => {
     expect(html).not.toMatch(/<details[^>]*data-card="advanced"[^>]* open/);
     for (const id of ['adv-flight', 'adv-sources', 'adv-history', 'fresh', 'aviation']) expect(html).toContain(`id="${id}"`);
     expect(html).toContain('<details data-card="adv-weather"');
+    expect(html).toMatch(/data-card="adv-weather"[^>]* hidden>/); // oculta hasta que app.js rellena #aviation
   });
   it('abierto solo si se pide', () => {
     expect(advancedShellHtml({ open: new Set(['advanced']) })).toMatch(/data-card="advanced" open/);
@@ -39,6 +40,15 @@ describe('advancedFlightHtml', () => {
     expect(html).toContain('-640');
     expect(html).toContain('Última señal');
     expect(html).toContain('Por ruta');
+  });
+  it('señal reciente: altitud, velocidad y posición sin antigüedad', () => {
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW + 60000 });
+    expect(html).not.toMatch(/ft · 9\.144 m · hace|km\/h · hace|-3\.5000 · hace/);
+  });
+  it.each([['old', 6], ['stale', 13]])('señal %s: altitud, velocidades y posición llevan «· hace X min» (nunca parecen actuales)', (_lvl, min) => {
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW + min * 60000 });
+    for (const v of ['9.144 m', '800 km/h', '-640 ft/min', '-3.5000']) expect(html).toContain(`${v} · hace ${min} min`);
+    expect(html).toContain('ABC123</span>'); // el indicativo no envejece
   });
   it('radar sin posición: no inventa lat/lon', () => {
     const html = advancedFlightHtml(card({ radar: volando({ lat: undefined, lon: undefined }), radarReceivedAt: NOW }), { nowMs: NOW });
