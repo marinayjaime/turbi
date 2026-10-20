@@ -296,6 +296,31 @@ Cada uno tiene un caso en una página de prueba local (§11).
    - Cancelado o desviado: la nota de siempre, aunque hubiera pronóstico (*decisión de Claude*: ese vuelo no ha volado
      esa ruta).
 
+## 10 bis. Condiciones de la aprobación (Jaime, 20/10/2026)
+1. **Avisos meteorológicos visibles.** METAR/TAF, SIGMET y PIREP completos van en «Detalles avanzados», pero si la
+   lógica actual detecta algo relevante, la tarjeta principal de Turbulencias lo indica en una línea compacta (icono,
+   texto corto y enlace «Ver detalles», que abre esa categoría):
+   - `view.aviation.sigmets` con elementos → «N avisos oficiales (SIGMET)», en ámbar si alguno `crosses` la ruta, con
+     la etiqueta del primero (`label`);
+   - `view.aviation.pireps` con elementos → «N informes de pilotos cerca de la ruta», con la etiqueta del primero.
+   Sin lógica meteorológica nueva: solo lo que ya devuelven `sigmetsNearRoute` y `pirepsNearRoute`. Si están vacíos o
+   no disponibles (`null`), no hay línea en la tarjeta principal.
+2. **Lo antiguo nunca parece actual.** La frescura detallada va a «Detalles avanzados», pero en la interfaz principal
+   sigue visible todo lo que afecta a la fiabilidad: chip y línea de Aena antigua (`card.stale`), estados del radar
+   (`reciente`, `sin-senal`, `localizando`, `no-disponible`), nota de la ETA retenida (`etaSide().note`), «Confianza»,
+   banda «sin conexión» del pronóstico guardado y cobertura incompleta del pronóstico. Además, como el radar deja de
+   sondear tras una lectura «volando», la tarjeta envejece en pantalla:
+   - **«Última señal» se actualiza en vivo** (presentación, sin peticiones): antigüedad = `seenS` + tiempo en la caché del
+     servidor (`checked`) + tiempo desde que se recibió, la misma cuenta que `distanceReference`.
+   - **Indicador de señal**: verde («Señal radar reciente») mientras la antigüedad sea menor que `MAX_EXTRAPOLATION_S`
+     (300 s, el umbral existente a partir del cual la distancia deja de moverse); después, ámbar («Sin señal
+     reciente»). A partir de `STALE_MIN` (12 min, de `eta.js`), las celdas de telemetría se atenúan y llevan «hace X
+     min».
+   - **Avión en el mapa**: se pinta solo con coordenadas de 60 s o menos al recibirlas. Cuando su antigüedad en
+     pantalla supera 60 s, el marcador pasa a gris y hueco, con «Última posición · hace X min». Nunca se mueve sin una
+     lectura nueva.
+   Estos umbrales son constantes existentes (o la regla de 60 s aprobada): no se crea lógica nueva de radar.
+
 ## 11. Verificación
 - Toda la suite (`npm test`), más los tests nuevos de presentación: la fase, la fuente, la hora principal y su dato
   secundario, el muestreo de barras, los hitos del horario y las tarjetas omitidas sin datos.
