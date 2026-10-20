@@ -1,5 +1,5 @@
-// Layout móvil: pantalla de inicio y «Consultando el pronóstico…» centradas en el viewport visible; la foto de fondo
-// cubre toda la pantalla (sin la franja azul lisa del manifest); la ficha conserva su flujo y su scroll.
+// Layout móvil: pantalla de inicio y «Consultando el pronóstico…» centradas en el viewport visible; fondo claro liso
+// hasta los bordes (sin foto ni capa fija); la ficha conserva su flujo y su scroll.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
@@ -62,22 +62,21 @@ describe('la ficha del vuelo conserva su flujo', () => {
   });
 });
 
-describe('fondo a pantalla completa', () => {
-  const SIZE = ['max(100vw, 75lvh) auto'];   // 3:4 → 75lvh de ancho = 100lvh de alto: lo que daría cover en el viewport
-  it('capa fija con overscan de medio viewport por arriba y por abajo (50lvh, respaldo 50vh)', () => {
-    expect(values('body::before', 'position')).toEqual(['fixed']);
-    expect(values('body::before', 'top')).toEqual(['-50vh', '-50lvh']);
-    expect(values('body::before', 'bottom')).toEqual(['-50vh', '-50lvh']);
-    expect(values('body::before', 'height')).toEqual([]);
+describe('fondo claro', () => {
+  // El fondo liso #F4F8FC lo pintan html y body (llega a los bordes en Safari, sin franjas): ni foto ni capa fija.
+  it('html y body pintan var(--bg), y --bg es #F4F8FC', () => {
+    for (const sel of ['html', 'body']) {
+      const bg = [...values(sel, 'background'), ...values(sel, 'background-color')];
+      expect(bg.some(v => v.includes('var(--bg)')), sel).toBe(true);
+    }
+    expect(values(':root', '--bg').map(v => v.toUpperCase())).toEqual(['#F4F8FC']);
   });
 
-  it('la foto se repite en la capa fija y en el html: donde acaba una copia empieza otra, nunca el color', () => {
-    expect(values('body::before', 'background')).toEqual(["url('../img/sky.jpg') center / max(100vw, 75vh) auto repeat"]);
-    expect(values('body::before', 'background-size')).toEqual(SIZE);
-    const [bg] = values('html', 'background');
-    expect(bg).toMatch(/url\('\.\.\/img\/sky\.jpg'\) center top \/ max\(100vw, 75vh\) auto repeat$/);
-    expect(values('html', 'background-size')).toEqual(SIZE);
-    expect(css).not.toMatch(/no-repeat[^;]*sky\.jpg|sky\.jpg[^;]*no-repeat/);
-    expect(bg).not.toMatch(/#6f9cc4/i);
+  it('no queda la foto del cielo en el CSS, el HTML ni el service worker', () => {
+    for (const f of ['css/style.css', 'index.html', 'sw.js']) expect(readFileSync(f, 'utf8'), f).not.toContain('sky.jpg');
+  });
+
+  it('sin capa fija de fondo (body::before)', () => {
+    expect(css).not.toMatch(/body::before/);
   });
 });

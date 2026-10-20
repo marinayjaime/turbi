@@ -36,4 +36,13 @@ describe('actualización de la PWA', () => {
     expect(html).toContain('id="update-notice"');
     expect(html).toContain('id="update-app"');
   });
+
+  // Estética clara: barra de estado de iOS normal (black-translucent daría texto blanco sobre el fondo claro).
+  it('colores claros en la barra del navegador, la barra de estado de iOS y el manifest', () => {
+    const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
+    expect(html).toContain('<meta name="theme-color" content="#F4F8FC">');
+    expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default">');
+    expect(manifest.background_color).toBe('#F4F8FC');
+    expect(manifest.theme_color).toBe('#F4F8FC');
+  });
 });

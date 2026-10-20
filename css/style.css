@@ -1,47 +1,37 @@
+/* Sistema visual claro: fondo liso azulado, tarjetas blancas con borde casi invisible y sombra suave, azul Turbi para
+   lo interactivo y la estimación propia, azul marino para el texto. Todas las pantallas y la ficha usan estos tokens. */
 :root {
-  --bg: #6f9cc4;
-  --text: #1d1d1f;
-  --muted: #55555a;
-  --line: rgba(60, 60, 67, 0.16);
-  --field: rgba(255, 255, 255, 0.72);
-  --glass: rgba(255, 255, 255, 0.74);
-  --accent: #007aff;
-  --lvl0: #e5e5ea;
-  --lvl1: #ffe08a;
-  --lvl2: #ff9f0a;
-  --lvl3: #ff3b30;
+  --bg: #F4F8FC;
+  --card: #FFFFFF;
+  --border: rgba(15, 40, 80, 0.07);
+  --shadow: 0 1px 2px rgba(15, 40, 80, 0.04), 0 8px 24px rgba(15, 40, 80, 0.05);
+  --radius: 20px;
+  --text: #0E2240;   /* azul marino: texto principal */
+  --muted: #5B6B82;  /* etiquetas y texto secundario (≥ 4,5:1 sobre blanco) */
+  --faint: #93A0B3;  /* lo terciario: marcas, separadores con texto, valores pendientes */
+  --accent: #1A6FE0; /* azul Turbi: enlaces, botones, foco y estimación Turbi */
+  --field: #F1F5FA;  /* fondo de campos y botones secundarios */
+  /* Semánticos (texto sobre blanco o sobre su propio tinte): verde = real/confirmado, ámbar = aviso, rojo = solo lo
+     realmente negativo (cancelado, desviado, turbulencia fuerte, confianza baja). */
+  --ok: #17864A;
+  --warn: #B36A00;
+  --bad: #D0342C;
+  /* Turbulencia: nula (gris claro), ligera (verde), moderada (ámbar), fuerte (rojo). */
+  --lvl0: #DDE5EF;
+  --lvl1: #3DBE6E;
+  --lvl2: #F2A516;
+  --lvl3: #E5483B;
+  --ease: 200ms cubic-bezier(.2, .7, .2, 1);
 }
 
 * { box-sizing: border-box; }
-/* Fondo. La foto (3:4, 1170 × 1560) se pinta con el tamaño que le daría cover en el viewport más grande:
-   al menos 100vw de ancho y 75lvh de ancho (= 100lvh de alto). Y se REPITE: donde termine una copia empieza otra.
-   - Capa fija (body::before): sobresale medio viewport por arriba y por abajo, más que cualquier desplazamiento del
-     viewport visual (barras de Safari, teclado); la copia central queda centrada en la pantalla.
-   - html: la misma foto repetida en todo el lienzo, para lo que iOS muestre fuera de la capa fija.
-   El color solo tiñe las barras de Safari: debajo de la foto nunca queda lienzo sin foto. */
-html { background: #939ba1 url('../img/sky.jpg') center top / max(100vw, 75vh) auto repeat;
-  background-size: max(100vw, 75lvh) auto; }
-body { margin: 0; background: transparent; color: var(--text); }
-body::before {
-  content: ''; position: fixed; left: 0; right: 0; z-index: -1;
-  top: -50vh; bottom: -50vh;
-  top: -50lvh; bottom: -50lvh;
-  background: url('../img/sky.jpg') center / max(100vw, 75vh) auto repeat;
-  background-size: max(100vw, 75lvh) auto;
-}
-.panel {
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  backdrop-filter: blur(22px) saturate(160%);
-  border-radius: 22px;
-  padding: 20px;
-  box-shadow: 0 10px 30px rgba(10, 40, 70, 0.18);
-  margin-bottom: 16px;
-}
-.on-sky { color: #fff !important; text-shadow: 0 1px 3px rgba(0, 30, 60, 0.45); }
+/* Fondo liso: lo pintan html (el lienzo, también lo que Safari enseña al estirar o tras sus barras) y body. Sin foto
+   ni capa fija, el color llega a todos los bordes y coincide con theme-color y el manifest: no hay franjas. */
+html { background: var(--bg); -webkit-text-size-adjust: 100%; }
 body {
+  margin: 0; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  -webkit-font-smoothing: antialiased;
+  -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
 }
 main {
   max-width: 480px;
@@ -64,11 +54,51 @@ main {
 /* La ficha del vuelo conserva su flujo y su scroll normales. */
 #result-view { padding: calc(env(safe-area-inset-top) + 16px) 0 calc(env(safe-area-inset-bottom) + 32px); }
 [hidden] { display: none !important; }
+
+/* ---- Piezas base (las usan la consulta, la carga y la ficha) ---- */
+/* Tarjeta: blanca, borde casi invisible, sombra suave, 20 px de radio y 16 px de separación con la siguiente.
+   .panel es la tarjeta de las pantallas (consulta, carga) y el contenedor actual de la ficha (#result). */
+.card, .panel {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px;
+}
+/* Cabecera de tarjeta: título a la izquierda y chevron a la derecha (gira al desplegar un <details>). */
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--text);
+}
+summary.card-head { list-style: none; cursor: pointer; }
+summary.card-head::-webkit-details-marker { display: none; }
+.card-head .icon { flex: none; color: var(--faint); transition: transform var(--ease); }
+details[open] > .card-head .icon { transform: rotate(90deg); }
+/* Etiqueta + valor: la etiqueta pequeña y gris encima, el valor con cifras de ancho fijo (no salta al actualizarse). */
+.kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kv .k { font-size: 12px; color: var(--muted); }
+.kv .v { font-size: 16px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+/* Chip y punto con tono: el chip es una píldora con tinte claro y texto del color; el punto, el color pleno. */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; line-height: 1.3; white-space: nowrap;
+}
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.chip.tone-ok, .tone-ok { background: rgba(23, 134, 74, 0.10); color: var(--ok); }
+.chip.tone-info, .tone-info { background: rgba(26, 111, 224, 0.10); color: var(--accent); }
+.chip.tone-warn, .tone-warn { background: rgba(179, 106, 0, 0.10); color: var(--warn); }
+.chip.tone-bad, .tone-bad { background: rgba(208, 52, 44, 0.10); color: var(--bad); }
+.chip.tone-stale, .tone-stale { background: var(--field); color: var(--muted); }
+.dot.tone-ok { background: var(--ok); }
+.dot.tone-info { background: var(--accent); }
+.dot.tone-warn { background: var(--warn); }
+.dot.tone-bad { background: var(--bad); }
+.dot.tone-stale { background: var(--faint); }
+.icon { display: block; flex: none; }
+
+/* Aviso de versión nueva: tarjeta blanca flotante bajo la zona segura, con el botón azul. */
 .update-notice {
   position: fixed; z-index: 20; top: calc(env(safe-area-inset-top) + 10px); left: 50%; transform: translateX(-50%);
   width: min(440px, calc(100% - 32px)); display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 12px 10px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 24px rgba(10, 40, 70, 0.24); color: var(--text); font-size: 14px;
+  padding: 10px 12px 10px 16px; border-radius: 16px; background: var(--card); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(15, 40, 80, 0.06), 0 12px 32px rgba(15, 40, 80, 0.12); color: var(--text); font-size: 14px;
 }
 .update-notice button { border: 0; border-radius: 999px; padding: 7px 12px; background: var(--accent); color: #fff; font-weight: 600; }
 
@@ -80,14 +110,17 @@ main {
 #query-form .primary { margin-top: 8px; }
 h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
 
+/* Campos claros: gris azulado sobre la tarjeta blanca; con el foco, borde y halo azules (sin el contorno del sistema). */
 .field { display: block; margin-bottom: 14px; }
 .field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .field input {
   width: 100%; font: inherit; font-size: 17px; color: var(--text);
-  background: var(--field); border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 12px; padding: 14px 16px;
+  background: var(--field); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
   -webkit-appearance: none; appearance: none;
+  transition: border-color var(--ease), box-shadow var(--ease), background-color var(--ease);
 }
-.field input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.field input::placeholder { color: var(--faint); }
+.field input:focus { outline: none; background: var(--card); border-color: var(--accent); box-shadow: 0 0 0 3px rgba(26, 111, 224, 0.15); }
 #f-number { font-size: 24px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .row:has(> [hidden]) { grid-template-columns: 1fr; }
@@ -96,24 +129,48 @@ button { font: inherit; cursor: pointer; }
 .primary {
   width: 100%; margin-top: 8px; padding: 16px; border: 0; border-radius: 14px;
   background: var(--accent); color: #fff; font-size: 17px; font-weight: 600;
+  box-shadow: 0 6px 16px rgba(26, 111, 224, 0.22); transition: opacity var(--ease), transform var(--ease);
 }
-.primary:active { opacity: 0.8; }
+.primary:active { opacity: 0.85; transform: scale(0.99); }
 .secondary {
-  flex: 1; padding: 14px; border: 0; border-radius: 12px;
-  background: var(--field); color: var(--accent); font-size: 16px; font-weight: 500;
+  flex: 1; padding: 14px; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--card); color: var(--accent); font-size: 16px; font-weight: 500; box-shadow: var(--shadow);
 }
 .link { display: block; margin: 14px auto 0; border: 0; background: none; color: var(--accent); font-size: 15px; padding: 6px; }
-/* Barra superior de la ficha: «‹ Nueva consulta» a la izquierda y «Actualizar ↻» a la derecha, simétricos. */
-.result-bar { display: flex; justify-content: space-between; align-items: center; margin: 0 0 12px; }
-.result-bar .link { margin: 0; padding: 0; }
-#refresh span { display: inline-block; margin-left: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Barra superior de la ficha: «‹» (Nueva consulta) a la izquierda, logotipo en el centro y «Actualizar» a la derecha.
+   Tres columnas fijas: el logo queda centrado aunque «Actualizar» esté oculto. Botones de 44 px (objetivo táctil). */
+.result-bar { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; margin: 0 0 12px; }
+.result-bar .bar-logo { grid-column: 2; justify-self: center; height: 28px; width: auto; }
+.icon-btn {
+  display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--text); transition: background-color var(--ease);
+}
+.icon-btn:active { background: rgba(15, 40, 80, 0.06); }
+#back { grid-column: 1; justify-self: start; margin-left: -10px; }
+#refresh { grid-column: 3; justify-self: end; margin-right: -10px; color: var(--accent); }
 
 .notice { font-size: 15px; color: var(--muted); margin: 4px 0 12px; }
-.error { margin-top: 20px; padding: 14px 16px; border-radius: 12px; background: #fff2f1; color: #c4271c; font-size: 15px; }
+.error { margin-top: 20px; padding: 14px 16px; border-radius: 14px; background: rgba(208, 52, 44, 0.08); color: var(--bad); font-size: 15px; }
 .error p { margin: 0; }
 .error .link { margin: 8px 0 0; padding: 0; }
 
+/* Carga: tarjeta blanca con el spinner azul. */
+.loading-card { text-align: center; color: var(--muted); padding: 32px 20px; }
+.loading-card p { margin: 0; }
+.spinner {
+  width: 28px; height: 28px; margin: 0 auto 12px; border-radius: 50%;
+  border: 3px solid rgba(26, 111, 224, 0.15); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* Movimiento reducido: sin transiciones (el spinner sigue girando: es la única señal de que se está cargando). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
 
+
+/* ---- Ficha actual (se rehace en las tareas siguientes): mismos selectores, pasados a los tokens claros ---- */
 .summary .route { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
 .summary .sub { color: var(--muted); margin: 4px 0 20px; font-size: 15px; }
 .verdict { display: flex; gap: 14px; align-items: center; }
@@ -129,7 +186,7 @@ button { font: inherit; cursor: pointer; }
 }
 .reliability summary::-webkit-details-marker, .explain summary::-webkit-details-marker { display: none; }
 .reliability .info, .explain .info { color: var(--accent); margin-left: 2px; }
-.reliability[open] summary, .explain[open] summary { background: #e8f1ff; color: var(--accent); }
+.reliability[open] summary, .explain[open] summary { background: rgba(26, 111, 224, 0.10); color: var(--accent); }
 .reliability p, .explain p { margin: 12px 0 8px; font-size: 14px; line-height: 1.4; color: var(--text); }
 .reliability ul, .explain ul { list-style: none; margin: 0; padding: 0; }
 .reliability li, .explain li { padding: 8px 10px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
@@ -151,24 +208,18 @@ button { font: inherit; cursor: pointer; }
 .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
 
 .cards { list-style: none; margin: 24px 0 0; padding: 0; }
-.cards .card:last-child { border-bottom: 0; padding-bottom: 0; }
-.card { display: flex; gap: 12px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--line); }
-.card .dot { flex: none; width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; }
-.card strong { font-size: 16px; }
-.card p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
-.card.empty { color: var(--muted); }
+/* Tramos de la lista: comparten el nombre .card con la tarjeta base hasta que pasen a .seg-card; acotados a .cards > .card
+   y sin el aspecto de tarjeta (filas separadas por una línea). */
+.cards > .card { display: flex; gap: 12px; align-items: flex-start; margin: 0; padding: 14px 0; background: none;
+  border: 0; border-bottom: 1px solid var(--border); border-radius: 0; box-shadow: none; }
+.cards > .card:last-child { border-bottom: 0; padding-bottom: 0; }
+.cards > .card .dot { flex: none; width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; }
+.cards > .card strong { font-size: 16px; }
+.cards > .card p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.cards > .card.empty { color: var(--muted); }
 
 .actions { display: flex; gap: 12px; }
 .actions:not(:has(button:not([hidden]))) { display: none; } /* sin botones visibles, no ocupa sitio */
-.secondary { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: 0 6px 20px rgba(10, 40, 70, 0.15); }
-
-.loading-card { text-align: center; color: var(--muted); padding: 32px 20px; }
-.spinner {
-  width: 28px; height: 28px; margin: 0 auto 12px; border-radius: 50%;
-  border: 3px solid var(--line); border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Ficha del vuelo */
 .flight { margin-bottom: 8px; }
@@ -177,7 +228,7 @@ button { font: inherit; cursor: pointer; }
 .flight-head .logo { height: 44px; width: auto; max-width: 55%; object-fit: contain; object-position: right center; }
 /* Foto del modelo: ocupa toda la parte de arriba del panel (anula su margen de 20 px). */
 .plane-photo { margin: -20px -20px 16px; }
-.plane-photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 22px 22px 0 0; background: #dfe7ef; }
+.plane-photo img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; background: var(--field); }
 .plane-photo figcaption { padding: 6px 20px 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
 .plane-photo figcaption a { color: inherit; }
 .summary > * + .flight .plane-photo { margin-top: 0; }
@@ -185,19 +236,15 @@ button { font: inherit; cursor: pointer; }
 .flight-head h2 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
 .flight-head p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
 .flight-head p.aircraft { margin-top: -2px; color: var(--text); font-size: 16px; font-weight: 600; }
-.tabs { display: flex; gap: 4px; overflow-x: auto; margin: 16px -20px 0; padding: 0 20px; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; margin: 16px -20px 0; padding: 0 20px; border-bottom: 1px solid var(--border); scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button { flex: none; border: 0; background: none; padding: 10px 10px 12px; font-size: 15px; color: var(--muted); border-bottom: 2px solid transparent; }
 .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .status { display: inline-block; margin-top: 16px; padding: 4px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
-.tone-ok { background: #e8f8ee; color: #1a7f37; }
-.tone-info { background: #e8f1ff; color: var(--accent); }
-.tone-warn { background: #fff4e5; color: #b25e00; }
-.tone-bad { background: #fff2f1; color: #c4271c; }
-.tone-stale { background: #f2f2f7; color: #6e6e73; }
+/* Tonos del estado (.status.tone-…): los mismos de .chip, definidos en las piezas base. */
 .status-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 /* Panel de telemetría del radar: una sola ficha, siempre en cuadrícula 2×2 (la ficha nunca pasa de 480 px). */
-.telemetry { margin: 14px 0 6px; padding: 14px 16px 10px; border-radius: 16px; background: rgba(255, 255, 255, 0.62); border: 1px solid var(--line); }
+.telemetry { margin: 14px 0 6px; padding: 14px 16px 10px; border-radius: 16px; background: var(--field); border: 1px solid var(--border); }
 .tm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 .tm-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tm-label { font-size: 12px; color: var(--muted); }
@@ -207,10 +254,10 @@ button { font: inherit; cursor: pointer; }
 .tm-flying { align-items: center; gap: 4px; color: var(--accent); }
 .tm-flying .fly { width: 34px; }
 .tm-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 12px; padding-top: 9px;
-  border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
 .tm-source { font-weight: 600; color: var(--text); }
 .tm-match { margin: 6px 0 0; font-size: 12px; line-height: 1.35; color: var(--muted); }
-.radar { margin: 10px 0 0; font-size: 14px; line-height: 1.4; color: var(--text, #1d1d1f); }
+.radar { margin: 10px 0 0; font-size: 14px; line-height: 1.4; color: var(--text); }
 .radar.muted { color: var(--muted); }
 /* En vuelo: un avión cruza en bucle junto al texto (decorativo; no indica la posición real). */
 .status.flying { display: inline-flex; align-items: center; gap: 6px; }
@@ -230,15 +277,15 @@ button { font: inherit; cursor: pointer; }
 }
 .route-line { display: flex; align-items: center; gap: 12px; margin: 18px 0 6px; }
 .route-line strong { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
-.route-line .line { flex: 1; position: relative; height: 1px; background: var(--line); }
+.route-line .line { flex: 1; position: relative; height: 1px; background: var(--border); }
 .route-line .line em { position: absolute; left: 50%; top: -22px; transform: translateX(-50%); font-style: normal; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .route-line .plane { position: absolute; left: 0; top: -11px; font-size: 18px; color: var(--accent); }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
-.side + .side { border-left: 1px solid var(--line); padding-left: 16px; }
+.side + .side { border-left: 1px solid var(--border); padding-left: 16px; }
 .side p { margin: 0; }
 .side .lbl { font-size: 13px; color: var(--muted); }
-.side .big { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; color: #1a7f37; }
-.side .big.late { color: #b25e00; }
+.side .big { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; color: var(--ok); }
+.side .big.late { color: var(--warn); }
 .side .big.estimated { color: var(--text); } /* estimación Turbi: sin el verde de «en hora» de Aena */
 .side .was { font-size: 13px; color: var(--muted); text-decoration: line-through; }
 .side .est-note { font-size: 13px; color: var(--muted); }
@@ -246,7 +293,7 @@ button { font: inherit; cursor: pointer; }
 .flight .foot { font-size: 12px; color: var(--muted); margin: 16px 0 0; }
 /* Títulos de sección (Puntualidad, Turbulencias, Condiciones por altitud…): se distinguen del texto con tamaño,
    negrita, color de texto y una línea que separa cada sección. Subtítulos dentro de una sección: un escalón menos. */
-h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(--line);
+h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(--border);
   font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: 0.05em; }
 .note { margin: 20px 0 0; padding: 14px 16px; border-radius: 12px; background: var(--field); font-size: 15px; }
 
@@ -278,18 +325,18 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 .alt-table { list-style: none; margin: 0; padding: 0; }
 /* Cuadrícula: altura · punto · nivel · % (a la derecha, alineado en todas las filas); etiquetas debajo. */
 .alt-table li { display: grid; grid-template-columns: 4.2em 10px 5.6em 1fr; align-items: center; column-gap: 10px; row-gap: 4px;
-  padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 15px; border-radius: 8px; }
+  padding: 9px 8px; border-bottom: 1px solid var(--border); font-size: 15px; border-radius: 8px; }
 .alt-table li.head { padding-top: 0; padding-bottom: 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .alt-table li.head .share { font-size: 12px; }
 .alt-table .tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
-.alt-table li.calm { background: #e8f8ee; }
+.alt-table li.calm { background: rgba(23, 134, 74, 0.08); }
 .alt-table .fl { font-weight: 700; font-variant-numeric: tabular-nums; }
 .alt-table .dot { width: 10px; height: 10px; border-radius: 50%; }
 .alt-table .share { color: var(--muted); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
-.tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 7px; border-radius: 6px; background: #1a7f37; color: #fff; }
+.tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 7px; border-radius: 6px; background: var(--ok); color: #fff; }
 .tag.muted { background: var(--field); color: var(--muted); }
 .note-small { font-size: 12px; color: var(--muted); line-height: 1.4; margin: 10px 0 0; }
-.apt { padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.apt { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
 .apt p { margin: 2px 0; }
 .apt ul { margin: 2px 0; padding-left: 18px; }
 .apt-title { font-weight: 600; }
@@ -303,7 +350,7 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .map { height: 260px; border-radius: 14px; margin-top: 18px; overflow: hidden; }
 .fresh { font-size: 12px; color: var(--muted); margin: 18px 0 0; line-height: 1.5; }
 .disclaimer { font-size: 12px; color: var(--muted); margin: 8px 0 0; font-style: italic; }
-.offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: #fff4e5; color: #b25e00; font-size: 14px; font-weight: 500; }
+.offline { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 #saved-link { margin-top: 4px; }
 .facts > .conf-row:has(details[open]) { grid-template-columns: 1fr; }
 .facts .conf ul { padding-left: 18px; margin: 8px 0 0; }
@@ -316,16 +363,16 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .prow .pk { font-size: 13px; color: var(--muted); }
 .prow small { color: var(--muted); font-size: 12px; }
 .pdelay { font-weight: 600; font-size: 14px; }
-.pband-ok { color: #1a7f37; } .pband-warn { color: #9a7400; } .pband-late { color: #b25e00; } .pband-bad { color: #c4271c; }
+.pband-ok { color: var(--ok); } .pband-warn { color: var(--warn); } .pband-late { color: var(--warn); } .pband-bad { color: var(--bad); }
 .pbadge { display: inline-block; margin: 8px 0 0; padding: 5px 12px; border-radius: 10px; font-weight: 600; font-size: 14px; background: var(--field); }
 .pbig { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 0 0; }
 .pbig + p { margin: 0 0 8px; color: var(--muted); font-size: 15px; }
 .plist, .pstats { list-style: none; margin: 4px 0; padding: 0; font-size: 14px; }
 .plist li { padding: 4px 0; }
 .plist .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; background: currentColor; }
-.plist .dot.pband-ok { background: #34c759; } .plist .dot.pband-warn { background: #ffcc00; }
-.plist .dot.pband-late { background: #ff9f0a; } .plist .dot.pband-bad { background: #ff3b30; }
-.pstats li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.plist .dot.pband-ok { background: var(--lvl1); } .plist .dot.pband-warn { background: var(--lvl2); }
+.plist .dot.pband-late { background: var(--warn); } .plist .dot.pband-bad { background: var(--bad); }
+.pstats li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .pstats li span:last-child { color: var(--muted); text-align: right; }
 #punctuality { margin-bottom: 8px; }
 
@@ -335,9 +382,9 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .gate-v { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
 .gate.pending .gate-v { font-size: 18px; font-weight: 600; color: var(--muted); }
 .gate small { font-size: 12px; color: var(--muted); width: 100%; }
-.tag.warn { background: #b25e00; }
-.mismatch { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: #fff4e5; color: #8a4a00; font-size: 14px; line-height: 1.4; }
-.stale { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: #fff4e5; color: #8a4a00; font-size: 14px; font-weight: 500; }
+.tag.warn { background: var(--warn); }
+.mismatch { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; line-height: 1.4; }
+.stale { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 14px; font-weight: 500; }
 
 /* Varios vuelos físicos con el mismo número y fecha: se escoge el tramo por su ruta. */
 .leg-switch { display: flex; flex-direction: column; gap: 8px; margin: 0 0 36px; } /* 16 px + los −20 px de .plane-photo */
@@ -347,14 +394,7 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .alias-route { margin: 0; }
 .alias-route small { color: var(--muted); margin-left: 6px; }
 .leg-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 10px 14px;
-  border-radius: 12px; border: 1px solid var(--line, rgba(0, 0, 0, 0.12)); background: var(--card, rgba(255, 255, 255, 0.7)); color: inherit;
+  border-radius: 12px; border: 1px solid var(--border); background: var(--card); color: inherit;
   font: inherit; cursor: pointer; }
 .leg-option small { color: var(--muted); }
-.leg-option.selected { border-color: var(--accent, #0a84ff); box-shadow: 0 0 0 1px var(--accent, #0a84ff) inset; }
-
-/* Experimento solo móvil: el documento mide al menos el viewport grande (lienzo real detrás de las barras de Safari)
-   y sin la capa fija del fondo; la foto la pinta el html (misma imagen, center top y la misma escala). */
-@media (max-width: 767px), (hover: none) and (pointer: coarse) {
-  body, main { min-height: 100vh; min-height: 100lvh; }
-  body::before { display: none; }
-}
+.leg-option.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }

@@ -31,6 +31,7 @@ import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arriva
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { LIVE_BASE } from './config.js';
 import { BUILD_ID } from './build.js';
+import { icon } from './icons.js';
 
 const PUNCTUALITY_SINCE = '2026-09-24'; // primer día del histórico de puntualidad
 
@@ -46,6 +47,10 @@ const els = {
 };
 
 document.documentElement.dataset.turbiBuild = BUILD_ID;
+// Barra de la ficha: «Nueva consulta» y «Actualizar» son botones de solo icono (su nombre accesible es el aria-label
+// del HTML). Los SVG salen de js/icons.js para no duplicarlos en el HTML.
+els.back.innerHTML = icon('back', { size: 24 });
+els.refresh.innerHTML = icon('refresh', { size: 22 });
 
 let lastQuery = null;
 let runId = 0; // solo la consulta más reciente puede pintar
