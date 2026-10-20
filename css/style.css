@@ -530,6 +530,9 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .tiles-soft { filter: saturate(.55) brightness(1.06) contrast(.92); }
 .plane-marker { color: var(--accent); background: none; border: 0; filter: drop-shadow(0 1px 2px rgba(15, 40, 80, .35)); }
 .plane-marker .icon { display: block; }
+/* El icono apunta al este; el mapa lo gira hacia la última posición real recibida (solo presentación). */
+.plane-marker .plane-rot { display: block; transition: transform var(--ease); }
+@media (prefers-reduced-motion: reduce) { .plane-marker .plane-rot { transition: none; } }
 .map-btn { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--field); color: var(--text); cursor: pointer; }
 .map-btn .icon { color: inherit; }
 .map-close { display: none; }

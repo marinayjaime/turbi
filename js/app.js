@@ -894,8 +894,15 @@ function mountMap(q, stale) {
     if (token !== mapToken || stale()) { m.destroy(); return; }
     routeMap = m;
     if (currentView?.route) m.setForecast(currentView);
-    m.setPlane(shownCard ? planeOnMap(shownCard.radar, shownCard.radarReceivedAt, Date.now()) : null);
+    showPlane(m, shownCard);
   }).catch(() => {});
+}
+
+// Avión en el mapa: posición real de 60 s o menos (planeOnMap) y la identidad de esa lectura (vuelo físico + avión
+// por transpondedor o, si no, indicativo), para que el mapa no anime entre dos aviones o dos vuelos distintos.
+const planeIdentity = card => `${card?.physicalKey ?? ''}|${card?.radar?.hex ?? card?.radar?.callsign ?? ''}`;
+function showPlane(map, card) {
+  map?.setPlane(card ? planeOnMap(card.radar, card.radarReceivedAt, Date.now()) : null, { identity: planeIdentity(card) });
 }
 
 // Indicativo, Avión e Identificación bajo el mapa (mapFactsHtml): solo en el aire con el radar «volando».
@@ -934,7 +941,7 @@ function repaintFlight(card, stale) {
   const title = $in('map-card')?.querySelector('.card-title');
   if (title) title.textContent = mapTitle(flightPhase(card));
   paintMapFacts(card);
-  routeMap?.setPlane(planeOnMap(card.radar, card.radarReceivedAt, Date.now()));
+  showPlane(routeMap, card);
   if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
   if (els.result.scrollTop !== resultTop) els.result.scrollTop = resultTop;
   startSignal(card, stale);
