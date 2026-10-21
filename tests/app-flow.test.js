@@ -2704,18 +2704,22 @@ describe('seguimiento en vivo con Flightradar24', () => {
       const other = { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [{ d: tomorrow, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${tomorrow}T17:55`, st: 'SCH' }] } };
       await load({ extraFlights: other });
       mark();
+      await to(46);
+      expect(radarCalls()).toHaveLength(2); // el seguidor estaba activo
       await search('IB1668', tomorrow);
       await until(() => $('#result .flight')?.textContent.includes('IB 1668'), 'otra ficha');
       await to(400);
-      expect(radarCalls()).toHaveLength(1);
+      expect(radarCalls()).toHaveLength(2);
     } finally { vi.useRealTimers(); }
     fakeAll();
     try {
       await load();
       mark();
+      await to(46);
+      expect(radarCalls()).toHaveLength(2); // el seguidor estaba activo
       $('#back').click();
       await to(400);
-      expect(radarCalls()).toHaveLength(1);
+      expect(radarCalls()).toHaveLength(2);
     } finally { vi.useRealTimers(); }
   }, 30000);
 
@@ -2741,6 +2745,8 @@ describe('seguimiento en vivo con Flightradar24', () => {
         render.legs = [{ ...leg, ...flags }];
         render.updated = new Date(Date.now() + 600000).toISOString();
         mark();
+        await to(46);
+        expect(radarCalls().length, 'seguidor activo antes de Aena').toBeGreaterThanOrEqual(2);
         await to(640);
         await until(() => !$('.telemetry'), `Aena ${flags.sta}`);
         const n = radarCalls().length;
@@ -2853,6 +2859,103 @@ describe('seguimiento en vivo con Flightradar24', () => {
       expect(planeDimmed(log)).toBe(false);
       await to(46);
       expect(planeDimmed(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  // ---- Ronda de corrección 1 ----
+  const refreshNow = async () => { const n = radarCalls().length; $('#refresh').click(); await until(() => radarCalls().length === n + 1, '«Actualizar»'); await networkIdle(); };
+  it('Importante 1) un seguidor parado (401/403) no impide otro: «Actualizar» con «volando» → a los +45 s, petición nueva', async () => {
+    fakeAll();
+    try {
+      await load({ radar: k => (k === 1 ? { state: 'no-disponible', source: 'fr24', reason: 'autorizacion' } : reading(k)) });
+      mark();
+      await to(46);
+      await to(200);
+      expect(radarCalls()).toHaveLength(2); // parado
+      await refreshNow();
+      const at = performance.now() - t0;
+      await to(at / 1000 + 44);
+      expect(radarCalls()).toHaveLength(3);
+      await to(at / 1000 + 46);
+      expect(radarCalls()).toHaveLength(4);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('Importante 2) «Actualizar» sin respuesta persistente: el seguidor no se queda en espera para siempre', async () => {
+    fakeAll();
+    try {
+      await load({ radar: k => (k === 0 ? reading(0) : null) });
+      mark();
+      await to(20);
+      await refreshNow();
+      const own = () => radarCalls().slice(2).filter(u => new URL(u).searchParams.get('poll') === null);
+      await to(20 + 175);
+      expect(own()).toHaveLength(0); // en espera (el sondeo de «Actualizar» manda)
+      await to(20 + 285); // tope de 3 min + espera de fallo de 90 s
+      expect(own().length).toBeGreaterThanOrEqual(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('Importante 3) seguimiento al día con caché de 35 s (posición de 37 s al llegar): entre ciclos, quieto y SIN atenuar; fuera a los 180 s', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => reading(k, { posAgeS: 37, seenS: 37 }) });
+      mark();
+      expect(planeDimmed(log)).toBe(false);
+      await to(30); // 67 s: ya no es fresca, pero la lectura siguiente está al llegar
+      expect(planeOnScreen(log)).toBe(true);
+      expect(planeDimmed(log)).toBe(false);
+      const path = log.markers[0].path.length;
+      await to(44);
+      expect(planeDimmed(log)).toBe(false);
+      expect(log.markers[0].path).toHaveLength(path); // quieta: nada se mueve con una lectura vieja
+      await to(46);
+      expect(radarCalls()).toHaveLength(2);
+      await to(80); // el ciclo siguiente, otra vez sin atenuar
+      expect(planeDimmed(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('Importante 3) con un fallo, la última posición (vieja) sí se atenúa; y pasados 180 s desaparece', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => (k === 0 ? reading(0, { posAgeS: 37, seenS: 37 }) : null) });
+      mark();
+      await to(30);
+      expect(planeDimmed(log)).toBe(false);
+      await to(46); // el ciclo falla: falta la lectura esperada
+      expect(planeDimmed(log)).toBe(true);
+      await to(140); // 177 s
+      expect(planeOnScreen(log)).toBe(true);
+      await to(145); // 182 s
+      expect(planeOnScreen(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('menor) «Actualizar» con «no disponible»: no se pinta encima (telemetría y avión de la última lectura real se quedan)', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => (k === 0 ? reading(0) : { state: 'no-disponible', source: 'fr24', reason: 'servidor' }) });
+      mark();
+      await to(10);
+      await refreshNow();
+      expect($('.telemetry')).not.toBeNull();
+      expect($('#result .flight').textContent).not.toContain('Sin señal');
+      expect(planeOnScreen(log)).toBe(true);
+      expect(planeDimmed(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('menor) lectura «sin datos» con la última posición real de 10 s: el avión sigue con su frescura real (sin atenuar)', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => (k === 0 ? reading(0) : { state: 'sin-datos', source: 'fr24' }) });
+      mark();
+      await to(8);
+      await refreshNow();
+      expect(planeOnScreen(log)).toBe(true);
+      expect(planeDimmed(log)).toBe(false);
+      expect(log.markers[0].path).toEqual([[51, -1]]);
     } finally { vi.useRealTimers(); }
   }, 30000);
 });

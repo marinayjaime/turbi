@@ -157,8 +157,8 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     const r = rotEl();
     if (r) r.style.transform = `rotate(${angle}deg)`;
   };
-  // Última posición conocida (fresh: false): atenuada; fresca, normal.
-  const age = fresh => rotEl()?.classList?.toggle?.('plane-old', fresh === false);
+  // Atenuado (.plane-old): falta la lectura esperada y lo que se ve es solo la última posición conocida.
+  const age = dimmed => rotEl()?.classList?.toggle?.('plane-old', dimmed === true);
   const drawRoute = r => {
     lineLayers.splice(0).forEach(l => l.remove());
     for (const l of routeLines(r)) lineLayers.push(L.polyline(l.coords, { color: COLORS[l.level], ...ROUTE_STYLE }).addTo(map));
@@ -186,17 +186,19 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     // físico de esa lectura. Con null no hay marcador: se cancela cualquier movimiento. La primera posición, la que llega
     // tras perderla y la de otro avión o vuelo se colocan directamente; una lectura FRESCA nueva del mismo avión se
     // desplaza desde lo que se ve hasta ella (sin pasarse ni seguir después), o directa con prefers-reduced-motion. Una
-    // lectura vieja (fresh: false, la última posición conocida) nunca anima: se coloca o se queda quieta, atenuada
-    // (.plane-old). El rumbo real (heading) se aplica en cada lectura, también si la posición no cambia. Nunca recentra
+    // lectura vieja (fresh: false, la última posición conocida) nunca anima: se coloca o se queda quieta y, salvo
+    // dim: false (el seguimiento en vivo va al día y la lectura siguiente está al llegar), atenuada (.plane-old). El rumbo real (heading) se aplica en cada lectura, también si la posición no cambia. Nunca recentra
     // ni cambia el zoom.
     setPlane(pos, { identity: id = null } = {}) {
       if (!pos) { stop(); plane?.remove(); plane = null; shown = target = identity = null; angle = null; drawTrack(); return; }
       const next = { lat: pos.lat, lon: pos.lon };
       const fresh = pos.fresh !== false;
+      // dim (lo decide quien llama): con fresh: false, si se atenúa; por defecto, siempre que no sea fresca.
+      const dim = typeof pos.dim === 'boolean' ? pos.dim : !fresh;
       const heading = Number.isFinite(pos.heading) ? pos.heading : null;
       if (plane && id === identity && target && next.lat === target.lat && next.lon === target.lon) { // misma lectura
         turn(heading);
-        age(fresh);
+        age(dim);
         return;
       }
       if (!plane) {
@@ -209,7 +211,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
         identity = id;
         angle = null;
         turn(heading);
-        age(fresh);
+        age(dim);
         drawTrack();
         return;
       }
@@ -217,7 +219,9 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       const sameAircraft = id === identity;
       identity = id;
       target = next;
-      age(fresh);
+      // Otro avión u otro vuelo físico: su orientación empieza de cero (sin track, sin rotar; nunca la del anterior).
+      if (!sameAircraft) { angle = null; const r = rotEl(); if (r) r.style.transform = ''; }
+      age(dim);
       if (!sameAircraft || !fresh || clock.reducedMotion()) { turn(heading); put(next); return; }
       const from = shown;
       turn(heading ?? bearing(from, next));

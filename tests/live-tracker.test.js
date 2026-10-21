@@ -192,8 +192,9 @@ describe('startLiveTracker', () => {
     const h = harness();
     await h.run(20000);
     h.tracker.hold();
-    expect(h.timers.size).toBe(0);
-    await h.run(600000);
+    expect(h.pendingIn()).toEqual([180000]); // solo el tope de la espera
+    expect(h.tracker.onTime).toBe(false);
+    await h.run(179999);
     expect(h.fetchOnce).not.toHaveBeenCalled();
     h.tracker.feed(flying());
     expect(h.onReading).not.toHaveBeenCalled();
@@ -211,7 +212,53 @@ describe('startLiveTracker', () => {
     release(flying());
     await h.flush();
     expect(h.onReading).not.toHaveBeenCalled();
-    expect(h.timers.size).toBe(0);
+    expect(h.pendingIn()).toEqual([180000]); // solo el tope de la espera
+  });
+  it('Importante 2) una espera sin feed (el sondeo de «Actualizar» no llega a dar nada) sale sola a los 3 min como un fallo', async () => {
+    const h = harness();
+    h.tracker.hold();
+    await h.run(180000);
+    expect(h.fetchOnce).not.toHaveBeenCalled();
+    expect(h.pendingIn()).toEqual([90000]); // espera de fallo
+    await h.run(90000);
+    expect(h.fetchOnce).toHaveBeenCalledTimes(1);
+    expect(h.pendingIn()).toEqual([45000]);
+  });
+  it('onTime: al día con el ciclo programado; no tras un fallo, en espera, con la pestaña oculta ni parado; onChange avisa', async () => {
+    const onChange = vi.fn();
+    let t = 0;
+    const timers = new Map(); let seq = 0;
+    const env = { visible: true };
+    const answers = [null, flying()];
+    const tr = startLiveTracker({ key: 'k', fetchOnce: async () => answers.shift(), onReading: () => {}, onChange, visible: () => env.visible,
+      now: () => t, setTimer: (fn, ms) => { timers.set(++seq, { at: t + ms, fn }); return seq; }, clearTimer: id => timers.delete(id) });
+    expect(tr.onTime).toBe(true);
+    const fire = async () => { const [id, x] = [...timers.entries()][0]; timers.delete(id); t = x.at; x.fn(); for (let i = 0; i < 10; i++) await Promise.resolve(); };
+    await fire(); // null → fallo
+    expect(tr.onTime).toBe(false);
+    expect(onChange).toHaveBeenCalled();
+    await fire(); // lectura buena
+    expect(tr.onTime).toBe(true);
+    env.visible = false;
+    tr.onVisibility();
+    expect(tr.onTime).toBe(false);
+    env.visible = true;
+    tr.onVisibility();
+    expect(tr.onTime).toBe(true);
+    tr.stop();
+    expect(tr.onTime).toBe(false);
+  });
+  it('visibilidad: solo «visible» cuenta como visible (prerender, hidden o desconocido no piden)', async () => {
+    const doc = globalThis.document;
+    globalThis.document = { visibilityState: 'prerender' };
+    try {
+      let n = 0;
+      const timers = [];
+      startLiveTracker({ key: 'k', fetchOnce: async () => { n++; return flying(); }, onReading: () => {}, now: () => 0,
+        setTimer: (fn, ms) => { timers.push(fn); return timers.length; }, clearTimer: () => {} });
+      expect(timers).toHaveLength(0); // ni siquiera programa el ciclo
+      expect(n).toBe(0);
+    } finally { globalThis.document = doc; }
   });
   it('stop: sin temporizadores y sin peticiones después', async () => {
     const h = harness();

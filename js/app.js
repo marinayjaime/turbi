@@ -23,7 +23,7 @@ import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText }
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
 import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S } from './card-model.js';
-import { startLiveTracker } from './live-tracker.js';
+import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
@@ -483,6 +483,7 @@ const liveOver = q => (q?.kind === 'schedule' && aenaFinal(q.leg)) || endedBadly
 // Tras cada respuesta del sondeo de la ficha (la primera, la de «Actualizar» o la de «Localizando…»).
 function followLive(q, flight, ctx, stale, radar, fetchOnce) {
   const key = liveKey(q);
+  if (live?.tracker.stopped) live = null; // uno que se paró solo (aterrizado, 401/403…) no impide crear otro
   if (live && live.key !== key) stopLive();
   if (live) {
     Object.assign(live.ctx, { q, flight, ctx, stale, fetchOnce });
@@ -499,10 +500,17 @@ function followLive(q, flight, ctx, stale, radar, fetchOnce) {
     onReading: r => paintRadar(c.q, c.flight, r, c.ctx, c.stale),
     isActive: () => !c.stale() && cardVisible(),
     isOver: () => liveOver(c.q),
+    // Si deja de ir al día (fallo, espera, pausa, parada) o vuelve, el avión puede pasar a atenuado o dejar de estarlo.
+    onChange: () => { if (routeMap && shownCard) showPlane(routeMap, shownCard); },
     now: monoNow,
   });
   live = { key, ctx: c, tracker };
 }
+// El sondeo de esta consulta no llega a arrancar o se agota sin respuesta útil: un seguidor en espera (traspaso de
+// «Actualizar») sale de ella como tras un fallo (siguiente intento a los 90 s), nunca se queda parado.
+function liveIdle() { if (live?.tracker.held) live.tracker.feed(null); }
+// El seguimiento va al día para la ficha en pantalla: la lectura siguiente está al llegar.
+const liveOnTime = () => Boolean(live && live.tracker.onTime && live.key === liveKey(lastQuery));
 document.addEventListener('visibilitychange', () => {
   live?.tracker.onVisibility();
   if (live?.tracker.stopped) live = null;
@@ -512,13 +520,14 @@ document.addEventListener('visibilitychange', () => {
 // regla compartida (adbRadarGate) lo permite: dentro de la ventana del vuelo. Sin exigir transpondedor ni indicativo:
 // con Flightradar24 el servidor lo busca por su número comercial (sin FR24, el servidor responde «no-aplica»).
 async function showAdbRadar(q, flight, stale, ctx) {
-  if (!flight || !LIVE_BASE) return;
-  if (adbRadarGate(q.adbLeg, q.adbMeta, Date.now(), { plannedMin: ctx?.plannedMin, requireIdentifier: false }).mode === 'none') return;
+  if (!flight || !LIVE_BASE) { liveIdle(); return; }
+  if (adbRadarGate(q.adbLeg, q.adbMeta, Date.now(), { plannedMin: ctx?.plannedMin, requireIdentifier: false }).mode === 'none') { liveIdle(); return; }
   stopRadarPoll();
   const fetchOnce = ({ poll: isPoll }) => fetchAdbRadar(q.adbMeta.number, q.adbMeta.date, q.adbKey, undefined, undefined, { poll: isPoll });
   const poll = pollRadar({
     fetchOnce,
     onResult: radar => { paintRadar(q, flight, radar, ctx, stale); followLive(q, flight, ctx, stale, radar, fetchOnce); },
+    onGiveUp: () => { if (!stale()) liveIdle(); },
     isActive: () => !stale() && cardVisible(),
   });
   radarPoll = poll;
@@ -527,8 +536,8 @@ async function showAdbRadar(q, flight, stale, ctx) {
 
 async function showRadar(q, flight, stale, ctx = null) {
   if (q.kind === 'adb') return showAdbRadar(q, flight, stale, ctx);
-  if (!flight || flight.stale || !q.leg || q.leg.past) return;
-  if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) return;
+  if (!flight || flight.stale || !q.leg || q.leg.past) { liveIdle(); return; }
+  if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) { liveIdle(); return; }
   stopRadarPoll();
   q.etaCtx = ctx;
   // El mismo vuelo físico en la primera consulta, en todos los sondeos y en el seguimiento en vivo.
@@ -536,6 +545,7 @@ async function showRadar(q, flight, stale, ctx = null) {
   const poll = pollRadar({
     fetchOnce,
     onResult: radar => { paintRadar(q, flight, radar, ctx, stale); followLive(q, flight, ctx, stale, radar, fetchOnce); },
+    onGiveUp: () => { if (!stale()) liveIdle(); },
     isActive: () => !stale() && cardVisible(),
   });
   radarPoll = poll;
@@ -545,8 +555,15 @@ async function showRadar(q, flight, stale, ctx = null) {
 function paintRadar(q, flight, radar, ctx, stale) {
   // Aena ya confirmó la llegada (o canceló/desvió): ninguna lectura ADS-B, ni una respuesta tardía, la contradice.
   if (q.kind === 'schedule' && aenaFinal(q.leg)) return;
-  if (radar) q.lastRadar = radar;
   flight = q.flightBase ?? flight; // la tarjeta con el último estado de Aena (refrescado)
+  // Una respuesta fallida (sin respuesta o «no disponible») con una lectura real de este vuelo físico en la ficha no se
+  // pinta encima: no borra telemetría ni avión. En el traspaso de «Actualizar» (la ficha nueva aún sin radar) vuelve a
+  // pintarse esa última lectura real, tal cual (su antigüedad sigue contando).
+  if ((!radar || radar.state === 'no-disponible') && lastFix && lastFix.physicalKey === flight.physicalKey) {
+    if (!stale() && shownCard && !shownCard.radar && shownCard !== lastFix && els.result.querySelector('.flight')) repaintFlight(lastFix, stale);
+    return;
+  }
+  if (radar) q.lastRadar = radar;
   rememberSighting(radarKey(q), radar);
   rememberLanding(radarKey(q), radar);
   // La lectura tal como vale al recibirla (receivedRadar) y el instante MONOTÓNICO de recepción: de ahí envejecen
@@ -731,7 +748,7 @@ async function run(q, handoff = null) {
   if (kept) keptMap = null;
   // El seguimiento en vivo y la última posición real del MISMO vuelo físico pasan a la ficha nueva (el seguidor, en espera
   // hasta la primera respuesta de esta consulta: nunca dos a la vez).
-  const keptLive = same && live?.key === liveKey(q) ? live : null;
+  const keptLive = same && live?.key === liveKey(q) && !live.tracker.stopped ? live : null;
   const keptFix = same ? lastFix : null;
   if (keptLive) live = null;
   clearFicha(); // y su mapa
@@ -957,7 +974,7 @@ function adoptMap(fresh) {
 // Última posición REAL conocida de esta ficha (lastFix: la última tarjeta con «volando» y posición; decisión del
 // controlador, 21/10/2026): si la lectura actual no trae posición (localizando, sin datos, estimada, «reciente», un
 // traspaso de «Actualizar» aún sin respuesta), el avión se queda EXACTAMENTE ahí mientras tenga ≤ 180 s, quieto y
-// atenuado (fresh: false; en el traspaso, con su frescura real). Nunca de otro vuelo físico ni de otro avión, ni con la
+// con su frescura real (atenuado según withDim). Nunca de otro vuelo físico ni de otro avión, ni con la
 // ficha terminada o cancelada. Pasados 180 s, fuera. planeTimer: un solo temporizador al siguiente cambio (60 s: deja
 // de ser fresca; 180 s: desaparece); cero peticiones.
 let lastFix = null, planeTimer = null;
@@ -971,16 +988,27 @@ function planeFor(card) {
   const id = planeIdentity(card);
   if (!id.endsWith('|') && id !== planeIdentity(fix)) return null; // la lectura actual es de otro avión
   const old = planeOnMap(fix.radar, fix.radarReceivedMono, monoNow());
-  if (!old) return null;
-  return { pos: card.radar ? { ...old, fresh: false } : old, from: fix };
+  return old ? { pos: old, from: fix } : null;
 }
-// Vuelve a mirar el avión cuando cambie su frescura (60 s) o caduque (180 s), con la ficha que haya entonces.
+// Estilo (decisión del controlador, ronda 1): pasados 60 s la posición NO es fresca (ni anima ni prolonga la estela),
+// pero solo se ATENÚA cuando falta una lectura esperada: sin seguimiento al día (parado, en espera, en pausa o tras un
+// fallo) o con más de 60 + 45 s (la lectura del ciclo ya debería haber llegado). Con el seguimiento al día, quieta y sin
+// atenuar hasta la lectura siguiente.
+const DIM_ON_TIME_S = PLANE_MAX_AGE_S + LIVE_INTERVAL_MS / 1000;
+function withDim(seen) {
+  if (!seen) return null;
+  const ageS = positionAgeS(seen.from.radar, seen.from.radarReceivedMono, monoNow());
+  const dim = !seen.pos.fresh && (!liveOnTime() || !(ageS <= DIM_ON_TIME_S));
+  return { ...seen, ageS, pos: { ...seen.pos, dim } };
+}
+// Vuelve a mirar el avión cuando cambie su frescura (60 s), cuando deba atenuarse al día (105 s) o caduque (180 s), con
+// la ficha que haya entonces.
 function schedulePlane(map, seen) {
   stopPlaneTimer();
   if (!seen) return;
-  const ageS = positionAgeS(seen.from.radar, seen.from.radarReceivedMono, monoNow());
-  if (ageS === null) return;
-  const limit = seen.pos.fresh ? PLANE_MAX_AGE_S : PLANE_LAST_KNOWN_S;
+  const { ageS } = seen;
+  if (!Number.isFinite(ageS)) return;
+  const limit = seen.pos.fresh ? PLANE_MAX_AGE_S : !seen.pos.dim && ageS <= DIM_ON_TIME_S ? DIM_ON_TIME_S : PLANE_LAST_KNOWN_S;
   planeTimer = setTimeout(() => { planeTimer = null; if (routeMap === map && shownCard) showPlane(map, shownCard); },
     Math.max(0, (limit - ageS) * 1000) + 1);
 }
@@ -1074,7 +1102,7 @@ function mountMap(q, stale) {
 // dos vuelos distintos: un cambio de fr24Id coloca el avión directamente.
 const planeIdentity = card => `${card?.physicalKey ?? ''}|${card?.radar?.fr24Id ?? card?.radar?.hex ?? card?.radar?.callsign ?? ''}`;
 function showPlane(map, card) {
-  const seen = planeFor(card);
+  const seen = withDim(planeFor(card));
   const before = planeTimes.map === map ? planeTimes.utc : null;
   map?.setPlane(seen?.pos ?? null, { identity: seen ? planeIdentity(seen.from) : planeIdentity(card) });
   notePlaneTime(map, seen ? readingUtc(seen.from.radar) : null, before);

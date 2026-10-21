@@ -533,13 +533,21 @@ describe('seguimiento en vivo: caché de 40 s, antigüedad al responder y motivo
     expect(Date.parse(b.checked) - b.posAgeS * 1000).toBe(Date.parse(a.checked) - a.posAgeS * 1000);
     expect([b.lat, b.lon]).toEqual([a.lat, a.lon]);
   });
-  it('posición real hasta 180 s: lat/lon/posAgeS presentes; servida desde la caché con más de 180 s, sin posición', async () => {
+  it('posición real hasta 180 s; servida desde la caché con más de 180 s → «sin-datos» sin telemetría (como fr24Result)', async () => {
     const s = server([ib403()], () => [item({ timestamp: new Date(NOW - 170000).toISOString() })]);
     const a = await s.ask(NOW);
     expect(a).toMatchObject({ state: 'volando', lat: 44.0123, lon: -2.5432, posAgeS: 170 });
     const b = await s.ask(NOW + 20000);
-    expect(b.state).toBe('volando');
-    for (const k of ['lat', 'lon', 'posAgeS']) expect(b).not.toHaveProperty(k);
+    expect(s.fr24()).toHaveLength(1);
+    expect(b).toEqual({ state: 'sin-datos', source: 'fr24', departureConfirmed: false, checked: new Date(NOW + 20000).toISOString() });
+  });
+  it('la antigüedad desde la caché sale del instante EXACTO de la posición (sin oscilar ±1 s por redondeos)', async () => {
+    const s = server([ib403()], () => [item({ timestamp: new Date(NOW - 4600).toISOString() })]); // 4,6 s → 5
+    expect((await s.ask(NOW)).posAgeS).toBe(5);
+    // 4,6 + 0,6 = 5,2 s → 5 (sumar 1 s redondeado a los 5 daría 6); 4,6 + 30,4 = 35 s.
+    expect((await s.ask(NOW + 600)).posAgeS).toBe(5);
+    expect((await s.ask(NOW + 30400)).posAgeS).toBe(35);
+    expect(s.fr24()).toHaveLength(1);
   });
   it('las respuestas del radar FR24 no se guardan en el navegador (no-store): la caché es la del servidor', async () => {
     const s = server();

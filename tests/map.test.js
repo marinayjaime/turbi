@@ -425,6 +425,7 @@ describe('createRouteMap: orientación real y última posición conocida', () =>
   const make = () => createRouteMap({ hidden: true }, OPTS, clock);
   const deg = (m = ctx.log.markers.at(-1)) => {
     const tr = m.rot.style.transform;
+    if (tr === '') return null;
     return tr ? Number(tr.match(/rotate\((-?[\d.]+)deg\)/)[1]) : null;
   };
   const P = (over = {}) => ({ lat: 40, lon: 0, fresh: true, heading: null, ...over });
@@ -468,6 +469,15 @@ describe('createRouteMap: orientación real y última posición conocida', () =>
     m.setPlane(P({ lat: 41 }), { identity: ID }); // hacia el norte
     expect(deg()).toBeCloseTo(-90, 0);
   });
+  it('cambio de avión o de identidad sin track: no hereda la rotación del avión anterior', async () => {
+    const m = await make();
+    m.setPlane(P({ heading: 0 }), { identity: ID });
+    expect(deg()).toBe(-90);
+    m.setPlane(P({ lon: 1 }), { identity: 'v1|otro' }); // otro avión, sin track
+    expect(deg()).toBeNull();
+    m.setPlane(P({ lon: 1.2, heading: 180 }), { identity: 'v1|otro' });
+    expect(deg()).toBe(90); // y el primer rumbo del nuevo, normalizado desde cero
+  });
   it('ORIENTACIÓN 7) primera posición sin track → sin rotación inventada (el icono se queda como está)', async () => {
     const m = await make();
     m.setPlane(P(), { identity: ID });
@@ -496,6 +506,16 @@ describe('createRouteMap: orientación real y última posición conocida', () =>
     advance(1250);
     expect(mk.ll).toEqual([40, 1]);
     expect(ctx.log.markers).toHaveLength(1);
+  });
+  it('fresh: false con dim: false (seguimiento al día): quieta y SIN atenuar; tampoco anima', async () => {
+    const m = await make();
+    m.setPlane(P(), { identity: ID });
+    m.setPlane(P({ fresh: false, dim: false }), { identity: ID });
+    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(false);
+    m.setPlane(P({ lon: 0.4, fresh: false, dim: false }), { identity: ID });
+    expect(frames).toHaveLength(0);
+    m.setPlane(P({ lon: 0.4, fresh: false, dim: true }), { identity: ID });
+    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(true);
   });
   it('se crea ya atenuada si la primera posición es la última conocida', async () => {
     const m = await make();

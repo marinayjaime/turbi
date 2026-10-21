@@ -143,8 +143,9 @@ export function keepPolling(radar) {
 
 // Sondeo encadenado del radar. fetchOnce({ poll }) → respuesta del servidor (o null); onResult(radar, { attempt }) la
 // pinta; isActive() dice si la ficha que lo pidió sigue en pantalla (misma búsqueda). Devuelve { first, cancel }:
-// first se resuelve con la primera respuesta (la ficha nunca espera a los siguientes sondeos).
-export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays = RADAR_POLL_DELAYS_MS, maxMs = RADAR_POLL_MAX_MS,
+// first se resuelve con la primera respuesta (la ficha nunca espera a los siguientes sondeos). onGiveUp(radar): se agotan
+// los sondeos sin resultado definitivo (lo usa el seguimiento en vivo en espera, js/app.js, para no quedarse parado).
+export function pollRadar({ fetchOnce, onResult, onGiveUp = () => {}, isActive = () => true, delays = RADAR_POLL_DELAYS_MS, maxMs = RADAR_POLL_MAX_MS,
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now() }) {
   let timer = null, cancelled = false, startedAt = null, normalTurn = 0;
   const stopped = () => cancelled || !isActive();
@@ -162,7 +163,7 @@ export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays =
       if (now() + next.ms - startedAt <= maxMs) {
         if (next.normal) normalTurn++;
         timer = setTimer(() => { step(attempt + 1).catch(() => {}); }, next.ms);
-      }
+      } else onGiveUp(radar);
     }
     return radar;
   };

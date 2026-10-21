@@ -170,3 +170,19 @@ describe('pollRadar', () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+describe('pollRadar: onGiveUp (seguimiento en vivo en espera)', () => {
+  it('si agota los sondeos sin respuesta útil avisa una vez (onGiveUp); con un resultado definitivo, nunca', async () => {
+    const dead = server([null]);
+    const gaveUp = vi.fn();
+    pollRadar({ fetchOnce: dead.fetchOnce, onResult: () => {}, onGiveUp: gaveUp, maxMs: 60000 });
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(gaveUp).toHaveBeenCalledTimes(1);
+    expect(gaveUp).toHaveBeenCalledWith(null);
+    const ok = server([IDENT, FLYING]);
+    const never = vi.fn();
+    pollRadar({ fetchOnce: ok.fetchOnce, onResult: () => {}, onGiveUp: never });
+    await vi.advanceTimersByTimeAsync(RADAR_POLL_MAX_MS * 2);
+    expect(never).not.toHaveBeenCalled();
+  });
+});

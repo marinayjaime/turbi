@@ -131,16 +131,23 @@ export async function fr24CachedLookup(state, number, { fetchFn = fetch, env = p
 const UNAVAILABLE_REASON = { autorizacion: 'autorizacion', 'sin-configurar': 'autorizacion', limite: 'limite', servidor: 'servidor',
   'respuesta-invalida': 'servidor', red: 'red', error: 'red', timeout: 'timeout', http: 'http' };
 
-// La respuesta guardada (en `at`) tal como es en nowMs: antigüedades de la señal, de la posición y de la pausa de un 429
-// más lo transcurrido (reloj del servidor) y `checked` = nowMs. Una posición que pasa de 180 s deja de existir.
-export function agedPayload(payload, at, nowMs) {
-  const dt = Math.max(0, Math.round((nowMs - at) / 1000));
-  const out = { ...payload, checked: new Date(nowMs).toISOString() };
-  if (!dt) return out;
-  if (fin(out.seenS)) out.seenS += dt;
-  if (fin(out.posAgeS)) out.posAgeS += dt;
-  if (fin(out.posAgeS) && out.posAgeS > MAX_SEEN_S) { delete out.lat; delete out.lon; delete out.posAgeS; }
-  if (fin(out.retryAfterSec)) out.retryAfterSec = Math.max(0, out.retryAfterSec - dt);
+// La respuesta guardada (en `at`) tal como es en nowMs, con el reloj del servidor y `checked` = nowMs. posMs: instante
+// EXACTO de la posición de FR24 (para «volando»): posAgeS y seenS salen de él (sin acumular redondeos de ±1 s). Si al
+// servirla la posición ya pasa de 180 s (MAX_SEEN_S), es lo que fr24Result diría ahora: «sin-datos» sin telemetría. La
+// pausa de un 429 (retryAfterSec) es la que queda.
+export function agedPayload(payload, at, nowMs, posMs = null) {
+  const checked = new Date(nowMs).toISOString();
+  if (payload.state === 'volando' && fin(posMs)) {
+    const ageS = Math.max(0, Math.round((nowMs - posMs) / 1000));
+    if (ageS > MAX_SEEN_S) {
+      return { state: 'sin-datos', source: payload.source, ...(payload.departureConfirmed === false ? { departureConfirmed: false } : {}), checked };
+    }
+    const out = { ...payload, seenS: ageS, checked };
+    if (fin(out.posAgeS)) out.posAgeS = ageS;
+    return out;
+  }
+  const out = { ...payload, checked };
+  if (fin(out.retryAfterSec)) out.retryAfterSec = Math.max(0, Math.round(out.retryAfterSec - Math.max(0, nowMs - at) / 1000));
   return out;
 }
 
@@ -150,8 +157,8 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
   const stats = state.fr24Stats ??= freshStats();
   const cache = state.fr24Radar ??= new Map();
   const jobs = state.fr24Jobs ??= new Map();
-  const send = ({ payload: stored, diag, at }, extra = {}) => {
-    const payload = agedPayload(stored, at, nowMs);
+  const send = ({ payload: stored, diag, at, posMs }, extra = {}) => {
+    const payload = agedPayload(stored, at, nowMs, posMs);
     return { status: 200, headers: NO_STORE,
       body: JSON.stringify(q.debug ? { ...payload, diagnostic: { ...q.diagnostic, ...diag, ...extra } } : payload) };
   };
@@ -160,7 +167,7 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
   if (jobs.has(q.cacheKey)) { stats.cacheHits++; return send(await jobs.get(q.cacheKey), { shared: true }); }
   const job = (async () => {
     const r = await fr24CachedLookup(state, q.number, { fetchFn, env, nowMs });
-    let result, diag;
+    let result, diag, posMs = null;
     if (!['found', 'multiple', 'not-found'].includes(r.state)) {
       result = { state: 'no-disponible', reason: UNAVAILABLE_REASON[r.reason] ?? 'http',
         ...(r.reason === 'limite' && fin(r.retryAfterSec) && r.retryAfterSec >= 0 ? { retryAfterSec: Math.round(r.retryAfterSec) } : {}) };
@@ -172,6 +179,7 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
       const taken = new Set([...assoc].filter(([k]) => k !== q.phys).map(([, v]) => v.fr24Id));
       const pick = fr24Pick(candidates, { o: q.o, a: q.a, associated: assoc.get(q.phys)?.fr24Id ?? null, taken, exclusiveOnly: q.exclusiveOnly });
       result = pick.chosen ? fr24Result(pick.chosen, { ...q.ctx, nowMs }) : { state: 'sin-datos' };
+      if (result.state === 'volando') posMs = Date.parse(pick.chosen.timestamp); // ya validada por fr24Result
       if (pick.chosen?.fr24Id) {
         assoc.set(q.phys, { fr24Id: pick.chosen.fr24Id, at: nowMs });
         if (pick.changed) result = { ...result, fr24IdChanged: true }; // el mapa coloca el avión sin animar
@@ -185,8 +193,8 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
     // source: 'fr24' en todas las respuestas, para que la ficha atribuya bien también «sin señal» y «aterrizado».
     const payload = { ...result, source: 'fr24', ...identifying, ...q.pending, checked: new Date(nowMs).toISOString() };
     if (cache.size > 500) cache.clear();
-    cache.set(q.cacheKey, { at: nowMs, payload, diag });
-    return { payload, diag, at: nowMs };
+    cache.set(q.cacheKey, { at: nowMs, payload, diag, posMs });
+    return { payload, diag, at: nowMs, posMs };
   })().finally(() => jobs.delete(q.cacheKey));
   jobs.set(q.cacheKey, job);
   return send(await job);
