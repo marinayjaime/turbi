@@ -2958,4 +2958,38 @@ describe('seguimiento en vivo con Flightradar24', () => {
       expect(log.markers[0].path).toEqual([[51, -1]]);
     } finally { vi.useRealTimers(); }
   }, 30000);
+
+  it('ronda 2) «Actualizar» con un cambio de Aena + «no disponible»: horas NUEVAS de Aena con la telemetría anterior y el avión quieto', async () => {
+    fakeAll();
+    try {
+      const { L, log } = liveLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      const data = { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } };
+      const base = network({ flights: data, openMeteo: () => tooMany });
+      let k = 0;
+      await openApp(vi.fn((url, o) => {
+        const u = String(url);
+        if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return Promise.resolve(json(k++ === 0 ? reading(0) : { state: 'no-disponible', source: 'fr24', reason: 'servidor' })); }
+        if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(json(track())); }
+        return base(url, o);
+      }));
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1 && planeOnScreen(log), 'ficha con el avión');
+      await networkIdle();
+      mark();
+      const newEd = formatLocal(Date.now() - 53 * 60000, MAD); // salida estimada nueva (antes: la programada, hace 60 min)
+      expect($('#result .flight .milestones').textContent).not.toContain(newEd);
+      data.IB715 = { ...data.IB715, updated: new Date().toISOString(), legs: [{ ...leg, ed: `${d}T${newEd}` }] };
+      await to(10);
+      await refreshNow();
+      // Los hitos del Horario son los de la consulta nueva (no los de la tarjeta de antes de «Actualizar»).
+      expect($('#result .flight .milestones').textContent).toContain(newEd);
+      expect($('.telemetry')).not.toBeNull(); // con la telemetría de la última lectura real
+      expect($('.flight .tm-signal .tm-value').textContent).not.toBe('2 s'); // que sigue envejeciendo, no se reinicia
+      expect(log.markers).toHaveLength(1);
+      expect(log.markers[0].path).toEqual([[51, -1]]); // el avión, quieto
+      expect(planeDimmed(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
 });

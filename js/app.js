@@ -552,28 +552,15 @@ async function showRadar(q, flight, stale, ctx = null) {
   await poll.first;
 }
 
-function paintRadar(q, flight, radar, ctx, stale) {
-  // Aena ya confirmó la llegada (o canceló/desvió): ninguna lectura ADS-B, ni una respuesta tardía, la contradice.
-  if (q.kind === 'schedule' && aenaFinal(q.leg)) return;
-  flight = q.flightBase ?? flight; // la tarjeta con el último estado de Aena (refrescado)
-  // Una respuesta fallida (sin respuesta o «no disponible») con una lectura real de este vuelo físico en la ficha no se
-  // pinta encima: no borra telemetría ni avión. En el traspaso de «Actualizar» (la ficha nueva aún sin radar) vuelve a
-  // pintarse esa última lectura real, tal cual (su antigüedad sigue contando).
-  if ((!radar || radar.state === 'no-disponible') && lastFix && lastFix.physicalKey === flight.physicalKey) {
-    if (!stale() && shownCard && !shownCard.radar && shownCard !== lastFix && els.result.querySelector('.flight')) repaintFlight(lastFix, stale);
-    return;
-  }
-  if (radar) q.lastRadar = radar;
-  rememberSighting(radarKey(q), radar);
-  rememberLanding(radarKey(q), radar);
-  // La lectura tal como vale al recibirla (receivedRadar) y el instante MONOTÓNICO de recepción: de ahí envejecen
-  // «Última señal», el avión del mapa y la distancia, sin el reloj civil del móvil.
-  const receivedMono = monoNow();
-  const atReceipt = receivedRadar(radar, Date.now());
+// La tarjeta del vuelo con una lectura del radar ya «al recibirla» (atReceipt), sobre la base de Aena de AHORA (flight):
+// withRadar, la ETA Turbi refinada si la llegada es estimada (raw: la lectura tal como llegó; remember: guardarla),
+// withLanding y el fr24Id de un aterrizaje de FR24. Es el camino de siempre de paintRadar; también lo usa la última
+// lectura real cuando la respuesta nueva falla.
+function radarCard(q, flight, atReceipt, ctx, raw = atReceipt, { remember = true } = {}) {
   let card = withRadar(flight, atReceipt, recallSighting(radarKey(q)));
   if (flight.arr?.estimated) {
-    const eta = turbiEta(q, ctx, radar);
-    rememberEta(etaKey(q), eta);
+    const eta = turbiEta(q, ctx, raw);
+    if (remember) rememberEta(etaKey(q), eta);
     // Nueva ETA visible → el estado se recalcula con ella (y el radar, si lo ve, sigue mandando).
     // La hora principal («Llega en») y la «Confianza» de la ficha siguen a esa misma ETA (js/card-model.js): arrMs es
     // la llegada visible en UTC y timeConfidence, la confianza que ya da eta.js (como en flightCard).
@@ -585,14 +572,61 @@ function paintRadar(q, flight, radar, ctx, stale) {
     card = withRadar(base, atReceipt, recallSighting(radarKey(q)));
   }
   // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
-  const landedAt = recallLanding(radarKey(q));
-  const landedSource = recallLandingSource(radarKey(q));
-  card = withLanding(card, landedAt, q.kind === 'adb' ? {} : q.leg, landedSource);
+  card = withLanding(card, recallLanding(radarKey(q)), q.kind === 'adb' ? {} : q.leg, recallLandingSource(radarKey(q)));
   // Aterrizado con una lectura de Flightradar24 de este vuelo físico: su fr24Id se queda en la tarjeta solo para pedir la
   // estela («Ruta realizada», syncTrack). No cambia el estado, los textos ni la fuente.
-  if (card.radar?.state === 'aterrizado' && radar?.state === 'aterrizado' && radar.source === 'fr24' && typeof radar.fr24Id === 'string' && !card.radar.fr24Id) {
-    card = { ...card, radar: { ...card.radar, fr24Id: radar.fr24Id } };
+  if (card.radar?.state === 'aterrizado' && raw?.state === 'aterrizado' && raw.source === 'fr24' && typeof raw.fr24Id === 'string' && !card.radar.fr24Id) {
+    card = { ...card, radar: { ...card.radar, fr24Id: raw.fr24Id } };
   }
+  return card;
+}
+
+// Distancia restante animada desde la lectura «volando» de la tarjeta (su instante monotónico de recepción).
+function startDistance(card, stale) {
+  if (card.radar?.state !== 'volando') return;
+  distanceTicker = startRemainingTicker({
+    ref: distanceReference(card.radar, card.radarReceivedMono),
+    now: monoNow,
+    isActive: () => !stale() && !els.result.closest('[hidden]'),
+    render: km => {
+      const value = els.result.querySelector('.tm-remaining');
+      if (!value?.firstChild) return false;
+      value.firstChild.textContent = thousands(km);
+      return true;
+    },
+  });
+}
+
+function paintRadar(q, flight, radar, ctx, stale) {
+  // Aena ya confirmó la llegada (o canceló/desvió): ninguna lectura ADS-B, ni una respuesta tardía, la contradice.
+  if (q.kind === 'schedule' && aenaFinal(q.leg)) return;
+  flight = q.flightBase ?? flight; // la tarjeta con el último estado de Aena (refrescado)
+  // Una respuesta fallida (sin respuesta o «no disponible») con una lectura real de este vuelo físico en la ficha no se
+  // pinta encima: no borra telemetría ni avión. En el traspaso de «Actualizar» (la ficha nueva aún sin radar) la tarjeta
+  // se rehace sobre la base NUEVA de Aena con esa última lectura real y su instante de recepción (sigue envejeciendo; el
+  // avión, quieto donde estaba).
+  if ((!radar || radar.state === 'no-disponible') && lastFix && lastFix.physicalKey === flight.physicalKey) {
+    if (stale() || !shownCard || shownCard.radar || shownCard === lastFix || !els.result.querySelector('.flight')) return;
+    let card = radarCard(q, flight, lastFix.radar, ctx, lastFix.radar, { remember: false });
+    if (card.radar?.state !== 'volando') { repaintFlight(card, stale); return; } // p. ej. aterrizaje ya guardado
+    card = { ...card, radarReceivedMono: lastFix.radarReceivedMono };
+    q.lastRadar ??= lastFix.radar; // el refresco de Aena trata la ficha como «volando», igual que con la lectura real
+    lastFix = card;
+    stopDistance();
+    repaintFlight(card, stale);
+    startDistance(card, stale);
+    return;
+  }
+  if (radar) q.lastRadar = radar;
+  rememberSighting(radarKey(q), radar);
+  rememberLanding(radarKey(q), radar);
+  // La lectura tal como vale al recibirla (receivedRadar) y el instante MONOTÓNICO de recepción: de ahí envejecen
+  // «Última señal», el avión del mapa y la distancia, sin el reloj civil del móvil.
+  const receivedMono = monoNow();
+  const atReceipt = receivedRadar(radar, Date.now());
+  let card = radarCard(q, flight, atReceipt, ctx, radar);
+  const landedAt = recallLanding(radarKey(q));
+  const landedSource = recallLandingSource(radarKey(q));
   // Instante (monotónico) en que llegó esta lectura «volando» (envejecimiento de «Última señal» y del avión en
   // js/card-model.js); el mismo que toma la distancia animada como referencia.
   if (card !== flight && card.radar?.state === 'volando') card = { ...card, radarReceivedMono: receivedMono };
@@ -604,19 +638,7 @@ function paintRadar(q, flight, radar, ctx, stale) {
   stopDistance();
   // Solo se sustituye la tarjeta .flight (con su estado: repaintFlight): la sección Turbulencias no se toca.
   repaintFlight(card, stale);
-  if (card.radar?.state === 'volando') {
-    distanceTicker = startRemainingTicker({
-      ref: distanceReference(card.radar, receivedMono),
-      now: monoNow,
-      isActive: () => !stale() && !els.result.closest('[hidden]'),
-      render: km => {
-        const value = els.result.querySelector('.tm-remaining');
-        if (!value?.firstChild) return false;
-        value.firstChild.textContent = thousands(km);
-        return true;
-      },
-    });
-  }
+  startDistance(card, stale);
   // El aviso de llegada no puede contradecir al radar (en el aire) ni a un aterrizaje confirmado.
   const note = els.result.querySelector('.note');
   const replacement = Number.isFinite(landedAt) ? landedNote(landedSource) : radarNote(radar);
