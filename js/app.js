@@ -30,7 +30,7 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { LIVE_BASE } from './config.js';
 import { BUILD_ID } from './build.js';
@@ -523,6 +523,11 @@ function paintRadar(q, flight, radar, ctx, stale) {
   const landedAt = recallLanding(radarKey(q));
   const landedSource = recallLandingSource(radarKey(q));
   card = withLanding(card, landedAt, q.kind === 'adb' ? {} : q.leg, landedSource);
+  // Aterrizado con una lectura de Flightradar24 de este vuelo físico: su fr24Id se queda en la tarjeta solo para pedir la
+  // estela («Ruta realizada», syncTrack). No cambia el estado, los textos ni la fuente.
+  if (card.radar?.state === 'aterrizado' && radar?.source === 'fr24' && typeof radar.fr24Id === 'string' && !card.radar.fr24Id) {
+    card = { ...card, radar: { ...card.radar, fr24Id: radar.fr24Id } };
+  }
   // Momento en que llegó esta lectura «volando» (envejecimiento de «Última señal» y del avión en js/card-model.js); el
   // mismo instante que toma la distancia animada como referencia.
   const receivedAt = Date.now();
@@ -676,6 +681,7 @@ async function run(q, handoff = null) {
   clearFicha(); // y su mapa
   keptMap = kept;
   if (same) reopen = new Set(same.open);
+  if (same && trackAsked?.failed) trackAsked = null; // «Actualizar» reintenta la estela solo si la anterior falló
   const stale = () => token !== runId;
   els.refresh.hidden = false;
   if (!same) show('loading'); // «Actualizar» del mismo vuelo: la ficha sigue a la vista mientras se consulta
@@ -1000,6 +1006,52 @@ function showPlane(map, card) {
   if (heldPlane && card && !card.radar && !['finalizado', 'cancelado'].includes(flightPhase(card))) return;
   releasePlane();
   map?.setPlane(card ? planeOnMap(card.radar, card.radarReceivedAt, Date.now()) : null, { identity: planeIdentity(card) });
+  syncTrack(map, card);
+}
+
+// ---- Estela real del vuelo (Flightradar24 Flight Tracks; solo presentación) ----
+// Con un fr24Id en la lectura del radar y el mapa sin estela de esa identidad (planeIdentity: vuelo físico + fr24Id), se
+// pide UNA vez /track (Aena) o /track-adb (AeroDataBox) con el mismo ?leg= y se pinta hasta la posición del avión en
+// pantalla (nunca más allá: los puntos posteriores a esa lectura se descartan). Cada posición real nueva del mismo avión
+// (planeOnMap) la prolonga. Otra identidad: la estela se borra y se pide la nueva. trackAsked va con el mapa: «Actualizar»
+// del mismo vuelo (que conserva el mapa) no la vuelve a pedir, salvo que la anterior fallara; los sondeos, nunca.
+let trackAsked = null; // { map, identity, failed }
+let trackLastMs = null; // hora (UTC) del último punto real de la estela
+const positionMs = (card, now) => { const age = positionAgeS(card?.radar, card?.radarReceivedAt, now); return age === null ? null : now - age * 1000; };
+function syncTrack(map, card) {
+  const fr24Id = card?.radar?.fr24Id;
+  if (!map?.setTrack || typeof fr24Id !== 'string' || !fr24Id) return;
+  const identity = planeIdentity(card);
+  if (map.trackIdentity() === identity) {
+    const now = Date.now();
+    const pos = planeOnMap(card.radar, card.radarReceivedAt, now), ms = positionMs(card, now);
+    if (pos && Number.isFinite(ms) && !(ms <= trackLastMs)) { map.extendTrack([pos.lat, pos.lon], { identity }); trackLastMs = ms; }
+    return;
+  }
+  if (map.trackIdentity() !== null) map.clearTrack(); // otro avión u otro vuelo físico: nunca se mezclan
+  if (trackAsked?.map === map && trackAsked.identity === identity) return;
+  trackAsked = { map, identity, failed: false };
+  requestTrack(map, card, identity, fr24Id, trackAsked).catch(() => {});
+}
+async function requestTrack(map, card, identity, fr24Id, asked) {
+  const q = lastQuery, key = physicalOf(q);
+  const r = q?.kind === 'schedule' ? await fetchTrack(q.schedule.al, q.schedule.n, physicalFlightKey(q.leg))
+    : q?.kind === 'adb' ? await fetchAdbTrack(q.adbMeta.number, q.adbMeta.date, q.adbKey) : null;
+  const ok = r?.state === 'found' && r.fr24Id === fr24Id && Array.isArray(r.points) && Array.isArray(r.times) && r.times.length === r.points.length;
+  if (!ok) { asked.failed = true; return; }
+  // Sigue siendo la misma ficha (o su «Actualizar»), el mismo mapa y el mismo avión.
+  const cur = shownCard;
+  if (trackAsked !== asked || physicalOf(lastQuery) !== key || cur?.physicalKey !== card.physicalKey) return;
+  if (map !== routeMap && map !== keptMap?.map) return;
+  if (cur?.radar?.fr24Id && planeIdentity(cur) !== identity) return;
+  const live = cur?.radar?.fr24Id ? cur : card;
+  const now = Date.now();
+  const limit = planeOnMap(live.radar, live.radarReceivedAt, now) ? positionMs(live, now) : Infinity;
+  const kept = r.points.map((p, i) => [p, r.times[i] * 1000]).filter(([p, ms]) => Array.isArray(p) && Number.isFinite(ms) && ms <= limit);
+  if (!kept.length) return;
+  map.setTrack(kept.map(([p]) => p), { identity });
+  trackLastMs = kept.at(-1)[1];
+  syncTrack(map, live); // hasta el avión, si está en el mapa
 }
 
 // Indicativo, Avión e Identificación bajo el mapa (mapFactsHtml): solo en el aire con el radar «volando».

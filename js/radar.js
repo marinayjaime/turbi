@@ -93,6 +93,21 @@ export async function fetchAdbRadar(number, date, legKey, fetchFn = fetch, liveB
   }
 }
 
+// Estela real del vuelo (Flightradar24 Flight Tracks, server/fr24-track.mjs): el servidor solo la da para el fr24Id que ya
+// asoció a ESTE vuelo físico (leg: el mismo ?leg= que /radar y /radar-adb). null si falla: la ruta prevista sigue igual.
+async function getTrack(url, fetchFn) {
+  try {
+    const res = await fetchFn(url, { signal: AbortSignal.timeout(20000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+export const fetchTrack = (al, n, leg, fetchFn = fetch, liveBase = LIVE_BASE) =>
+  getTrack(`${liveBase}/track/${al}/${n}.json?${new URLSearchParams({ leg })}`, fetchFn);
+export const fetchAdbTrack = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE) =>
+  getTrack(`${liveBase}/track-adb/${encodeURIComponent(number)}/${date}.json?${new URLSearchParams({ leg: legKey })}`, fetchFn);
+
 const MIN = 60000;
 
 // Ficha con la respuesta del radar y la última vez que lo vio volando (lastSeenMs):

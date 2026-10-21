@@ -12,6 +12,10 @@ const SRI = {
   css: 'sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==',
 };
 const COLORS = ['#8e8e93', '#e6b800', '#ff9f0a', '#ff3b30'];
+// Ruta prevista (círculo máximo o coloreada por turbulencias): siempre tenue y discontinua, para que la estela real
+// (trayectoria medida por Flightradar24, color de acento) se lea encima como lo que de verdad ha hecho el avión.
+const ROUTE_STYLE = { weight: 4, opacity: 0.5, dashArray: '6 8' };
+const TRACK_STYLE = { color: '#1A6FE0', weight: 4, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false };
 
 // Tramos consecutivos del mismo nivel (un punto sin datos continúa el tramo anterior).
 export function routeLines(route) {
@@ -122,12 +126,27 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   let target = null; // última posición real recibida
   let identity = null; // avión y vuelo físico de esa posición
   let frame = null;
+  // Estela real: puntos reales recibidos (setTrack + extendTrack) de UNA identidad (trackId, la misma que el avión).
+  let trackLine = null, trackPts = [], trackId = null;
+  const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
+  // Lo que se dibuja: los puntos reales y, si el avión de la misma identidad está en el mapa, su posición mostrada como
+  // último vértice. Mientras se anima hacia B (ya recibido como punto), B aún no se dibuja: la estela acaba en el avión.
+  const drawTrack = () => {
+    if (!trackLine) return;
+    const pts = trackPts.slice();
+    if (plane && shown && identity === trackId) {
+      if (frame !== null && target && same(pts.at(-1), [target.lat, target.lon])) pts.pop();
+      if (!same(pts.at(-1), [shown.lat, shown.lon])) pts.push([shown.lat, shown.lon]);
+    }
+    trackLine.setLatLngs?.(pts);
+  };
   const stop = () => { if (frame !== null) clock.caf(frame); frame = null; };
-  const put = p => { shown = p; plane.setLatLng([p.lat, p.lon]); };
+  const put = p => { shown = p; plane.setLatLng([p.lat, p.lon]); drawTrack(); };
   const turn = deg => { const r = plane.getElement?.()?.querySelector?.('.plane-rot'); if (r) r.style.transform = `rotate(${deg}deg)`; };
   const drawRoute = r => {
     lineLayers.splice(0).forEach(l => l.remove());
-    for (const l of routeLines(r)) lineLayers.push(L.polyline(l.coords, { color: COLORS[l.level], weight: 5, opacity: 0.9 }).addTo(map));
+    for (const l of routeLines(r)) lineLayers.push(L.polyline(l.coords, { color: COLORS[l.level], ...ROUTE_STYLE }).addTo(map));
+    trackLine?.bringToFront?.(); // la estela, siempre encima de la ruta prevista
   };
   drawRoute(route);
   for (const a of [origin, destination]) {
@@ -153,7 +172,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     // mismo avión se desplaza desde lo que se ve hasta ella (sin pasarse ni seguir después), o directa con
     // prefers-reduced-motion. Nunca recentra ni cambia el zoom.
     setPlane(pos, { identity: id = null } = {}) {
-      if (!pos) { stop(); plane?.remove(); plane = null; shown = target = identity = null; return; }
+      if (!pos) { stop(); plane?.remove(); plane = null; shown = target = identity = null; drawTrack(); return; }
       const next = { lat: pos.lat, lon: pos.lon };
       if (plane && id === identity && target && next.lat === target.lat && next.lon === target.lon) return; // repintado
       if (!plane) {
@@ -164,6 +183,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
         }).addTo(map);
         shown = target = next;
         identity = id;
+        drawTrack();
         return;
       }
       stop();
@@ -181,7 +201,26 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
         frame = k >= 1 ? null : clock.raf(step);
       };
       frame = clock.raf(step);
+      drawTrack();
     },
+    // Estela real del vuelo (Flight Tracks de FR24, solo posiciones medidas): sustituye la anterior. identity: la del
+    // avión (vuelo físico + fr24Id); extendTrack solo acepta puntos de esa misma identidad. Nunca recentra ni cambia el zoom.
+    setTrack(points, { identity: id = null } = {}) {
+      trackLine?.remove();
+      trackPts = (points ?? []).filter(p => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1])).map(p => [p[0], p[1]]);
+      trackId = id;
+      trackLine = L.polyline(trackPts, TRACK_STYLE).addTo(map);
+      trackLine.bringToFront?.();
+      drawTrack();
+    },
+    // Una posición real nueva del mismo avión (planeOnMap): la estela se prolonga hasta ella (sin duplicar el último).
+    extendTrack(point, { identity: id = null } = {}) {
+      if (!trackLine || id !== trackId || !Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])) return;
+      if (!same(trackPts.at(-1), point)) trackPts.push([point[0], point[1]]);
+      drawTrack();
+    },
+    clearTrack() { trackLine?.remove(); trackLine = null; trackPts = []; trackId = null; },
+    trackIdentity: () => (trackLine ? trackId : null),
     // Quita lo que puso setForecast: la ruta inicial sin colorear (círculo máximo), sin SIGMET ni PIREP, como recién
     // creado. No toca la vista (ni centro ni zoom) ni el avión.
     clearForecast() {

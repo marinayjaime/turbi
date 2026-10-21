@@ -7,6 +7,7 @@ import { LIVE_BASE } from '../js/config.js';
 import { formatLocal } from '../js/time.js';
 import { FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
 import { normalizeFlights } from '../server/aerodatabox.mjs';
+import { physicalFlightKey } from '../js/physical-flight.js';
 
 const MAD = 'Europe/Madrid';
 const dayOf = ms => new Intl.DateTimeFormat('en-CA', { timeZone: MAD }).format(ms);
@@ -2233,4 +2234,158 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       expect(log.markers[0].path).toEqual([at(FA), at(FB)]);
     } finally { vi.useRealTimers(); }
   }, 30000);
+});
+
+// Estela real del vuelo (FR24 Flight Tracks, server/fr24-track.mjs): con un fr24Id en la lectura del radar del vuelo en
+// pantalla, la app pide UNA vez /track (Aena) o /track-adb (AeroDataBox) con el mismo ?leg= y la pinta; cada posición
+// real nueva del mismo avión la prolonga. «Actualizar» no la vuelve a pedir; otro fr24Id la reinicia. Sin estela (no
+// encontrada, no disponible, sin FR24), la ruta prevista sigue como siempre.
+describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
+  function trackLeaflet() {
+    const log = { maps: 0, mapsRemoved: 0, markers: [], view: [], lines: [] };
+    const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
+    const L = {
+      map: () => { log.maps++; return { fitBounds() { log.view.push('fitBounds'); }, setView() { log.view.push('setView'); }, setZoom() { log.view.push('setZoom'); },
+        invalidateSize() {}, remove() { log.mapsRemoved++; } }; },
+      tileLayer: layer, polygon: layer, circleMarker: layer,
+      polyline: (coords, o = {}) => ({ coords, o, live: false, addTo() { this.live = true; log.lines.push(this); return this; }, bindTooltip() { return this; },
+        remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } }),
+      latLngBounds: () => ({ pad() { return this; } }),
+      divIcon: o => o,
+      marker: ll => { const m = { ...layer(), ll, path: [ll], removed: false, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; } };
+        log.markers.push(m); return m; },
+    };
+    return { L, log };
+  }
+  const trails = log => log.lines.filter(l => l.live && !l.o.dashArray);
+  const trackCalls = () => calls.filter(u => u.includes('/track/') || u.includes('/track-adb/'));
+  const flyingLeg = () => {
+    const dep = Date.now() - 60 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N' } };
+  };
+  const FA = { ...RADAR_FLYING, source: 'fr24', match: 'fr24', fr24Id: '3c4d5e6f', hex: '3423C1', seenS: 2, posAgeS: 2, lat: 51.0, lon: -1.0 };
+  const FB = { ...FA, lat: 51.4, lon: -0.6 };
+  // Estela de FR24 hasta «ahora» (el último punto, más reciente que la posición del avión, no debe dibujarse).
+  const track = (id = '3c4d5e6f', over = {}) => {
+    const s = Math.floor(Date.now() / 1000);
+    return { state: 'found', fr24Id: id, source: 'fr24', points: [[40.47, -3.56], [45, -2], [50.9, -1.1], [51.05, -0.95]],
+      times: [s - 3000, s - 1500, s - 60, s + 25], lastAt: new Date((s + 25) * 1000).toISOString(), ...over };
+  };
+  // Radar: una respuesta por consulta (la última se repite). tracks: una por petición a /track (null = 404).
+  async function load({ radar, tracks = [track()], openMeteo = () => tooMany }) {
+    const { L, log } = trackLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo });
+    let i = 0, j = 0;
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); const r = radar[Math.min(i++, radar.length - 1)]; return Promise.resolve(r ? json(r) : notFound); }
+      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); const r = tracks[Math.min(j++, tracks.length - 1)]; return Promise.resolve(r ? json(r) : notFound); }
+      return base(url, o);
+    }));
+    await search('IB715', d);
+    await until(() => $('#result .flight') && log.maps === 1, 'ficha con mapa');
+    await networkIdle();
+    return { log, leg };
+  }
+  const refresh = async log => { const n = radarCalls().length; $('#refresh').click(); await until(() => radarCalls().length === n + 1, 'radar de nuevo'); await networkIdle(); return log; };
+
+  it('1) fr24Id + estela → pide /track UNA vez con el ?leg= del vuelo físico y dibuja la estela real, que acaba en el avión', async () => {
+    const { log, leg } = await load({ radar: [FA] });
+    expect(trackCalls()).toEqual([`${LIVE_BASE}/track/IB/715.json?leg=${encodeURIComponent(physicalFlightKey(leg))}`]);
+    const [l] = trails(log);
+    expect(l.o.color).toBe('#1A6FE0');
+    // Los puntos reales hasta la posición del avión (el de «ahora» es posterior: fuera) y el avión como último vértice.
+    expect(l.coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
+    expect(log.lines.filter(x => x.live && x.o.dashArray).length).toBeGreaterThan(0); // la ruta prevista sigue (discontinua)
+  });
+
+  it('2) sin fr24Id (lectura de adsb.lol) → ninguna petición a Flight Tracks ni estela', async () => {
+    const { log } = await load({ radar: [{ ...RADAR_FLYING, hex: 'abc123', posAgeS: 2, lat: 51, lon: -1 }] });
+    expect(trackCalls()).toEqual([]);
+    expect(trails(log)).toEqual([]);
+  });
+
+  it('4) 9) dos «Actualizar» seguidos: ni otro /track ni otro mapa; 6) la nueva posición real prolonga la estela hasta B', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    try {
+      const { log } = await load({ radar: [FA, FB, FB] });
+      await refresh(log);
+      const atB = () => trails(log)[0]?.coords.at(-1)?.[0] === 51.4 && log.markers[0]?.ll[0] === 51.4;
+      await until(atB, 'la animación A → B termina'); // requestAnimationFrame de jsdom: tiempo real
+      await refresh(log);
+      expect(trackCalls()).toHaveLength(1);
+      expect(log.maps).toBe(1);
+      expect(log.mapsRemoved).toBe(0);
+      expect(log.view.filter(v => v !== 'fitBounds')).toEqual([]);
+      expect(log.view).toHaveLength(1); // solo el encuadre inicial
+      const [l] = trails(log);
+      expect(trails(log)).toHaveLength(1);
+      expect(l.coords.at(-1)).toEqual([51.4, -0.6]);
+      expect(l.coords.at(-2)).toEqual([51, -1]); // A quedó como vértice real
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('5) cambio de fr24Id: la estela anterior se borra y se pide la del nuevo avión', async () => {
+    const other = { ...FB, fr24Id: '7a8b9c0d', fr24IdChanged: true };
+    const { log } = await load({ radar: [FA, other], tracks: [track(), track('7a8b9c0d', { points: [[48, -2], [51.3, -0.7], [51.35, -0.65], [51.4, -0.6]] })] });
+    const first = trails(log)[0];
+    await refresh(log);
+    await until(() => trackCalls().length === 2 && trails(log)[0] !== first, 'estela nueva');
+    expect(first.live).toBe(false);
+    expect(trails(log)).toHaveLength(1);
+    expect(trails(log)[0].coords[0]).toEqual([48, -2]);
+  });
+
+  it('una estela de OTRO fr24Id que el de la lectura (respuesta cruzada) no se dibuja', async () => {
+    const { log } = await load({ radar: [FA], tracks: [track('ffff0000')] });
+    expect(trackCalls()).toHaveLength(1);
+    expect(trails(log)).toEqual([]);
+  });
+
+  it('8) aterrizado según FR24 con fr24Id: «Ruta realizada» con la trayectoria entera, sin avión', async () => {
+    const { log } = await load({ radar: [{ state: 'aterrizado', callsign: 'IBE715', seenS: 30, distanceKm: 2, source: 'fr24', fr24Id: '3c4d5e6f' }] });
+    await until(() => trails(log).length === 1, 'estela');
+    expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+    expect(trails(log)[0].coords).toEqual(track().points);
+    expect(planeOnScreen(log)).toBe(false);
+  });
+
+  it('18) /track no disponible (o 404): sin estela y la ficha y la ruta prevista siguen igual; «Actualizar» lo reintenta una vez', async () => {
+    const { log } = await load({ radar: [FA, FB], tracks: [{ state: 'unavailable', source: 'fr24' }, null] });
+    expect(trails(log)).toEqual([]);
+    expect($('#error').hidden).toBe(true);
+    expect($('.telemetry')).not.toBeNull();
+    expect(log.lines.some(l => l.live && l.o.dashArray)).toBe(true);
+    await refresh(log);
+    expect(trackCalls()).toHaveLength(2);
+    expect(trails(log)).toEqual([]);
+  });
+
+  it('AeroDataBox: /track-adb con el mismo ?leg= que /radar-adb', async () => {
+    const fmt = (ms, offH) => { const t = new Date(ms + offH * 3600000).toISOString(); return `${t.slice(0, 10)} ${t.slice(11, 16)}${offH >= 0 ? '+' : '-'}${String(Math.abs(offH)).padStart(2, '0')}:00`; };
+    const utc = ms => `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`;
+    const dep = Math.floor((Date.now() - 2 * 3600000) / 60000) * 60000, arr = dep + 12 * 3600000;
+    const d = fmt(dep, 2).slice(0, 10);
+    const raw = { number: 'GA 89', callSign: 'GIA89', status: 'EnRoute', codeshareStatus: 'IsOperator', airline: { name: 'Garuda Indonesia' },
+      departure: { airport: { iata: 'AMS' }, scheduledTime: { utc: utc(dep), local: fmt(dep, 2) } },
+      arrival: { airport: { iata: 'CGK' }, scheduledTime: { utc: utc(arr), local: fmt(arr, 7) } }, aircraft: { model: 'Boeing 777' } };
+    const entry = { status: 'found', source: 'aerodatabox', number: 'GA89', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) };
+    const { L, log } = trackLeaflet();
+    vi.stubGlobal('L', L);
+    const base = network({ flights: {}, schedule: { [`GA89|${d}`]: entry }, openMeteo: () => tooMany,
+      radarAdb: { ...FA, callsign: 'GIA89', fr24Id: '4a4a4a4a', lat: 45.1, lon: 40.2 } });
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/track-adb/`)) { calls.push(u); return Promise.resolve(json(track('4a4a4a4a', { points: [[52.3, 4.76], [45, 39], [45.05, 40.1], [45.1, 40.2]] }))); }
+      return base(url, o);
+    }));
+    await search('GA89', d);
+    await until(() => trails(log).length === 1, 'estela de AeroDataBox');
+    const legKey = new URL(calls.find(u => u.includes('/radar-adb/'))).searchParams.get('leg');
+    expect(trackCalls()).toEqual([`${LIVE_BASE}/track-adb/GA89/${d}.json?leg=${encodeURIComponent(legKey)}`]);
+    expect(calls.some(u => u.includes('/track/'))).toBe(false);
+  });
 });

@@ -276,3 +276,123 @@ describe('createRouteMap: movimiento suave del avión', () => {
     expect(ctx.log.moved.length).toBe(moves);
   });
 });
+
+// Estela real (FR24 Flight Tracks): una polilínea sólida y marcada (acento) encima de la ruta prevista, que pasa a ser
+// tenue y discontinua. Termina en el avión: mientras se anima A → B su último vértice sigue al avión (la MISMA polilínea,
+// setLatLngs), nunca más allá de B. Sin avión, se queda tal cual. Otra identidad: nunca se mezcla.
+describe('createRouteMap: estela real del vuelo', () => {
+  let lines, frames, t;
+  const clock = { raf: cb => { frames.push(cb); return frames.length; }, caf: id => { frames[id - 1] = null; }, now: () => t, reducedMotion: () => false };
+  const advance = ms => { t += ms; const run = frames.splice(0); for (const f of run) f?.(t); };
+  beforeEach(() => {
+    const ctx = fakeLeaflet();
+    lines = [];
+    ctx.L.polyline = (coords, o = {}) => {
+      const l = { coords, o, live: false, fronts: 0, sets: 0, addTo() { this.live = true; lines.push(this); return this; }, bindTooltip() { return this; },
+        remove() { this.live = false; }, setLatLngs(c) { this.coords = c; this.sets++; return this; }, bringToFront() { this.fronts++; return this; } };
+      return l;
+    };
+    globalThis.L = ctx.L;
+    frames = [];
+    t = 1000;
+  });
+  afterEach(() => { delete globalThis.L; });
+  const make = () => createRouteMap({ hidden: true }, OPTS, clock);
+  const live = () => lines.filter(l => l.live);
+  const trail = () => live().filter(l => !l.o.dashArray);
+  const route = () => live().filter(l => l.o.dashArray);
+  const ID = 'v1|3c4d5e6f';
+  const P = [[39, 3], [39.5, 2.8], [40, 2.5]];
+
+  it('la ruta prevista es siempre tenue y discontinua (también coloreada por setForecast)', async () => {
+    const m = await make();
+    expect(route()).toHaveLength(1);
+    expect(route()[0].o.opacity).toBeLessThanOrEqual(0.6);
+    m.setForecast({ route: [{ lat: 39, lon: 3, level: 0 }, { lat: 40, lon: 2.5, level: 2 }, { lat: 41, lon: 2, level: 2 }] });
+    expect(live().every(l => l.o.dashArray && l.o.opacity <= 0.6)).toBe(true);
+  });
+
+  it('1) setTrack dibuja una polilínea sólida, de acento y más gruesa, encima de la ruta (también tras setForecast)', async () => {
+    const m = await make();
+    m.setTrack(P, { identity: ID });
+    expect(trail()).toHaveLength(1);
+    const [l] = trail();
+    expect(l.coords).toEqual(P);
+    expect(l.o).toMatchObject({ color: '#1A6FE0', weight: 4 });
+    expect(l.o.opacity).toBeGreaterThan(0.8);
+    expect(m.trackIdentity()).toBe(ID);
+    const fronts = l.fronts;
+    m.setForecast({ route: OPTS.route });
+    expect(l.fronts).toBeGreaterThan(fronts); // la ruta redibujada no la tapa
+    m.clearForecast();
+    expect(trail()).toEqual([l]); // clearForecast no toca la estela
+  });
+
+  it('termina en el avión de la misma identidad; la de otra identidad no se une', async () => {
+    const m = await make();
+    m.setPlane({ lat: 40.2, lon: 2.4 }, { identity: ID });
+    m.setTrack(P, { identity: ID });
+    expect(trail()[0].coords).toEqual([...P, [40.2, 2.4]]);
+    const other = await make();
+    other.setPlane({ lat: 40.2, lon: 2.4 }, { identity: 'v1|otro' });
+    other.setTrack(P, { identity: ID });
+    expect(trail().at(-1).coords).toEqual(P);
+  });
+
+  it('6) extendTrack añade un punto real (sin duplicar el último); con otra identidad, nada', async () => {
+    const m = await make();
+    m.setTrack(P, { identity: ID });
+    m.extendTrack([40.3, 2.3], { identity: ID });
+    m.extendTrack([40.3, 2.3], { identity: ID });
+    m.extendTrack([41, 1], { identity: 'v1|otro' });
+    expect(trail()).toHaveLength(1);
+    expect(trail()[0].coords).toEqual([...P, [40.3, 2.3]]);
+  });
+
+  it('10) A → B: la cabeza sigue al avión en cada fotograma (la MISMA polilínea) y termina exactamente en B', async () => {
+    const m = await make();
+    const A = { lat: 40, lon: 2.5 }, B = { lat: 40.4, lon: 2.1 };
+    m.setPlane(A, { identity: ID });
+    m.setTrack(P, { identity: ID });
+    m.setPlane(B, { identity: ID });
+    m.extendTrack([B.lat, B.lon], { identity: ID }); // la lectura real B, recibida a la vez que empieza la animación
+    const [l] = trail();
+    expect(l.coords.at(-1)).toEqual([40, 2.5]); // aún en A: la estela no se adelanta al avión
+    advance(1250);
+    const head = l.coords.at(-1);
+    expect(head[0]).toBeGreaterThan(40);
+    expect(head[0]).toBeLessThan(40.4);
+    expect(l.coords.filter(c => c[0] === 40.4)).toHaveLength(0); // B todavía no es vértice
+    advance(1250);
+    expect(l.coords.at(-1)).toEqual([40.4, 2.1]);
+    expect(l.coords.filter(c => c[0] === 40.4 && c[1] === 2.1)).toHaveLength(1);
+    advance(5000);
+    expect(l.coords.at(-1)).toEqual([40.4, 2.1]); // nunca más allá de B
+    expect(trail()).toEqual([l]);
+    expect(lines.filter(x => !x.o.dashArray)).toHaveLength(1); // ninguna capa nueva: sin parpadeos
+  });
+
+  it('el avión desaparece (posición > 60 s): la estela se queda tal cual, sin cabeza', async () => {
+    const m = await make();
+    m.setPlane({ lat: 40.2, lon: 2.4 }, { identity: ID });
+    m.setTrack(P, { identity: ID });
+    m.extendTrack([40.2, 2.4], { identity: ID });
+    m.setPlane(null);
+    expect(trail()[0].coords).toEqual([...P, [40.2, 2.4]]);
+  });
+
+  it('5) setTrack de otra identidad sustituye la anterior; clearTrack la quita', async () => {
+    const m = await make();
+    m.setTrack(P, { identity: ID });
+    const first = trail()[0];
+    m.setTrack([[41, 1], [41.1, 1.1]], { identity: 'v1|7a8b9c0d' });
+    expect(first.live).toBe(false);
+    expect(trail()).toHaveLength(1);
+    expect(trail()[0].coords).toEqual([[41, 1], [41.1, 1.1]]);
+    m.clearTrack();
+    expect(trail()).toHaveLength(0);
+    expect(m.trackIdentity()).toBeNull();
+    m.extendTrack([41, 1], { identity: 'v1|7a8b9c0d' });
+    expect(trail()).toHaveLength(0);
+  });
+});
