@@ -209,14 +209,15 @@ describe('8–13) posición, fuente y unidades', () => {
     const r = fr24Result(norm(), ctx);
     expect(r).toMatchObject({ state: 'volando', lat: 44.0123, lon: -2.5432, posAgeS: 5, seenS: 5, track: 12 });
     expect(r.remainingKm).toBeGreaterThan(700);
-    expect(planeOnMap(r, NOW, NOW)).toEqual({ lat: 44.0123, lon: -2.5432 });
+    expect(planeOnMap(r, NOW, NOW)).toEqual({ lat: 44.0123, lon: -2.5432, heading: 12, fresh: true });
   });
-  it('9) posición de hace más de 60 s (90 s) → volando pero sin lat/lon/posAgeS; el frontend no pinta el avión', () => {
+  // Ventana de 180 s (decisión del controlador, 21/10/2026; antes 60 s): la posición real sigue llegando y la app la pinta
+  // quieta y atenuada como «última posición conocida» (planeOnMap fresh: false), nunca como medición nueva.
+  it('9) posición de hace más de 60 s (90 s) → volando CON lat/lon/posAgeS; la app la pinta como última posición conocida', () => {
     const r = fr24Result(norm({ timestamp: new Date(NOW - 90000).toISOString() }), ctx);
-    expect(r).toMatchObject({ state: 'volando', seenS: 90 });
-    for (const k of ['lat', 'lon', 'posAgeS']) expect(r).not.toHaveProperty(k);
-    expect(planeOnMap(r, NOW, NOW)).toBeNull();
-    expect(fr24Result(norm({ timestamp: new Date(NOW - 180000).toISOString() }), ctx).state).toBe('volando');
+    expect(r).toMatchObject({ state: 'volando', seenS: 90, posAgeS: 90, lat: 44.0123, lon: -2.5432 });
+    expect(planeOnMap(r, NOW, NOW)).toEqual({ lat: 44.0123, lon: -2.5432, heading: 12, fresh: false });
+    expect(fr24Result(norm({ timestamp: new Date(NOW - 180000).toISOString() }), ctx)).toMatchObject({ state: 'volando', posAgeS: 180 });
   });
   it('9c) señal de hace más de 180 s (181 s, 20 min) → sin-datos sin telemetría: no tapa a Aena', () => {
     for (const ago of [181000, 1200000]) {
@@ -321,14 +322,15 @@ describe('14–18) FR24 falla o no lo ve: sin reintentos', () => {
   });
 });
 
-describe('19–20) créditos: caché de 60 s y peticiones simultáneas', () => {
-  it('19) la segunda petición en 60 s no llama a FR24 (tampoco un sondeo); pasados 60 s, sí', async () => {
+// Caché de 40 s (antes 60 s; decisión del controlador para el seguimiento en vivo de 45 s).
+describe('19–20) créditos: caché de 40 s y peticiones simultáneas', () => {
+  it('19) la segunda petición en 40 s no llama a FR24 (tampoco un sondeo); pasados 40 s, sí', async () => {
     const s = server();
     await s.ask(NOW);
     await s.ask(NOW + 30000);
-    await s.ask(NOW + 59000, `${PATH}&poll=1`);
+    await s.ask(NOW + 39000, `${PATH}&poll=1`);
     expect(s.fr24()).toHaveLength(1);
-    await s.ask(NOW + 61000);
+    await s.ask(NOW + 41000);
     expect(s.fr24()).toHaveLength(2);
     expect(JSON.parse(handle(s.state, '/health', { env }).body).fr24).toMatchObject({ configured: true, requests: 2, cacheHits: 2, found: 2 });
   });
@@ -393,20 +395,20 @@ describe('21) Aena manda: cancelado, desviado o llegada final', () => {
 });
 
 describe('/fr24-test con caché', () => {
-  it('dos peticiones en 60 s → 1 llamada (y simultáneas, también); cuentan en /health.fr24; pasados 60 s, otra', async () => {
+  it('dos peticiones en 40 s → 1 llamada (y simultáneas, también); cuentan en /health.fr24; pasados 40 s, otra', async () => {
     const { fr24TestRoute } = await import('../server/live.mjs');
     const f = fake();
     const state = createState();
     const get = t => fr24TestRoute(state, '/fr24-test/IB403.json', { fetchFn: f.fetchFn, env, nowMs: t }).then(r => { expect(r.body).not.toContain(TOKEN); return JSON.parse(r.body); });
     expect((await Promise.all([get(NOW), get(NOW)])).map(r => r.state)).toEqual(['found', 'found']);
-    await get(NOW + 59000);
+    await get(NOW + 39000);
     expect(f.fr24()).toHaveLength(1);
     expect(JSON.parse(handle(state, '/health', { env }).body).fr24).toMatchObject({ requests: 1, cacheHits: 2, found: 1 });
-    await get(NOW + 61000);
+    await get(NOW + 41000);
     expect(f.fr24()).toHaveLength(2);
-    // La misma respuesta cruda la aprovecha el radar del mismo número dentro de los 60 s.
+    // La misma respuesta cruda la aprovecha el radar del mismo número dentro de los 40 s.
     state.legs = [ib403()];
-    await radarRoute(state, PATH, { fetchFn: f.fetchFn, nowMs: NOW + 62000, airports, env });
+    await radarRoute(state, PATH, { fetchFn: f.fetchFn, nowMs: NOW + 42000, airports, env });
     expect(f.fr24()).toHaveLength(2);
   });
 });
@@ -475,5 +477,100 @@ describe('25) con FR24 configurado, ninguna ruta de radar llama a adsb.lol, ADSB
     await radarRoute(state, PATH, { fetchFn: f.fetchFn, nowMs: NOW, airports, env: {}, pauseMs: 0 });
     expect(f.fr24()).toEqual([]);
     expect(f.others().some(u => u.startsWith('https://api.adsb.lol/'))).toBe(true);
+  });
+});
+
+// Seguimiento en vivo de la ficha (js/live-tracker.js, decisión del controlador 21/10/2026): el navegador vuelve a pedir
+// /radar cada 45 s con el vuelo en curso; el servidor guarda la respuesta por vuelo físico 40 s (y la cruda por número,
+// otros 40 s). Con 45 > 40 cada ciclo trae una lectura nueva de FR24 y varios usuarios del mismo vuelo comparten caché y
+// promesa en curso. La antigüedad (posAgeS, seenS) es la del instante en que el servidor responde (también desde la
+// caché), con `checked` = la hora del servidor al responder: la app nunca usa el reloj civil del móvil.
+describe('seguimiento en vivo: caché de 40 s, antigüedad al responder y motivos de «no disponible»', () => {
+  // FR24 en el instante de cada llamada: la posición siempre de hace 5 s respecto a esa llamada.
+  const moving = () => { let t = NOW; return { at: v => { t = v; }, answer: () => [item({}, t)] }; };
+  it('LIVE 20) cadencia del navegador 45 s y TTL 40 s: cada ciclo es una llamada real a FR24 con una lectura nueva', async () => {
+    const m = moving();
+    const s = server([ib403()], m.answer);
+    const ages = [];
+    for (let k = 0; k < 4; k++) {
+      m.at(NOW + k * 45000);
+      const r = await s.ask(NOW + k * 45000);
+      ages.push([r.state, r.posAgeS, r.checked]);
+    }
+    expect(s.fr24()).toHaveLength(4); // 4 ciclos → 4 llamadas reales
+    expect(ages.map(a => a[1])).toEqual([5, 5, 5, 5]); // siempre la lectura nueva, no la de la caché
+    expect(ages.map(a => a[2])).toEqual([0, 1, 2, 3].map(k => new Date(NOW + k * 45000).toISOString()));
+    // Otro usuario del mismo vuelo dentro de los 40 s comparte la caché: ninguna llamada más.
+    await s.ask(NOW + 3 * 45000 + 20000);
+    expect(s.fr24()).toHaveLength(4);
+    expect(JSON.parse(handle(s.state, '/health', { env }).body).fr24).toMatchObject({ requests: 4, cacheHits: 1 });
+  });
+  it('TTL 40 s: a los 39 s (también un sondeo) sale de la caché; a los 41 s, otra llamada', async () => {
+    const s = server();
+    await s.ask(NOW);
+    await s.ask(NOW + 39000, `${PATH}&poll=1`);
+    expect(s.fr24()).toHaveLength(1);
+    await s.ask(NOW + 41000);
+    expect(s.fr24()).toHaveLength(2);
+  });
+  it('LIVE 19) dos peticiones simultáneas (el ciclo y «Actualizar», o dos usuarios) → 1 llamada a FR24', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const s = server([ib403()], async () => { await gate; return [item()]; });
+    const both = Promise.all([s.ask(NOW), s.ask(NOW + 5)]);
+    release();
+    expect((await both).map(r => r.state)).toEqual(['volando', 'volando']);
+    expect(s.fr24()).toHaveLength(1);
+  });
+  it('desde la caché, posAgeS y seenS son los del instante de responder y `checked` la hora del servidor al responder', async () => {
+    const s = server();
+    const a = await s.ask(NOW);
+    expect([a.posAgeS, a.seenS, a.checked]).toEqual([5, 5, new Date(NOW).toISOString()]);
+    const b = await s.ask(NOW + 30000);
+    expect(s.fr24()).toHaveLength(1);
+    expect([b.posAgeS, b.seenS, b.checked]).toEqual([35, 35, new Date(NOW + 30000).toISOString()]);
+    // La hora de la posición (checked − posAgeS, la del corte de la estela) es la misma: la medición no cambia.
+    expect(Date.parse(b.checked) - b.posAgeS * 1000).toBe(Date.parse(a.checked) - a.posAgeS * 1000);
+    expect([b.lat, b.lon]).toEqual([a.lat, a.lon]);
+  });
+  it('posición real hasta 180 s: lat/lon/posAgeS presentes; servida desde la caché con más de 180 s, sin posición', async () => {
+    const s = server([ib403()], () => [item({ timestamp: new Date(NOW - 170000).toISOString() })]);
+    const a = await s.ask(NOW);
+    expect(a).toMatchObject({ state: 'volando', lat: 44.0123, lon: -2.5432, posAgeS: 170 });
+    const b = await s.ask(NOW + 20000);
+    expect(b.state).toBe('volando');
+    for (const k of ['lat', 'lon', 'posAgeS']) expect(b).not.toHaveProperty(k);
+  });
+  it('las respuestas del radar FR24 no se guardan en el navegador (no-store): la caché es la del servidor', async () => {
+    const s = server();
+    expect((await s.raw()).headers['Cache-Control']).toBe('no-store');
+    expect((await s.raw(NOW + 10000)).headers['Cache-Control']).toBe('no-store');
+  });
+  it.each([
+    [{ status: 401 }, { reason: 'autorizacion' }], [{ status: 403 }, { reason: 'autorizacion' }],
+    [{ status: 429, headers: { 'retry-after': '120' } }, { reason: 'limite', retryAfterSec: 120 }], [{ status: 429 }, { reason: 'limite' }],
+    [{ status: 500 }, { reason: 'servidor' }], [{ status: 503 }, { reason: 'servidor' }], [{ status: 404 }, { reason: 'http' }],
+    [Object.assign(new Error('aborted'), { name: 'TimeoutError' }), { reason: 'timeout' }], [new TypeError(`fetch failed ${TOKEN}`), { reason: 'red' }],
+  ])('no-disponible distingue el motivo (%#) sin datos sensibles', async (answer, want) => {
+    const s = server([ib403()], () => answer);
+    const raw = await s.raw();
+    expect(raw.body).not.toContain(TOKEN);
+    const r = JSON.parse(raw.body);
+    expect(r).toMatchObject({ state: 'no-disponible', source: 'fr24', ...want });
+    if (!('retryAfterSec' in want)) expect(r).not.toHaveProperty('retryAfterSec');
+    expect(Object.keys(r).sort()).toEqual(['checked', 'departureConfirmed', 'reason', 'source', 'state', ...('retryAfterSec' in want ? ['retryAfterSec'] : [])].sort());
+  });
+  it('429 desde la caché: retryAfterSec es lo que QUEDA de la pausa al responder', async () => {
+    const s = server([ib403()], () => ({ status: 429, headers: { 'retry-after': '120' } }));
+    await s.ask(NOW);
+    expect(await s.ask(NOW + 30000)).toMatchObject({ state: 'no-disponible', reason: 'limite', retryAfterSec: 90 });
+    expect(s.fr24()).toHaveLength(1);
+  });
+  it('CRÉDITOS 31) /health durante el seguimiento: solo cuenta, nunca llama a FR24', async () => {
+    const s = server();
+    await s.ask(NOW);
+    const n = s.fr24().length;
+    for (let k = 0; k < 3; k++) handle(s.state, '/health', { env });
+    expect(s.fr24()).toHaveLength(n);
   });
 });

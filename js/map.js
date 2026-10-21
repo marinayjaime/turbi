@@ -92,8 +92,11 @@ export function wireMapCard(card, routeMap) {
 }
 
 // Movimiento del avión ENTRE POSICIONES REALES (solo presentación): de la posición que se ve a la nueva lectura en
-// PLANE_GLIDE_MS, con suavizado; nunca más allá de la última posición recibida ni hacia donde «irá». Rumbo aproximado
-// entre los dos puntos para orientar el icono (que apunta al este).
+// PLANE_GLIDE_MS, con suavizado; nunca más allá de la última posición recibida ni hacia donde «irá».
+// Orientación: el icono (SVG) apunta al ESTE, así que la rotación es rumbo − 90. Rumbo = el `track` medido de la lectura
+// (Flightradar24, 0 = norte); sin él, con A y B reales, el rumbo aproximado A → B; con una sola posición y sin track, el
+// icono no se gira (no se inventa una orientación). Cada giro va por el camino corto desde el anterior (la rotación tiene
+// transición CSS): nunca una vuelta de 360° ni de 180° por un salto de −180 a 180.
 export const PLANE_GLIDE_MS = 2500;
 const ease = x => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
 const RAD = Math.PI / 180;
@@ -102,6 +105,8 @@ function bearing(a, b) {
   const x = Math.cos(a.lat * RAD) * Math.sin(b.lat * RAD) - Math.sin(a.lat * RAD) * Math.cos(b.lat * RAD) * Math.cos((b.lon - a.lon) * RAD);
   return Math.atan2(y, x) / RAD; // 0 = norte, 90 = este
 }
+// Ángulo equivalente a deg en [-180, 180).
+const wrap = deg => ((((deg + 180) % 360) + 360) % 360) - 180;
 const defaultClock = {
   raf: cb => globalThis.requestAnimationFrame?.(cb) ?? setTimeout(() => cb(Date.now()), 16),
   caf: id => (globalThis.cancelAnimationFrame ? globalThis.cancelAnimationFrame(id) : clearTimeout(id)),
@@ -126,6 +131,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   let target = null; // última posición real recibida
   let identity = null; // avión y vuelo físico de esa posición
   let frame = null;
+  let angle = null; // rotación aplicada al icono (grados CSS), null si aún no se ha orientado
   // Estela real: puntos reales recibidos (setTrack + extendTrack) de UNA identidad (trackId, la misma que el avión).
   let trackLine = null, trackPts = [], trackId = null;
   const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
@@ -142,7 +148,17 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   };
   const stop = () => { if (frame !== null) clock.caf(frame); frame = null; };
   const put = p => { shown = p; plane.setLatLng([p.lat, p.lon]); drawTrack(); };
-  const turn = deg => { const r = plane.getElement?.()?.querySelector?.('.plane-rot'); if (r) r.style.transform = `rotate(${deg}deg)`; };
+  const rotEl = () => plane?.getElement?.()?.querySelector?.('.plane-rot');
+  // Gira el icono a `heading` (rumbo, 0 = norte) por el camino corto; la primera vez, en [-180, 180).
+  const turn = heading => {
+    if (!Number.isFinite(heading)) return;
+    const target = heading - 90;
+    angle = angle === null ? wrap(target) : angle + wrap(target - angle);
+    const r = rotEl();
+    if (r) r.style.transform = `rotate(${angle}deg)`;
+  };
+  // Última posición conocida (fresh: false): atenuada; fresca, normal.
+  const age = fresh => rotEl()?.classList?.toggle?.('plane-old', fresh === false);
   const drawRoute = r => {
     lineLayers.splice(0).forEach(l => l.remove());
     for (const l of routeLines(r)) lineLayers.push(L.polyline(l.coords, { color: COLORS[l.level], ...ROUTE_STYLE }).addTo(map));
@@ -166,15 +182,23 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
         forecastLayers.push(L.circleMarker([p.lat, p.lon], { radius: 5, color: '#5856d6', fillOpacity: 0.8 }).bindTooltip(`Informe de piloto: ${esc(p.label)}`).addTo(map));
       }
     },
-    // Recibe planeOnMap(): { lat, lon } con posición de 60 s o menos, o null; identity: avión y vuelo físico de esa
-    // lectura. Con null no hay marcador (ni «última posición», ni hueco): se cancela cualquier movimiento. La primera
-    // posición, la que llega tras perderla y la de otro avión o vuelo se colocan directamente; una lectura nueva del
-    // mismo avión se desplaza desde lo que se ve hasta ella (sin pasarse ni seguir después), o directa con
-    // prefers-reduced-motion. Nunca recentra ni cambia el zoom.
+    // Recibe planeOnMap(): { lat, lon, heading, fresh } (posición real de 180 s o menos) o null; identity: avión y vuelo
+    // físico de esa lectura. Con null no hay marcador: se cancela cualquier movimiento. La primera posición, la que llega
+    // tras perderla y la de otro avión o vuelo se colocan directamente; una lectura FRESCA nueva del mismo avión se
+    // desplaza desde lo que se ve hasta ella (sin pasarse ni seguir después), o directa con prefers-reduced-motion. Una
+    // lectura vieja (fresh: false, la última posición conocida) nunca anima: se coloca o se queda quieta, atenuada
+    // (.plane-old). El rumbo real (heading) se aplica en cada lectura, también si la posición no cambia. Nunca recentra
+    // ni cambia el zoom.
     setPlane(pos, { identity: id = null } = {}) {
-      if (!pos) { stop(); plane?.remove(); plane = null; shown = target = identity = null; drawTrack(); return; }
+      if (!pos) { stop(); plane?.remove(); plane = null; shown = target = identity = null; angle = null; drawTrack(); return; }
       const next = { lat: pos.lat, lon: pos.lon };
-      if (plane && id === identity && target && next.lat === target.lat && next.lon === target.lon) return; // repintado
+      const fresh = pos.fresh !== false;
+      const heading = Number.isFinite(pos.heading) ? pos.heading : null;
+      if (plane && id === identity && target && next.lat === target.lat && next.lon === target.lon) { // misma lectura
+        turn(heading);
+        age(fresh);
+        return;
+      }
       if (!plane) {
         plane = L.marker([next.lat, next.lon], {
           icon: L.divIcon({ className: 'plane-marker', html: `<span class="plane-rot">${icon('plane', { size: 26 })}</span>`,
@@ -183,6 +207,9 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
         }).addTo(map);
         shown = target = next;
         identity = id;
+        angle = null;
+        turn(heading);
+        age(fresh);
         drawTrack();
         return;
       }
@@ -190,12 +217,14 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       const sameAircraft = id === identity;
       identity = id;
       target = next;
-      if (!sameAircraft || clock.reducedMotion()) { put(next); return; }
+      age(fresh);
+      if (!sameAircraft || !fresh || clock.reducedMotion()) { turn(heading); put(next); return; }
       const from = shown;
-      turn(bearing(from, next) - 90);
+      turn(heading ?? bearing(from, next));
       const t0 = clock.now();
-      const step = now => {
-        const k = Math.min(1, Math.max(0, (now - t0) / PLANE_GLIDE_MS));
+      // Siempre el reloj de clock.now (no la marca de requestAnimationFrame): un solo reloj para t0 y cada fotograma.
+      const step = () => {
+        const k = Math.min(1, Math.max(0, (clock.now() - t0) / PLANE_GLIDE_MS));
         const e = ease(k);
         put(k >= 1 ? next : { lat: from.lat + (next.lat - from.lat) * e, lon: from.lon + (next.lon - from.lon) * e });
         frame = k >= 1 ? null : clock.raf(step);
@@ -213,9 +242,10 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       trackLine.bringToFront?.();
       drawTrack();
     },
-    // Una posición real nueva del mismo avión (planeOnMap): la estela se prolonga hasta ella (sin duplicar el último).
-    extendTrack(point, { identity: id = null } = {}) {
-      if (!trackLine || id !== trackId || !Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])) return;
+    // Una posición real FRESCA nueva del mismo avión (planeOnMap): la estela se prolonga hasta ella (sin duplicar el
+    // último). Una posición vieja (fresh: false) nunca la prolonga.
+    extendTrack(point, { identity: id = null, fresh = true } = {}) {
+      if (!trackLine || id !== trackId || fresh === false || !Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])) return;
       if (!same(trackPts.at(-1), point)) trackPts.push([point[0], point[1]]);
       drawTrack();
     },

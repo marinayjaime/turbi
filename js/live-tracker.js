@@ -1,0 +1,90 @@
+// Seguimiento en vivo de la posición mientras se mira un vuelo en curso con Flightradar24 (decisión del controlador,
+// 21/10/2026). Solo decide CUÁNDO volver a preguntar y qué hacer con la respuesta; quien llama (js/app.js) da la petición
+// (EXACTAMENTE el /radar o /radar-adb que ya usa la ficha, con su ?leg=) y la pinta por el camino de siempre (paintRadar).
+// Sin meteorología, sin Flight Tracks, sin rehacer la búsqueda; nunca se extrapola ni se mueve nada con datos viejos.
+//   - Cadencia: LIVE_INTERVAL_MS = 45 s entre peticiones, con setTimeout encadenado (nunca setInterval) y UN solo
+//     temporizador. El servidor guarda la respuesta 40 s por vuelo físico (server/fr24-radar.mjs): con 45 > 40 cada ciclo
+//     trae una lectura nueva de FR24 y varios usuarios del mismo vuelo comparten caché y promesa (≈ 1 llamada por vuelo
+//     cada 45 s, unas 80 por hora con la ficha abierta).
+//   - Fallos (la última posición real se queda quieta en la ficha: un fallo no se pinta): sin respuesta, red, timeout o
+//     5xx → espera creciente LIVE_BACKOFF_MS (90, 180 y 300 s como máximo) y vuelta a 45 s tras un éxito; 429 → no antes
+//     de Retry-After (y nunca antes de 45 s); 401/403 → se para (sin bucles).
+//   - Se para con un final definitivo (aterrizado, no-aplica, una respuesta que ya no es de FR24) o cuando isOver() /
+//     isActive() lo dicen (Aena final, cancelado, desviado, otra búsqueda, ficha cerrada…).
+//   - Pestaña oculta (visible() falso): cero peticiones; al volver, si ya tocaba, pide en el acto y sigue.
+export const LIVE_INTERVAL_MS = 45000;
+export const LIVE_BACKOFF_MS = [90000, 180000, 300000];
+
+// Respuesta del radar → { paint, stop, delayMs, failures } (failures: fallos seguidos, para la espera creciente).
+export function liveDecision(radar, failures = 0) {
+  const backoff = () => ({ paint: false, stop: false, delayMs: LIVE_BACKOFF_MS[Math.min(failures, LIVE_BACKOFF_MS.length - 1)], failures: failures + 1 });
+  if (!radar) return backoff();
+  if (radar.state === 'no-disponible') {
+    if (radar.reason === 'autorizacion') return { paint: false, stop: true, delayMs: null, failures };
+    if (radar.reason === 'limite' && Number.isFinite(radar.retryAfterSec) && radar.retryAfterSec >= 0) {
+      return { paint: false, stop: false, delayMs: Math.max(LIVE_INTERVAL_MS, radar.retryAfterSec * 1000), failures: failures + 1 };
+    }
+    return backoff();
+  }
+  if (radar.state === 'no-aplica') return { paint: false, stop: true, delayMs: null, failures };
+  // Una lectura real (aterrizado, o ya no es de FR24: el servidor volvió al flujo antiguo) se pinta como siempre, y se para.
+  if (radar.state === 'aterrizado' || radar.source !== 'fr24') return { paint: true, stop: true, delayMs: null, failures: 0 };
+  return { paint: true, stop: false, delayMs: LIVE_INTERVAL_MS, failures: 0 };
+}
+
+// fetchOnce() → respuesta (o null); onReading(radar) la pinta; isActive(): la ficha que lo pidió sigue en pantalla;
+// isOver(): el vuelo ya no está en curso (final de Aena, cancelado, desviado, aterrizado); visible(): pestaña visible.
+// now: reloj monotónico. La primera lectura ya está pintada: el primer ciclo, a los firstDelayMs.
+// → { key, hold(), feed(radar), onVisibility(), stop(), stopped, pending }.
+export function startLiveTracker({ key, fetchOnce, onReading, isActive = () => true, isOver = () => false,
+  visible = () => globalThis.document?.visibilityState !== 'hidden', now = () => globalThis.performance?.now?.() ?? Date.now(),
+  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), firstDelayMs = LIVE_INTERVAL_MS }) {
+  let timer = null, stopped = false, held = false, inflight = false, failures = 0, dueAt = null;
+  const clear = () => { if (timer !== null) clearTimer(timer); timer = null; };
+  const stop = () => { stopped = true; clear(); };
+  // Programa el siguiente ciclo para dentro de ms; con la pestaña oculta solo apunta cuándo tocaría (pausa).
+  const schedule = ms => {
+    clear();
+    dueAt = now() + ms;
+    if (visible()) timer = setTimer(cycle, ms);
+  };
+  const handle = (radar, paint) => {
+    const d = liveDecision(radar, failures);
+    failures = d.failures;
+    if (d.paint && paint) onReading(radar);
+    if (d.stop || isOver()) { stop(); return; }
+    schedule(d.delayMs);
+  };
+  async function cycle() {
+    timer = null;
+    if (stopped || held) return;
+    if (!isActive() || isOver()) { stop(); return; }
+    if (!visible()) return; // pausa: onVisibility la reanuda
+    inflight = true;
+    let radar = null;
+    try { radar = await fetchOnce(); } catch { radar = null; }
+    inflight = false;
+    if (stopped || held) return; // «Actualizar» trae su propia lectura
+    if (!isActive()) { stop(); return; }
+    handle(radar, true);
+  }
+  schedule(firstDelayMs);
+  return {
+    key,
+    // En espera (p. ej. «Actualizar» del mismo vuelo en curso): sin ciclo hasta feed().
+    hold() { if (stopped) return; held = true; clear(); },
+    // Lectura que ya pintó otro camino (la primera de «Actualizar»): decide el siguiente ciclo sin volver a pintarla.
+    feed(radar) { if (stopped) return; held = false; handle(radar, false); },
+    onVisibility() {
+      if (stopped || held || inflight) return;
+      if (!visible()) { clear(); return; }
+      if (timer === null && dueAt !== null) {
+        const ms = Math.max(0, dueAt - now());
+        timer = setTimer(cycle, ms);
+      }
+    },
+    stop,
+    get stopped() { return stopped; },
+    get pending() { return timer !== null; },
+  };
+}

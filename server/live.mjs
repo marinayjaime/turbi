@@ -118,7 +118,7 @@ export function trackRoute(state, path, opts = {}) {
   return fr24TrackResponse(state, path, opts);
 }
 
-// /fr24-test/<vuelo>.json (prueba pedida por Jaime, pública): con la caché de 60 s por número, la promesa compartida y
+// /fr24-test/<vuelo>.json (prueba pedida por Jaime, pública): con la caché de 40 s por número, la promesa compartida y
 // los contadores de /health.fr24 del radar, para que visitarla no gaste créditos de más.
 export function fr24TestRoute(state, path, { fetchFn = fetch, env = process.env, nowMs } = {}) {
   return fr24TestResponse(path, { fetchFn, env, lookup: (flight, o) => fr24CachedLookup(state, flight, { ...o, nowMs: nowMs ?? Date.now() }) });

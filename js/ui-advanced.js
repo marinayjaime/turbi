@@ -4,7 +4,7 @@
 // nuevo (la antigüedad de la señal sale de signalState, de card-model.js).
 import { esc, thousands } from './ui.js';
 import { icon } from './icons.js';
-import { signalState, planeOnMap, positionAgeS, ageText } from './card-model.js';
+import { signalState, planeOnMap, positionAgeS, ageText, monoNow } from './card-model.js';
 import { agoText } from './storage.js';
 import { BUILD_ID } from './build.js';
 
@@ -46,11 +46,12 @@ function aircraftRows(c) {
 // « · hace X» de un dato ADS-B que ya no es reciente (mismo texto en el HTML y en el contador de app.js).
 export const ageSuffix = sig => ` · hace ${sig.text}`;
 
-function adsbRows(c, nowMs) {
+// monoMs: «ahora» en el reloj monotónico de c.radarReceivedMono (nunca la hora del móvil).
+function adsbRows(c, monoMs) {
   const r = c.radar;
   if (r?.state !== 'volando') return [];
   const rows = [];
-  const sig = signalState(r, c.radarReceivedAt, nowMs);
+  const sig = signalState(r, c.radarReceivedMono, monoMs);
   // Lectura que ya no es reciente (old / stale): altitud, velocidades y posición llevan su antigüedad para que nunca
   // parezcan actuales (§10 bis.2). El indicativo y la identificación no envejecen. .adv-age: el contador de señal de
   // app.js reescribe su texto cada segundo, como el de «Última señal».
@@ -63,11 +64,12 @@ function adsbRows(c, nowMs) {
   // .adv-signal: el contador de señal de app.js reescribe solo este valor cada segundo (sin repintar #adv-flight).
   if (sig) rows.push(row('Última señal', `hace ${esc(sig.text)}`, 'adv-signal'));
   // La posición lleva solo la antigüedad de la POSICIÓN (posAgeS), nunca la de la señal: en cuanto el mapa quita el
-  // avión (planeOnMap null, más de 60 s) se muestra «· hace X» (data-pos: el contador de app.js la reescribe con la de
-  // la posición). Sin posAgeS la antigüedad es desconocida y no se muestra la fila, como el mapa no pinta el avión.
-  const posAge = positionAgeS(r, c.radarReceivedAt, nowMs);
+  // avión deja de ser fresco (más de 60 s: última posición conocida, atenuada, o ya sin avión) se muestra «· hace X»
+  // (data-pos: el contador de app.js la reescribe con la de la posición). Sin posAgeS la antigüedad es desconocida y no
+  // se muestra la fila, como el mapa no pinta el avión.
+  const posAge = positionAgeS(r, c.radarReceivedMono, monoMs);
   if (Number.isFinite(r.lat) && Number.isFinite(r.lon) && posAge !== null) {
-    const posAged = planeOnMap(r, c.radarReceivedAt, nowMs) ? '' : `<span class="adv-age" data-pos>${esc(ageSuffix({ text: ageText(posAge) }))}</span>`;
+    const posAged = planeOnMap(r, c.radarReceivedMono, monoMs)?.fresh ? '' : `<span class="adv-age" data-pos>${esc(ageSuffix({ text: ageText(posAge) }))}</span>`;
     rows.push(row('Posición', `${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}${posAged}`));
   }
   if (MATCH[r.match]) rows.push(row('Identificación', MATCH[r.match]));
@@ -108,11 +110,12 @@ function sourceRows(c) {
   return rows;
 }
 
-// Categorías de la ficha (#adv-flight). open: Set de data-card abiertos, para conservarlos al repintar.
-export function advancedFlightHtml(card, { open = new Set(), nowMs = Date.now() } = {}) {
+// Categorías de la ficha (#adv-flight). open: Set de data-card abiertos, para conservarlos al repintar. monoMs: «ahora»
+// en el reloj monotónico (antigüedad de los datos del radar).
+export function advancedFlightHtml(card, { open = new Set(), monoMs = monoNow() } = {}) {
   const cats = [
     ['adv-aircraft', 'Datos del avión', 'plane', aircraftRows(card)],
-    ['adv-adsb', card.radar?.source === 'fr24' ? 'Datos del radar' : 'Datos ADS-B', 'signal', adsbRows(card, nowMs)],
+    ['adv-adsb', card.radar?.source === 'fr24' ? 'Datos del radar' : 'Datos ADS-B', 'signal', adsbRows(card, monoMs)],
     ['adv-codeshare', 'Códigos compartidos', 'route', codeshareRows(card)],
     ['adv-tech', 'Información técnica', 'info', techRows(card)],
     ['adv-sources', 'Fuentes utilizadas', 'sources', sourceRows(card)],

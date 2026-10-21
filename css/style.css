@@ -538,6 +538,8 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .plane-marker .icon { display: block; }
 /* El icono apunta al este; el mapa lo gira hacia la última posición real recibida (solo presentación). */
 .plane-marker .plane-rot { display: block; transition: transform var(--ease); }
+/* Última posición conocida (60–180 s, js/map.js): quieta y atenuada, para no presentarla como una medición nueva. */
+.plane-marker .plane-rot.plane-old { opacity: .5; }
 @media (prefers-reduced-motion: reduce) { .plane-marker .plane-rot { transition: none; } }
 .map-btn { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--field); color: var(--text); cursor: pointer; }
 .map-btn .icon { color: inherit; }

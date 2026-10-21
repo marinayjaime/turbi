@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { flightPhase, mainTime, formatCountdown, sourceLabel, confidenceInfo, punctualityTile, summaryTiles, milestones,
   signalState, planeOnMap, positionAgeS, turbulenceBars, roughestSpan, weatherAlerts } from '../js/card-model.js';
 import { adbPhase } from '../js/adb.js';
-import { distanceReference, receiptAgeS } from '../js/radar-distance.js';
+import { distanceReference, receivedRadar } from '../js/radar-distance.js';
 
 const NOW = Date.parse('2026-10-20T08:00:00Z');
 const MIN = 60000;
@@ -202,87 +202,118 @@ describe('milestones', () => {
   });
 });
 
-describe('antigüedad al recibir (radar-distance.js)', () => {
-  it('receiptAgeS es la misma cuenta que distanceReference y también vale sin remainingKm', () => {
-    const r = volando({ seenS: 7, checked: new Date(NOW - 20000).toISOString() });
-    expect(receiptAgeS(r, NOW)).toBe(27);
-    expect(distanceReference(r, NOW).ageAtReceiptS).toBe(27);
-    expect(receiptAgeS(volando({ remainingKm: undefined, seenS: 3 }), NOW)).toBe(3);
+// Antigüedad SIN el reloj civil del móvil (decisión del controlador, 21/10/2026): la radar de la tarjeta lleva la antigüedad
+// del instante en que el servidor respondió (posAgeS / seenS; con FR24 el servidor la recalcula también desde su caché) y
+// la app solo le suma lo transcurrido en su reloj MONOTÓNICO (performance.now: radarReceivedMono y el «ahora» monotónico).
+// receivedRadar: con adsb.lol (flujo antiguo, sin recalcular en su caché) se suma una vez, al recibirla, el tiempo que pasó
+// en la caché del servidor (recepción − checked), como siempre; con FR24, nada (el servidor ya lo hizo).
+describe('antigüedad al recibir (radar-distance.js: receivedRadar)', () => {
+  it('FR24: la lectura tal cual (posAgeS/seenS ya son los del instante de responder), aunque checked sea «viejo» para el móvil', () => {
+    const r = volando({ source: 'fr24', seenS: 7, posAgeS: 7, checked: new Date(NOW - 5 * MIN).toISOString() });
+    expect(receivedRadar(r, NOW)).toBe(r);
+    expect(receivedRadar({ ...r, checked: new Date(NOW + 5 * MIN).toISOString() }, NOW).posAgeS).toBe(7);
+  });
+  it('adsb.lol: suma una vez el tiempo en la caché del servidor (checked 20 s antes → +20 s) a seenS y posAgeS', () => {
+    const r = receivedRadar(volando({ seenS: 7, posAgeS: 4, checked: new Date(NOW - 20000).toISOString() }), NOW);
+    expect([r.seenS, r.posAgeS]).toEqual([27, 24]);
+    expect(distanceReference(r, 0).ageAtReceiptS).toBe(27); // la distancia usa la misma cuenta
+    expect(receivedRadar(volando({ seenS: 3, checked: new Date(NOW + 9000).toISOString() }), NOW).seenS).toBe(3); // checked futuro: nada
+    expect(receivedRadar(volando({ seenS: 3, posAgeS: undefined, checked: 'x' }), NOW)).toMatchObject({ seenS: 3 });
+    expect(receivedRadar(null, NOW)).toBeNull();
   });
 });
 
-describe('signalState', () => {
+describe('signalState (reloj monotónico)', () => {
+  const M = 5000; // instante monotónico de recepción (performance.now: no es una hora)
   it('seenS 5 recibido ahora → live, «5 s»', () => {
-    expect(signalState(volando(), NOW, NOW)).toEqual({ ageS: 5, level: 'live', text: '5 s' });
+    expect(signalState(volando(), M, M)).toEqual({ ageS: 5, level: 'live', text: '5 s' });
   });
   it('6 min después → old; 13 min después → stale', () => {
-    expect(signalState(volando(), NOW, NOW + 6 * MIN)).toMatchObject({ level: 'old', text: '6 min' });
-    expect(signalState(volando(), NOW, NOW + 13 * MIN)).toMatchObject({ level: 'stale', text: '13 min' });
+    expect(signalState(volando(), M, M + 6 * MIN)).toMatchObject({ level: 'old', text: '6 min' });
+    expect(signalState(volando(), M, M + 13 * MIN)).toMatchObject({ level: 'stale', text: '13 min' });
   });
-  it('checked 50 s antes de recibir suma 50 s (caché del servidor)', () => {
-    expect(signalState(volando({ checked: new Date(NOW - 50000).toISOString() }), NOW, NOW).ageS).toBe(55);
+  it('RELOJ 29) envejece solo con el reloj monotónico: checked (hora del servidor) no se resta del reloj del móvil', () => {
+    expect(signalState(volando({ checked: new Date(NOW - 50000).toISOString() }), M, M).ageS).toBe(5);
+    expect(signalState(volando({ checked: new Date(NOW + 5 * MIN).toISOString() }), M, M + 2000).ageS).toBe(7);
   });
   it('sin remainingKm también; y fuera de «volando», null', () => {
-    expect(signalState(volando({ remainingKm: null }), NOW, NOW + 10000).ageS).toBe(15);
-    expect(signalState({ state: 'reciente', ageMin: 3 }, NOW, NOW)).toBeNull();
-    expect(signalState(null, NOW, NOW)).toBeNull();
+    expect(signalState(volando({ remainingKm: null }), M, M + 10000).ageS).toBe(15);
+    expect(signalState({ state: 'reciente', ageMin: 3 }, M, M)).toBeNull();
+    expect(signalState(null, M, M)).toBeNull();
   });
   it('sin instante de recepción (undefined o NaN) → null, nunca «NaN min»', () => {
     const r = volando({ seenS: 400 });
-    expect(signalState(r, undefined, NOW)).toBeNull();
-    expect(signalState(r, NaN, NOW)).toBeNull();
+    expect(signalState(r, undefined, M)).toBeNull();
+    expect(signalState(r, NaN, M)).toBeNull();
+  });
+  it('un «ahora» anterior a la recepción (no debería ocurrir con un reloj monotónico) no resta', () => {
+    expect(signalState(volando(), M, M - 3000).ageS).toBe(5);
   });
 });
 
-describe('positionAgeS', () => {
-  it('posAgeS + tiempo en la caché del servidor + tiempo desde que se recibió', () => {
-    expect(positionAgeS(volando({ posAgeS: 5 }), NOW, NOW)).toBe(5);
-    expect(positionAgeS(volando({ posAgeS: 5 }), NOW, NOW + 7000)).toBe(12);
-    expect(positionAgeS(volando({ posAgeS: 5, checked: new Date(NOW - 30000).toISOString() }), NOW, NOW + 2000)).toBe(37);
+describe('positionAgeS (reloj monotónico)', () => {
+  const M = 1000;
+  it('posAgeS (al responder el servidor) + lo transcurrido desde que se recibió', () => {
+    expect(positionAgeS(volando({ posAgeS: 5 }), M, M)).toBe(5);
+    expect(positionAgeS(volando({ posAgeS: 5 }), M, M + 7000)).toBe(12);
+    expect(positionAgeS(volando({ posAgeS: 5, checked: new Date(NOW - 30000).toISOString() }), M, M + 2000)).toBe(7);
   });
   it('no usa seenS: con seenS 40 y posAgeS 5 cuenta 5', () => {
-    expect(positionAgeS(volando({ seenS: 40, posAgeS: 5 }), NOW, NOW)).toBe(5);
+    expect(positionAgeS(volando({ seenS: 40, posAgeS: 5 }), M, M)).toBe(5);
   });
   it('null sin posAgeS finito, sin instante de recepción o fuera de «volando»', () => {
-    expect(positionAgeS(volando({ posAgeS: undefined }), NOW, NOW)).toBeNull();
-    expect(positionAgeS(volando({ posAgeS: NaN }), NOW, NOW)).toBeNull();
-    expect(positionAgeS(volando(), undefined, NOW)).toBeNull();
-    expect(positionAgeS(volando(), NaN, NOW)).toBeNull();
-    expect(positionAgeS(volando({ state: 'reciente' }), NOW, NOW)).toBeNull();
-    expect(positionAgeS(null, NOW, NOW)).toBeNull();
+    expect(positionAgeS(volando({ posAgeS: undefined }), M, M)).toBeNull();
+    expect(positionAgeS(volando({ posAgeS: NaN }), M, M)).toBeNull();
+    expect(positionAgeS(volando(), undefined, M)).toBeNull();
+    expect(positionAgeS(volando(), NaN, M)).toBeNull();
+    expect(positionAgeS(volando({ state: 'reciente' }), M, M)).toBeNull();
+    expect(positionAgeS(null, M, M)).toBeNull();
   });
 });
 
+// Avión en el mapa (decisión del controlador, 21/10/2026): fresco con ≤ 60 s de posición (puede animarse y prolongar la
+// estela); «última posición conocida» entre 60 y 180 s (quieto y atenuado, fresh: false); más de 180 s, sin avión.
+// heading: el `track` real de FR24 (0 = norte) o null si no viene.
 describe('planeOnMap', () => {
+  const M = 2000;
   it('sin lat → null', () => {
-    expect(planeOnMap(volando({ lat: undefined }), NOW, NOW)).toBeNull();
+    expect(planeOnMap(volando({ lat: undefined }), M, M)).toBeNull();
   });
-  it('posAgeS 5 recibido ahora → la posición recibida, tal cual', () => {
-    expect(planeOnMap(volando({ posAgeS: 5 }), NOW, NOW)).toEqual({ lat: 40.1, lon: -3.2 });
+  it('posAgeS 5 recibido ahora → la posición recibida, tal cual, fresca; con su rumbo real', () => {
+    expect(planeOnMap(volando({ posAgeS: 5 }), M, M)).toEqual({ lat: 40.1, lon: -3.2, heading: null, fresh: true });
+    expect(planeOnMap(volando({ posAgeS: 5, track: 271 }), M, M)).toEqual({ lat: 40.1, lon: -3.2, heading: 271, fresh: true });
+    expect(planeOnMap(volando({ track: 'x' }), M, M).heading).toBeNull();
   });
-  it('posAgeS 55: a los 5 s sigue; 6 s después (61 s de antigüedad) → null', () => {
-    expect(planeOnMap(volando({ posAgeS: 55 }), NOW, NOW + 5000)).toEqual({ lat: 40.1, lon: -3.2 });
-    expect(planeOnMap(volando({ posAgeS: 55 }), NOW, NOW + 6000)).toBeNull();
+  it('posAgeS 55: a los 5 s sigue fresca; 6 s después (61 s) → última posición conocida (fresh: false), la MISMA posición', () => {
+    expect(planeOnMap(volando({ posAgeS: 55 }), M, M + 5000)).toMatchObject({ lat: 40.1, lon: -3.2, fresh: true });
+    expect(planeOnMap(volando({ posAgeS: 55 }), M, M + 6000)).toEqual({ lat: 40.1, lon: -3.2, heading: null, fresh: false });
   });
-  it('seenS 1 y posAgeS 55: desaparece a los ~5 s, no a los ~59 (manda la posición, no el último mensaje)', () => {
+  it('FALLOS 23) con más de 180 s desaparece (null); a los 180 s aún es la última posición conocida', () => {
+    expect(planeOnMap(volando({ posAgeS: 170 }), M, M + 10000)).toMatchObject({ fresh: false });
+    expect(planeOnMap(volando({ posAgeS: 170 }), M, M + 11000)).toBeNull();
+    expect(planeOnMap(volando({ posAgeS: 181 }), M, M)).toBeNull();
+  });
+  it('seenS 1 y posAgeS 55: deja de ser fresca a los ~5 s, no a los ~59 (manda la posición, no el último mensaje)', () => {
     const r = volando({ seenS: 1, posAgeS: 55 });
-    expect(planeOnMap(r, NOW, NOW + 4000)).not.toBeNull();
-    expect(planeOnMap(r, NOW, NOW + 6000)).toBeNull();
+    expect(planeOnMap(r, M, M + 4000).fresh).toBe(true);
+    expect(planeOnMap(r, M, M + 6000).fresh).toBe(false);
   });
   it('sin posAgeS pero con seenS → null (seenS nunca sustituye)', () => {
-    expect(planeOnMap(volando({ seenS: 1, posAgeS: undefined }), NOW, NOW)).toBeNull();
+    expect(planeOnMap(volando({ seenS: 1, posAgeS: undefined }), M, M)).toBeNull();
   });
-  it('checked suma el tiempo en la caché del servidor', () => {
-    const r = volando({ posAgeS: 5, checked: new Date(NOW - 50000).toISOString() });
-    expect(planeOnMap(r, NOW, NOW)).toEqual({ lat: 40.1, lon: -3.2 }); // 55 s
-    expect(planeOnMap(r, NOW, NOW + 6000)).toBeNull(); // 61 s
+  it('RELOJ 27–28) checked de ±5 min respecto al móvil no cambia nada: solo cuentan posAgeS y el reloj monotónico', () => {
+    for (const off of [5 * MIN, -5 * MIN]) {
+      const r = volando({ source: 'fr24', posAgeS: 5, checked: new Date(NOW + off).toISOString() });
+      expect(planeOnMap(r, M, M + 1000)).toMatchObject({ fresh: true });
+      expect(positionAgeS(r, M, M + 1000)).toBe(6);
+    }
   });
   it('sin instante de recepción (undefined o NaN) → null: un avión de antigüedad desconocida no se pinta', () => {
-    expect(planeOnMap(volando({ lat: 1, lon: 2 }), undefined, NOW)).toBeNull();
-    expect(planeOnMap(volando(), NaN, NOW)).toBeNull();
+    expect(planeOnMap(volando({ lat: 1, lon: 2 }), undefined, M)).toBeNull();
+    expect(planeOnMap(volando(), NaN, M)).toBeNull();
   });
   it('estado «reciente» → null', () => {
-    expect(planeOnMap(volando({ state: 'reciente' }), NOW, NOW)).toBeNull();
+    expect(planeOnMap(volando({ state: 'reciente' }), M, M)).toBeNull();
   });
 });
 

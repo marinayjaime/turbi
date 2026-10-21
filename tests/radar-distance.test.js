@@ -1,6 +1,6 @@
 // Distancia restante «en vivo» entre lecturas ADS-B reales (interpolación visual; js/radar-distance.js).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { distanceReference, estimateRemaining, startRemainingTicker, REMAINING_FLOOR_KM, MAX_EXTRAPOLATION_S, MIN_KMH } from '../js/radar-distance.js';
+import { distanceReference, receivedRadar, estimateRemaining, startRemainingTicker, REMAINING_FLOOR_KM, MAX_EXTRAPOLATION_S, MIN_KMH } from '../js/radar-distance.js';
 
 const T0 = Date.parse('2026-09-26T10:00:00Z');
 const reading = over => ({ state: 'volando', remainingKm: 366, kmh: 900, seenS: 0, checked: new Date(T0).toISOString(), ...over });
@@ -38,10 +38,12 @@ describe('estimación de la distancia visible', () => {
   });
 });
 
+// Flujo antiguo (adsb.lol, sin recalcular en su caché): receivedRadar suma al recibir el tiempo en la caché del servidor;
+// con FR24 el servidor ya da la antigüedad del instante de responder (ver el bloque siguiente).
 describe('antigüedad inicial: seenS + tiempo en la caché del servidor (checked)', () => {
   const at = s => new Date(T0 + s * 1000).toISOString();
   it('seenS 0 y checked 60 s antes → solo quedan 240 s de extrapolación; la distancia inicial es la del servidor', () => {
-    const ref = distanceReference(reading({ seenS: 0, checked: at(-60) }), T0);
+    const ref = distanceReference(receivedRadar(reading({ seenS: 0, checked: at(-60) }), T0), T0);
     expect(ref.ageAtReceiptS).toBe(60);
     expect(estimateRemaining(ref, T0).km).toBe(366); // no se descuenta la antigüedad del número
     expect(estimateRemaining(ref, T0 + 239000).moving).toBe(true);
@@ -49,23 +51,26 @@ describe('antigüedad inicial: seenS + tiempo en la caché del servidor (checked
     expect(estimateRemaining(ref, T0 + 600000).km).toBe(306);
   });
   it('seenS 120 y checked 30 s antes → antigüedad inicial 150 s (quedan 150 s)', () => {
-    const ref = distanceReference(reading({ seenS: 120, checked: at(-30) }), T0);
+    const ref = distanceReference(receivedRadar(reading({ seenS: 120, checked: at(-30) }), T0), T0);
     expect(ref.ageAtReceiptS).toBe(150);
     expect(estimateRemaining(ref, T0 + 600000).km).toBe(329); // 366 − 900 × 150 / 3600 = 328,5
   });
   it('checked en el futuro (desfase de reloj) nunca añade antigüedad negativa', () => {
-    expect(distanceReference(reading({ seenS: 10, checked: at(+45) }), T0).ageAtReceiptS).toBe(10);
+    expect(distanceReference(receivedRadar(reading({ seenS: 10, checked: at(+45) }), T0), T0).ageAtReceiptS).toBe(10);
   });
   it('checked inválido o ausente → solo seenS', () => {
     for (const checked of ['no es una fecha', undefined, null, 12345]) {
-      expect(distanceReference(reading({ seenS: 20, checked }), T0).ageAtReceiptS).toBe(20);
+      expect(distanceReference(receivedRadar(reading({ seenS: 20, checked }), T0), T0).ageAtReceiptS).toBe(20);
     }
+  });
+  it('FR24: la antigüedad es la que da el servidor al responder; checked (reloj del servidor) no se compara con el del móvil', () => {
+    for (const off of [-300, 300]) expect(distanceReference(receivedRadar(reading({ source: 'fr24', seenS: 12, checked: at(off) }), T0), T0).ageAtReceiptS).toBe(12);
   });
   it('cero cambios de red: el cálculo y el temporizador no hacen ninguna petición', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     try {
-      const t = startRemainingTicker({ ref: distanceReference(reading({ checked: at(-60) }), T0), render: () => true });
+      const t = startRemainingTicker({ ref: distanceReference(receivedRadar(reading({ checked: at(-60) }), T0), T0), render: () => true });
       await vi.advanceTimersByTimeAsync(600000);
       expect(t.running).toBe(false);
       expect(fetchSpy).not.toHaveBeenCalled();

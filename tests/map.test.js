@@ -396,3 +396,119 @@ describe('createRouteMap: estela real del vuelo', () => {
     expect(trail()).toHaveLength(0);
   });
 });
+
+// Orientación REAL del avión (track de Flightradar24, 0 = norte, 90 = este; el SVG apunta al este → rotación = rumbo − 90)
+// y «última posición conocida» (fresh: false: quieto, atenuado con .plane-old, sin animación ni estela).
+describe('createRouteMap: orientación real y última posición conocida', () => {
+  let ctx, frames, t, lines;
+  const clock = { raf: cb => { frames.push(cb); return frames.length; }, caf: id => { frames[id - 1] = null; }, now: () => t, reducedMotion: () => false };
+  const advance = ms => { t += ms; const run = frames.splice(0); for (const f of run) f?.(t); };
+  beforeEach(() => {
+    ctx = fakeLeaflet();
+    lines = [];
+    // Marcador con un .plane-rot de verdad (estilo y clases), para leer la rotación y el atenuado.
+    ctx.L.marker = (ll, o) => {
+      const cls = new Set();
+      const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
+      const m = { addTo() { return this; }, remove() { ctx.log.removed++; }, ll, o, rot, cls,
+        setLatLng(p) { ctx.log.moved.push(p); this.ll = p; return this; }, getElement() { return { querySelector: () => rot }; } };
+      ctx.log.markers.push(m);
+      return m;
+    };
+    ctx.L.polyline = (coords, o = {}) => ({ coords, o, live: false, addTo() { this.live = true; lines.push(this); return this; }, bindTooltip() { return this; },
+      remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } });
+    globalThis.L = ctx.L;
+    frames = [];
+    t = 1000;
+  });
+  afterEach(() => { delete globalThis.L; });
+  const make = () => createRouteMap({ hidden: true }, OPTS, clock);
+  const deg = (m = ctx.log.markers.at(-1)) => {
+    const tr = m.rot.style.transform;
+    return tr ? Number(tr.match(/rotate\((-?[\d.]+)deg\)/)[1]) : null;
+  };
+  const P = (over = {}) => ({ lat: 40, lon: 0, fresh: true, heading: null, ...over });
+  const ID = 'v1|3c4d5e6f';
+
+  it('ORIENTACIÓN 1) primera posición con track 270 → oeste (±180°), sin girar 360°', async () => {
+    const m = await make();
+    m.setPlane(P({ heading: 270 }), { identity: ID });
+    expect(Math.abs(deg())).toBe(180);
+    expect(frames).toHaveLength(0);
+  });
+  it('ORIENTACIÓN 2–4) track 90 → este (0°), 0 → norte (−90°), 180 → sur (90°), ya en la primera colocación', async () => {
+    for (const [heading, want] of [[90, 0], [0, -90], [180, 90]]) {
+      const m = await make();
+      m.setPlane(P({ heading }), { identity: ID });
+      expect(deg(), String(heading)).toBe(want);
+    }
+  });
+  it('ORIENTACIÓN 5) una lectura nueva cambia el rumbo sin recrear marcador ni mapa, también sin moverse', async () => {
+    const m = await make();
+    m.setPlane(P({ heading: 90 }), { identity: ID });
+    m.setPlane(P({ heading: 180 }), { identity: ID }); // misma posición, otro rumbo medido
+    expect(deg()).toBe(90);
+    m.setPlane(P({ lon: 1, heading: 0 }), { identity: ID }); // A → B con rumbo real: manda el track, no el bearing
+    expect(deg()).toBe(-90);
+    expect(ctx.log.markers).toHaveLength(1);
+    expect(ctx.log.mapRemoved).toBe(0);
+  });
+  it('el giro va por el camino corto: de 170° a −170° (rumbos 260 → 280) gira 20°, no 340°', async () => {
+    const m = await make();
+    m.setPlane(P({ heading: 260 }), { identity: ID });
+    expect(deg()).toBe(170);
+    m.setPlane(P({ heading: 280 }), { identity: ID });
+    expect(deg()).toBe(190); // equivalente a −170°, a 20° del anterior
+    m.setPlane(P({ heading: 90 }), { identity: ID });
+    expect(deg()).toBe(360); // 0° por el camino corto desde 190°
+  });
+  it('ORIENTACIÓN 6) sin track con A y B reales → rumbo A → B (como siempre)', async () => {
+    const m = await make();
+    m.setPlane(P(), { identity: ID });
+    m.setPlane(P({ lat: 41 }), { identity: ID }); // hacia el norte
+    expect(deg()).toBeCloseTo(-90, 0);
+  });
+  it('ORIENTACIÓN 7) primera posición sin track → sin rotación inventada (el icono se queda como está)', async () => {
+    const m = await make();
+    m.setPlane(P(), { identity: ID });
+    expect(deg()).toBeNull();
+    m.setPlane(P(), { identity: ID }); // repintado de la misma lectura, sin track: tampoco
+    expect(deg()).toBeNull();
+  });
+  it('última posición conocida (fresh: false): quieta y atenuada; NO anima aunque cambie, y vuelve a normal con una fresca', async () => {
+    const m = await make();
+    m.setPlane(P(), { identity: ID });
+    const [mk] = ctx.log.markers;
+    expect(mk.cls.has('plane-old')).toBe(false);
+    m.setPlane(P({ fresh: false }), { identity: ID }); // la misma lectura envejece (más de 60 s)
+    expect(mk.cls.has('plane-old')).toBe(true);
+    expect(frames).toHaveLength(0);
+    expect(ctx.log.moved).toHaveLength(0);
+    m.setPlane(P({ lon: 0.5, fresh: false }), { identity: ID }); // una lectura vieja con otra posición: directa, sin animar
+    expect(frames).toHaveLength(0);
+    expect(mk.ll).toEqual([40, 0.5]);
+    m.setPlane(P({ lon: 1 }), { identity: ID }); // fresca del mismo avión: anima desde lo que se ve
+    expect(mk.cls.has('plane-old')).toBe(false);
+    expect(frames.length).toBeGreaterThan(0);
+    advance(1250);
+    expect(mk.ll[1]).toBeGreaterThan(0.5);
+    expect(mk.ll[1]).toBeLessThan(1);
+    advance(1250);
+    expect(mk.ll).toEqual([40, 1]);
+    expect(ctx.log.markers).toHaveLength(1);
+  });
+  it('se crea ya atenuada si la primera posición es la última conocida', async () => {
+    const m = await make();
+    m.setPlane(P({ fresh: false, heading: 0 }), { identity: ID });
+    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(true);
+    expect(deg()).toBe(-90);
+  });
+  it('FALLOS 22) una posición vieja no prolonga la estela (extendTrack con fresh: false no añade nada)', async () => {
+    const m = await make();
+    m.setTrack([[39, 3], [40, 0]], { identity: ID });
+    m.setPlane(P(), { identity: ID });
+    m.extendTrack([40, 0.5], { identity: ID, fresh: false });
+    const trail = lines.filter(l => l.live && !l.o.dashArray)[0];
+    expect(trail.coords).toEqual([[39, 3], [40, 0]]);
+  });
+});

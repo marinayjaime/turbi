@@ -445,7 +445,7 @@ describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B
     return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N', n } };
   };
   it('1-2, 5-6, 8) baja cada segundo, la velocidad no cambia, nunca «Aterrizado», nunca negativa y cero peticiones nuevas', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { d, leg } = flyingLeg('715');
       await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } },
@@ -466,7 +466,7 @@ describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B
     } finally { vi.useRealTimers(); }
   });
   it('3) una lectura real nueva (Actualizar) sustituye la estimación en el acto y sigue desde ahí', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { d, leg } = flyingLeg('715');
       const readings = [{ ...RADAR_FLYING, remainingKm: 366, kmh: 900 }, { ...RADAR_FLYING, remainingKm: 300, kmh: 880 }];
@@ -482,7 +482,7 @@ describe('distancia restante en vivo (interpolación visual entre lecturas ADS-B
     } finally { vi.useRealTimers(); }
   });
   it('7) cambiar de vuelo cancela el temporizador anterior (no pinta sus km en la ficha nueva)', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const a = flyingLeg('715'), b = flyingLeg('3166');
       const radar = [{ ...RADAR_FLYING, remainingKm: 366, kmh: 900 }, { ...RADAR_FLYING, callsign: 'IBE3166', remainingKm: 800, kmh: 720 }];
@@ -551,7 +551,7 @@ describe('un número con varios vuelos físicos la misma fecha (CA898: GRU → M
 
 describe('radar por tramo: la app pide exactamente el vuelo físico que muestra', () => {
   it('6) cada tramo sondea con su ?leg; cambiar de tramo cancela el sondeo del anterior', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: Date.parse('2026-09-26T12:00:00Z'), shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], now: Date.parse('2026-09-26T12:00:00Z'), shouldAdvanceTime: true });
     try {
       const D = '2026-09-26';
       // Los dos en curso a la vez: la app no elige sola; el usuario escoge por ruta.
@@ -601,7 +601,7 @@ describe('refresco del estado oficial de Aena mientras el vuelo está en curso (
   const renderCalls = () => calls.filter(u => u.startsWith(`${LIVE_BASE}/flights/`));
   const meteoCalls = () => calls.filter(u => u.includes('open-meteo'));
   const statusText = () => $('#result .status')?.textContent ?? '';
-  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: T, shouldAdvanceTime: true });
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], now: T, shouldAdvanceTime: true });
 
   it('1) FLY → el siguiente ciclo de Render trae LND → «En tierra» sin recargar; 9) sin volver a pedir la meteorología', async () => {
     fake();
@@ -1391,7 +1391,7 @@ describe('refresco de Aena para vuelos programados y datos stale', () => {
   }
   const renderCalls = () => calls.filter(u => u.startsWith(`${LIVE_BASE}/flights/`));
   const card = () => $('#result .flight')?.textContent.replace(/\s+/g, ' ') ?? '';
-  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: T, shouldAdvanceTime: true });
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], now: T, shouldAdvanceTime: true });
 
   it('programado a 2 h + datos de Aena de hace 4 h (Render dormido) → refresca enseguida: puerta, estado y «actualizados» nuevos', async () => {
     fake();
@@ -1589,7 +1589,11 @@ function fakeLeaflet() {
     latLngBounds: () => ({ pad() { return this; } }),
     divIcon: o => o,
     marker: ll => {
-      const m = { ...layer(), ll, path: [ll], removed: false, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; } };
+      // rot: el .plane-rot del icono (rotación y atenuado de «última posición conocida»).
+      const cls = new Set();
+      const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
+      const m = { ...layer(), ll, path: [ll], removed: false, rot, cls, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; },
+        getElement() { return { querySelector: () => rot }; } };
       log.markers.push(m);
       return m;
     },
@@ -1597,6 +1601,8 @@ function fakeLeaflet() {
   return { L, log };
 }
 const planeOnScreen = log => log.markers.some(m => !m.removed);
+// El avión está y es la «última posición conocida» (60–180 s): quieto y atenuado (.plane-old).
+const planeDimmed = log => log.markers.some(m => !m.removed && m.cls.has('plane-old'));
 
 describe('integración del rediseño: repintado, mapa, señal en vivo y previsión tras aterrizar', () => {
   const flyingLeg = () => {
@@ -1639,8 +1645,10 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     expect($('#adv-flight [data-card="adv-adsb"]')).not.toBeNull(); // Detalles avanzados también se repinta
   });
 
-  it('señal envejece: «old» a los 6 min, «stale» y .aged a los 13; el avión se quita pasados 60 s; cero peticiones', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+  // Ventana de 180 s (decisión del controlador, 21/10/2026; antes el avión se quitaba a los 60 s): entre 60 y 180 s es la
+  // última posición conocida, quieta y atenuada; después, fuera.
+  it('señal envejece: «old» a los 6 min, «stale» y .aged a los 13; el avión se atenúa pasados 60 s y se quita pasados 180 s; cero peticiones', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
@@ -1652,10 +1660,13 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       expect($('[data-signal-level="live"]')).not.toBeNull();
       expect(planeOnScreen(log)).toBe(true); // posición de 5 s: el avión está en el mapa
       const before = calls.length;
+      expect(planeDimmed(log)).toBe(false);
       await vi.advanceTimersByTimeAsync(60000); // 65 s de antigüedad
-      expect(planeOnScreen(log)).toBe(false); // se quita: solo la ruta y los aeropuertos
+      expect(planeDimmed(log)).toBe(true); // última posición conocida: quieta y atenuada
       expect($('[data-signal-level="live"]')).not.toBeNull(); // la señal aún se considera reciente (< 300 s)
-      await vi.advanceTimersByTimeAsync(5 * 60000); // 6 min y 5 s
+      await vi.advanceTimersByTimeAsync(120000); // 185 s
+      expect(planeOnScreen(log)).toBe(false); // se quita: solo la ruta y los aeropuertos
+      await vi.advanceTimersByTimeAsync(3 * 60000); // 6 min y 5 s
       expect($('[data-signal-level="old"]')).not.toBeNull();
       expect($('.flight .tm-signal .tm-value').textContent).toBe('6 min');
       expect($('.flight .now').classList.contains('aged')).toBe(false);
@@ -1669,8 +1680,8 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     } finally { vi.useRealTimers(); }
   });
 
-  it('seenS 1 y posAgeS 50: el avión está y desaparece a los ~10 s (manda la posición); cero peticiones', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+  it('seenS 1 y posAgeS 50: el avión se atenúa a los ~10 s y desaparece a los ~130 s (manda la posición); cero peticiones', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
@@ -1683,15 +1694,20 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       const before = calls.length;
       await vi.advanceTimersByTimeAsync(9000);
       expect(planeOnScreen(log)).toBe(true); // ~59 s de posición
+      expect(planeDimmed(log)).toBe(false);
       await vi.advanceTimersByTimeAsync(2000); // ~61 s: la posición pasa de 60 s con el último mensaje de hace ~12 s
-      expect(planeOnScreen(log)).toBe(false);
+      expect(planeDimmed(log)).toBe(true);
       expect($('[data-signal-level="live"]')).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(118000); // ~179 s
+      expect(planeOnScreen(log)).toBe(true);
+      await vi.advanceTimersByTimeAsync(2000); // ~181 s
+      expect(planeOnScreen(log)).toBe(false);
       expect(calls.slice(before).filter(u => !u.includes('/flights/'))).toEqual([]);
     } finally { vi.useRealTimers(); }
   });
 
   it('primeros 60 s: el contador solo reescribe «Última señal» (Detalles avanzados no se repinta: ni foco ni toques se pierden)', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
@@ -1711,8 +1727,8 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       expect(signal()).not.toBe(first); // pero «Última señal» sí avanza
       expect(signal()).toMatch(/^hace \d+ s$/);
       expect(position()).toBe('51.2000, -0.9000'); // el avión aún está en el mapa: la posición, sin antigüedad
-      await vi.advanceTimersByTimeAsync(30000); // 65 s: el avión sale del mapa
-      expect(planeOnScreen(log)).toBe(false);
+      await vi.advanceTimersByTimeAsync(30000); // 65 s: el avión pasa a última posición conocida (atenuado)
+      expect(planeDimmed(log)).toBe(true);
       expect($('#adv-flight [data-card="adv-adsb"]')).not.toBe(adsb); // ahora sí se repinta (una vez), conservando lo abierto
       expect($('#adv-flight [data-card="adv-adsb"]').open).toBe(true);
       expect(position()).toBe('51.2000, -0.9000 · hace 1 min');
@@ -1725,7 +1741,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
   });
 
   it('el contador reescribe el span de la posición con su antigüedad (posAgeS), sin repintar el bloque', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
@@ -1736,8 +1752,8 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       await networkIdle();
       $('details[data-card="advanced"]').open = true;
       const position = () => [...document.querySelectorAll('#adv-flight .kv')].find(r => r.querySelector('.k').textContent === 'Posición').querySelector('.v');
-      await vi.advanceTimersByTimeAsync(15000); // la posición ya tiene más de 60 s: el avión sale y se repinta una vez
-      expect(planeOnScreen(log)).toBe(false);
+      await vi.advanceTimersByTimeAsync(15000); // la posición ya tiene más de 60 s: el avión se atenúa y se repinta una vez
+      expect(planeDimmed(log)).toBe(true);
       const adsb = $('#adv-flight [data-card="adv-adsb"]');
       const span = position().querySelector('.adv-age[data-pos]');
       expect(span.textContent).toBe(' · hace 1 min');
@@ -1827,7 +1843,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       });
     }
     const meteoCalls = () => calls.filter(u => u.includes('open-meteo'));
-    const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: T, shouldAdvanceTime: true });
+    const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], now: T, shouldAdvanceTime: true });
 
     it('aterriza con pronóstico (Aena LND): se conserva con «Previsión mostrada antes del aterrizaje» y sin pedir nada a Open-Meteo', async () => {
       fake();
@@ -2000,7 +2016,7 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
     && p[1] > Math.min(a.lon, b.lon) && p[1] < Math.max(a.lon, b.lon);
   const within = (p, a, b) => p[0] >= Math.min(a.lat, b.lat) && p[0] <= Math.max(a.lat, b.lat)
     && p[1] >= Math.min(a.lon, b.lon) && p[1] <= Math.max(a.lon, b.lon);
-  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+  const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
   const refreshed = log => until(() => radarCalls().length === 2 && log.markers.some(m => !m.removed && m.ll[0] === B.lat && m.ll[1] === B.lon), 'el avión en B');
 
   it('vuelve a consultar el radar una vez por pulsación y ninguna automática después', async () => {
@@ -2094,11 +2110,12 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
     } finally { vi.useRealTimers(); }
   }, 30000);
 
-  it('posición anterior caducada (> 60 s): B se coloca directamente, con un marcador nuevo y sin intermedias', async () => {
+  // Caduca a los 180 s (ventana de última posición conocida; antes 60 s).
+  it('posición anterior caducada (> 180 s): B se coloca directamente, con un marcador nuevo y sin intermedias', async () => {
     fake();
     try {
       const { log } = await firstLoad([{ ...A, posAgeS: 5 }, B]);
-      await vi.advanceTimersByTimeAsync(60000);
+      await vi.advanceTimersByTimeAsync(180000);
       expect(planeOnScreen(log)).toBe(false);
       $('#refresh').click();
       await refreshed(log);
@@ -2161,7 +2178,10 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       expect(log.markers).toHaveLength(1);
       expect(log.markers[0].path).toEqual([at(A)]);
       expect(planeOnScreen(log)).toBe(true);
-      await vi.advanceTimersByTimeAsync(60000); // la posición A pasa de 60 s
+      await vi.advanceTimersByTimeAsync(60000); // la posición A pasa de 60 s: última posición conocida, atenuada
+      expect(planeDimmed(log)).toBe(true);
+      expect(log.markers[0].path).toEqual([at(A)]); // quieta, exactamente donde estaba
+      await vi.advanceTimersByTimeAsync(120000); // pasa de 180 s
       expect(planeOnScreen(log)).toBe(false);
       expect(log.maps).toBe(1); // se quita el avión, no el mapa
       expect(log.mapsRemoved).toBe(0);
@@ -2252,7 +2272,11 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
         remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } }),
       latLngBounds: () => ({ pad() { return this; } }),
       divIcon: o => o,
-      marker: ll => { const m = { ...layer(), ll, path: [ll], removed: false, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; } };
+      marker: ll => {
+        const cls = new Set();
+        const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
+        const m = { ...layer(), ll, path: [ll], removed: false, rot, cls, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; },
+          getElement() { return { querySelector: () => rot }; } };
         log.markers.push(m); return m; },
     };
     return { L, log };
@@ -2315,7 +2339,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
   });
 
   it('4) 9) dos «Actualizar» seguidos: ni otro /track ni otro mapa; 6) la nueva posición real prolonga la estela hasta B', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { log } = await load({ radar: [FA, FB, FB] });
       await refresh(log);
@@ -2425,12 +2449,12 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     try {
       const { log } = await load({ radar: [fa], tracks: [tr] });
       await until(() => trails(log).length === 1, 'estela');
-      // Con el avión en pantalla, la estela acaba en él y deja fuera el punto posterior a su posición (horas del
-      // servidor). Si el desfase del móvil envejece la posición (planeOnMap, regla de siempre) no hay avión: la estela
-      // es la trayectoria real entera, sin cabeza. Nunca un punto posterior unido a un avión visible.
-      if (planeOnScreen(log)) expect(trails(log)[0].coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
-      else expect(trails(log)[0].coords).toEqual(tr.points);
-      expect(planeOnScreen(log)).toBe(offMin < 0); // −5 min: avión visible; +5 min: posición de más de 60 s para el móvil
+      // RELOJ 27–28 (antes, +5 min envejecía la posición para el móvil y quitaba el avión): la antigüedad es la del
+      // servidor más el reloj monotónico, así que el avión está en los dos casos, fresco, y la estela acaba en él y deja
+      // fuera el punto posterior a su posición (horas del servidor).
+      expect(planeOnScreen(log)).toBe(true);
+      expect(planeDimmed(log)).toBe(false);
+      expect(trails(log)[0].coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
     } finally { vi.useRealTimers(); }
   });
 
@@ -2521,3 +2545,314 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
   });
 });
 
+
+// Seguimiento en vivo con Flightradar24 (js/live-tracker.js; decisión del controlador, 21/10/2026): con la ficha de un
+// vuelo «volando» según FR24, la app vuelve a pedir EL MISMO /radar cada 45 s y lo pinta por el camino de siempre. Un solo
+// seguidor por ficha; se para con otra búsqueda, «Nueva consulta», aterrizado, Aena final, 401/403; pestaña oculta → cero
+// peticiones; un fallo no se pinta (la última posición real se queda quieta y caduca a los 180 s). Reloj y temporizadores
+// simulados (performance incluido: la antigüedad usa el reloj monotónico).
+describe('seguimiento en vivo con Flightradar24', () => {
+  function liveLeaflet() {
+    const log = { maps: 0, mapsRemoved: 0, markers: [], view: [], lines: [] };
+    const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
+    const L = {
+      map: () => { log.maps++; return { fitBounds() { log.view.push('fitBounds'); }, setView() { log.view.push('setView'); }, setZoom() { log.view.push('setZoom'); },
+        invalidateSize() {}, remove() { log.mapsRemoved++; } }; },
+      tileLayer: layer, polygon: layer, circleMarker: layer,
+      polyline: (coords, o = {}) => ({ coords, o, live: false, addTo() { this.live = true; log.lines.push(this); return this; }, bindTooltip() { return this; },
+        remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } }),
+      latLngBounds: () => ({ pad() { return this; } }),
+      divIcon: o => o,
+      marker: ll => {
+        const cls = new Set();
+        const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
+        const m = { ...layer(), ll, path: [ll], removed: false, rot, cls, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; },
+          getElement() { return { querySelector: () => rot }; } };
+        log.markers.push(m);
+        return m;
+      },
+    };
+    return { L, log };
+  }
+  const trails = log => log.lines.filter(l => l.live && !l.o.dashArray);
+  const trackCalls = () => calls.filter(u => u.includes('/track/'));
+  const deg = m => { const tr = m.rot.style.transform; return tr ? Number(tr.match(/rotate\((-?[\d.]+)deg\)/)[1]) : null; };
+  const flyingLeg = () => {
+    const dep = Date.now() - 60 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N' } };
+  };
+  // Lectura de FR24 tal como la sirve el servidor en el instante de la petición k: posición de hace 2 s y `checked` con
+  // la hora DEL SERVIDOR (skewMs: cuánto adelanta el reloj del móvil al del servidor).
+  let skewMs = 0;
+  const reading = (k, over = {}) => ({ state: 'volando', source: 'fr24', match: 'fr24', fr24Id: '3c4d5e6f', hex: '3423C1', callsign: 'IBE715',
+    altM: 10668, altFt: 35000, kmh: 830, vRateFpm: 0, seenS: 2, posAgeS: 2, lat: 51 + 0.1 * k, lon: -1 + 0.1 * k, track: 45, remainingKm: 300 - 10 * k,
+    checked: new Date(Date.now() - skewMs).toISOString(), ...over });
+  const track = () => {
+    const s = Math.floor((Date.now() - skewMs) / 1000);
+    return { state: 'found', fr24Id: '3c4d5e6f', source: 'fr24', points: [[40.47, -3.56], [45, -2], [50.9, -1.1]], times: [s - 3000, s - 1500, s - 60],
+      lastAt: new Date((s - 60) * 1000).toISOString() };
+  };
+  // radar(k): la respuesta a la k-ésima petición a /radar (null = 404, sin respuesta). render: refresco de Aena opcional.
+  async function load({ radar = k => reading(k), render = null, extraFlights = {} } = {}) {
+    const { L, log } = liveLeaflet();
+    vi.stubGlobal('L', L);
+    const { d, leg } = flyingLeg();
+    const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] }, ...extraFlights }, openMeteo: () => tooMany });
+    let k = 0;
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); const r = radar(k++); return Promise.resolve(r ? json(r) : notFound); }
+      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(json(track())); }
+      if (render && u.startsWith(`${LIVE_BASE}/flights/`)) { calls.push(u); return Promise.resolve(json({ name: 'Iberia', updated: render.updated, legs: render.legs })); }
+      return base(url, o);
+    }));
+    await search('IB715', d);
+    await until(() => $('.telemetry') && log.maps === 1 && planeOnScreen(log), 'ficha con el avión');
+    await networkIdle();
+    return { log, leg, d };
+  }
+  const radarCalls = () => calls.filter(u => u.includes('/radar/'));
+  const fakeAll = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
+  // Avanza el reloj simulado justo hasta `ms` después de la PRIMERA respuesta del radar (t0).
+  let t0 = 0;
+  const mark = () => { t0 = performance.now(); };
+  const to = async s => { const ms = t0 + s * 1000 - performance.now(); if (ms > 0) await vi.advanceTimersByTimeAsync(ms); await networkIdle(); };
+  beforeEach(() => { skewMs = 0; });
+
+  it('LIVE 8) 30) volando con FR24 → el MISMO /radar (mismo ?leg=, sin ?poll) cada 45 s; Flight Tracks una sola vez', async () => {
+    fakeAll();
+    try {
+      const { log } = await load();
+      mark();
+      const meteo = calls.filter(u => u.includes('open-meteo')).length;
+      expect(radarCalls()).toHaveLength(1);
+      await to(44);
+      expect(radarCalls()).toHaveLength(1);
+      await to(46);
+      expect(radarCalls()).toHaveLength(2);
+      expect(radarCalls()[1]).toBe(radarCalls()[0]); // exactamente la misma consulta
+      expect(new URL(radarCalls()[1]).searchParams.get('poll')).toBeNull();
+      await to(137);
+      expect(radarCalls()).toHaveLength(4);
+      expect(trackCalls()).toHaveLength(1); // CRÉDITOS 30: la estela no se vuelve a pedir
+      expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo); // sin meteorología en el seguimiento
+      expect(log.maps).toBe(1);
+      expect(log.mapsRemoved).toBe(0);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('LIVE 9) 10) 11) cada lectura nueva antes de caducar: el avión sigue fresco más allá de 60 s, va de A a B y la estela llega hasta B', async () => {
+    fakeAll();
+    try {
+      const { log } = await load();
+      mark();
+      await until(() => trails(log).length === 1, 'estela');
+      await to(46);
+      const B = reading(1);
+      await until(() => log.markers[0].ll[0] === B.lat && log.markers[0].ll[1] === B.lon, 'el avión en B');
+      const { path } = log.markers[0];
+      expect(log.markers).toHaveLength(1); // el mismo marcador, sin recrearlo
+      expect(path.some(p => p[0] > 51 && p[0] < B.lat)).toBe(true); // pasa por posiciones intermedias (A → B animado)
+      expect(trails(log)[0].coords.at(-1)).toEqual([B.lat, B.lon]); // la estela, prolongada hasta B
+      await to(140); // 3 ciclos: más de 60 s desde la primera lectura
+      expect(planeOnScreen(log)).toBe(true);
+      expect(planeDimmed(log)).toBe(false); // siempre una lectura fresca: nunca atenuado
+      expect($('[data-signal-level="live"]')).not.toBeNull();
+      expect(trackCalls()).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('ORIENTACIÓN: el icono sigue el track real de FR24 desde la primera posición y en cada lectura', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => reading(k, { track: k === 0 ? 270 : 300 }) });
+      mark();
+      expect(Math.abs(deg(log.markers[0]))).toBe(180); // oeste, ya al colocarlo
+      await to(46);
+      await until(() => ((deg(log.markers[0]) % 360) + 360) % 360 === 210, 'rumbo 300');
+      expect(deg(log.markers[0])).toBe(-150); // de −180 a −150: 30° por el camino corto
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('LIVE 12) 13) los repintados y «Actualizar» no crean otro seguidor: una sola cadencia, reprogramada tras «Actualizar»', async () => {
+    fakeAll();
+    try {
+      await load();
+      mark();
+      await to(20);
+      $('#refresh').click();
+      await until(() => radarCalls().length === 2, '«Actualizar»');
+      await networkIdle();
+      const at = performance.now() - t0; // ~20 s y pico
+      await to(at / 1000 + 44);
+      expect(radarCalls()).toHaveLength(2); // nada a los 45 s del principio: el seguidor se reprogramó
+      await to(at / 1000 + 46);
+      expect(radarCalls()).toHaveLength(3);
+      await to(at / 1000 + 91);
+      expect(radarCalls()).toHaveLength(4);
+      // Repintados (cada lectura repinta la tarjeta, Detalles avanzados, el avión y la señal): siguen siendo 45 s.
+      await to(at / 1000 + 89 + 45);
+      expect(radarCalls()).toHaveLength(4);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('LIVE 14) 32) otra búsqueda o «Nueva consulta» (ficha cerrada) → ninguna petición más del radar', async () => {
+    fakeAll();
+    try {
+      const tomorrow = dayOf(Date.now() + 24 * 3600000);
+      const other = { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [{ d: tomorrow, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${tomorrow}T17:55`, st: 'SCH' }] } };
+      await load({ extraFlights: other });
+      mark();
+      await search('IB1668', tomorrow);
+      await until(() => $('#result .flight')?.textContent.includes('IB 1668'), 'otra ficha');
+      await to(400);
+      expect(radarCalls()).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+    fakeAll();
+    try {
+      await load();
+      mark();
+      $('#back').click();
+      await to(400);
+      expect(radarCalls()).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('LIVE 15) aterrizado según FR24 → «Aterrizado» y se para', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => (k === 0 ? reading(0) : { state: 'aterrizado', source: 'fr24', fr24Id: '3c4d5e6f', callsign: 'IBE715', seenS: 20, distanceKm: 2 }) });
+      mark();
+      await to(46);
+      await until(() => $('#result .flight .status')?.textContent.includes('Aterrizado'), 'aterrizado');
+      await to(600);
+      expect(radarCalls()).toHaveLength(2);
+      expect(planeOnScreen(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('LIVE 16) Aena da la llegada final (LND) o desviado → se para el seguimiento', async () => {
+    for (const flags of [{ st: 'LND', sta: 'LND' }, { sta: 'DES', st: 'DES' }]) {
+      fakeAll();
+      try {
+        const render = { updated: new Date().toISOString(), legs: null };
+        const { leg } = await load({ render });
+        render.legs = [{ ...leg, ...flags }];
+        render.updated = new Date(Date.now() + 600000).toISOString();
+        mark();
+        await to(640);
+        await until(() => !$('.telemetry'), `Aena ${flags.sta}`);
+        const n = radarCalls().length;
+        await to(1000);
+        expect(radarCalls(), flags.sta).toHaveLength(n);
+      } finally { vi.useRealTimers(); }
+    }
+  }, 30000);
+
+  it('LIVE 17) 18) pestaña oculta → cero peticiones; al volver a visible con la lectura vieja, pide en el acto y sigue a 45 s', async () => {
+    fakeAll();
+    const setVisibility = v => { Object.defineProperty(document, 'visibilityState', { value: v, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); };
+    try {
+      await load();
+      mark();
+      await to(10);
+      setVisibility('hidden');
+      await to(600);
+      expect(radarCalls()).toHaveLength(1);
+      setVisibility('visible');
+      await vi.advanceTimersByTimeAsync(10);
+      await networkIdle();
+      expect(radarCalls()).toHaveLength(2); // en el acto
+      const at = performance.now() - t0;
+      await to(at / 1000 + 44);
+      expect(radarCalls()).toHaveLength(2);
+      await to(at / 1000 + 46);
+      expect(radarCalls()).toHaveLength(3);
+    } finally { delete document.visibilityState; vi.useRealTimers(); }
+  }, 30000);
+
+  it('FALLOS 21) 22) 23) un fallo (timeout/red) no quita ni mueve la última posición real ni prolonga la estela; atenuada a los 60 s y fuera a los 180 s', async () => {
+    fakeAll();
+    try {
+      const { log } = await load({ radar: k => (k === 0 ? reading(0) : k === 1 ? null : { state: 'no-disponible', source: 'fr24', reason: 'timeout' }) });
+      mark();
+      await until(() => trails(log).length === 1, 'estela');
+      const trail = JSON.stringify(trails(log)[0].coords);
+      await to(46);
+      expect(radarCalls()).toHaveLength(2);
+      expect(log.markers[0].path).toEqual([[51, -1]]); // quieta: ningún movimiento
+      expect(planeDimmed(log)).toBe(false);
+      expect($('.telemetry')).not.toBeNull(); // la telemetría de la última lectura real se queda
+      expect(JSON.stringify(trails(log)[0].coords)).toBe(trail);
+      await to(63);
+      expect(planeDimmed(log)).toBe(true); // última posición conocida
+      await to(134);
+      expect(radarCalls()).toHaveLength(2); // espera conservadora de 90 s tras el fallo
+      await to(137);
+      expect(radarCalls()).toHaveLength(3);
+      expect(log.markers[0].path).toEqual([[51, -1]]);
+      await to(176); // posición de 2 s al recibirla: 178 s
+      expect(planeOnScreen(log)).toBe(true);
+      await to(180); // 182 s
+      expect(planeOnScreen(log)).toBe(false); // > 180 s: solo ruta, estela real pasada y aeropuertos
+      expect(JSON.stringify(trails(log)[0].coords)).toBe(trail);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('FALLOS 24) 429 con Retry-After 200 s: la siguiente petición, no antes', async () => {
+    fakeAll();
+    try {
+      await load({ radar: k => (k === 1 ? { state: 'no-disponible', source: 'fr24', reason: 'limite', retryAfterSec: 200 } : reading(k)) });
+      mark();
+      await to(46);
+      expect(radarCalls()).toHaveLength(2);
+      await to(244);
+      expect(radarCalls()).toHaveLength(2);
+      await to(247);
+      expect(radarCalls()).toHaveLength(3);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('FALLOS 25) 401/403 → se para sin bucle (la ficha se queda con la última lectura real)', async () => {
+    fakeAll();
+    try {
+      await load({ radar: k => (k === 0 ? reading(0) : { state: 'no-disponible', source: 'fr24', reason: 'autorizacion' }) });
+      mark();
+      await to(46);
+      await to(3600);
+      expect(radarCalls()).toHaveLength(2);
+      expect($('.telemetry')).not.toBeNull();
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('FALLOS 26) 5xx seguidos: espera 90, 180 y 300 s; tras un éxito, otra vez 45 s', async () => {
+    fakeAll();
+    try {
+      const fail = { state: 'no-disponible', source: 'fr24', reason: 'servidor' };
+      await load({ radar: k => (k >= 1 && k <= 3 ? fail : reading(k)) });
+      mark();
+      // Peticiones a los 45, 135 (45 + 90), 315 (+180), 615 (+300) y 660 (+45, tras el éxito).
+      for (const [s, n] of [[46, 2], [134, 2], [137, 3], [314, 3], [317, 4], [614, 4], [617, 5], [659, 5], [662, 6]]) {
+        await to(s);
+        expect(radarCalls(), `${s} s`).toHaveLength(n);
+      }
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it.each([['+5 min', 5], ['−5 min', -5]])('RELOJ 27–28) reloj del móvil %s respecto al servidor: el avión no caduca ni rejuvenece en falso', async (_l, off) => {
+    skewMs = off * 60000;
+    fakeAll();
+    try {
+      const { log } = await load();
+      mark();
+      expect(planeDimmed(log)).toBe(false);
+      expect($('.flight .tm-signal .tm-value').textContent).toBe('2 s'); // la antigüedad del servidor, no ±5 min
+      await to(30);
+      expect(planeOnScreen(log)).toBe(true);
+      expect(planeDimmed(log)).toBe(false);
+      await to(46);
+      expect(planeDimmed(log)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+});

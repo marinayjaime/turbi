@@ -29,10 +29,10 @@ describe('advancedShellHtml', () => {
 
 describe('advancedFlightHtml', () => {
   it('un vuelo de Aena sin radar no tiene «Datos ADS-B»', () => {
-    expect(has(advancedFlightHtml(card(), { nowMs: NOW }), 'adsb')).toBe(false);
+    expect(has(advancedFlightHtml(card(), { monoMs: NOW }), 'adsb')).toBe(false);
   });
   it('con radar volando y lat sí, con la posición', () => {
-    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW });
     expect(has(html, 'adsb')).toBe(true);
     expect(html).toContain('ABC123');
     expect(html).toContain('40.1235');
@@ -43,92 +43,92 @@ describe('advancedFlightHtml', () => {
     expect(html).toContain('Por ruta');
   });
   it('señal reciente con el avión aún en el mapa (≤ 60 s): altitud, velocidad y posición sin antigüedad', () => {
-    const html = text(advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW + 30000 }));
+    const html = text(advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW + 30000 }));
     expect(html).not.toMatch(/ft · 9\.144 m · hace|km\/h · hace|-3\.5000 · hace/);
   });
   it('entre 60 y 300 s (señal aún «live», el mapa ya quitó el avión): solo la posición lleva su antigüedad', () => {
     for (const s of [65, 120, 290]) {
-      const html = text(advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW + (s - 5) * 1000 }));
+      const html = text(advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW + (s - 5) * 1000 }));
       expect(html).not.toMatch(/ft · 9\.144 m · hace|km\/h · hace/);
       expect(html).toContain(`-3.5000 · hace ${s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`}`);
     }
   });
   it('la antigüedad de la Posición sale de posAgeS, no de la señal (seenS 1, posAgeS 50: a los 20 s el avión ya no está)', () => {
-    const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 1, posAgeS: 50 }), radarReceivedAt: NOW }), { nowMs: NOW + 20000 }));
+    const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 1, posAgeS: 50 }), radarReceivedMono: NOW }), { monoMs: NOW + 20000 }));
     expect(html).toContain('-3.5000 · hace 1 min'); // 70 s de posición
     expect(html).toContain('hace 21 s'); // «Última señal» sigue midiendo el último mensaje
     expect(html).not.toMatch(/km\/h · hace/);
   });
   it('con la posición aún reciente (posAgeS 50, 5 s después) no lleva antigüedad aunque el mensaje sea más viejo', () => {
-    const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 40, posAgeS: 50 }), radarReceivedAt: NOW }), { nowMs: NOW + 5000 }));
+    const html = text(advancedFlightHtml(card({ radar: volando({ seenS: 40, posAgeS: 50 }), radarReceivedMono: NOW }), { monoMs: NOW + 5000 }));
     expect(html).not.toContain('-3.5000 · hace');
   });
   it('sin posAgeS (antigüedad de la posición desconocida) no hay fila Posición ni «· hace», aunque haya lat/lon y seenS 1', () => {
     for (const ms of [0, 90000]) {
-      const html = advancedFlightHtml(card({ radar: volando({ seenS: 1, posAgeS: undefined }), radarReceivedAt: NOW }), { nowMs: NOW + ms });
+      const html = advancedFlightHtml(card({ radar: volando({ seenS: 1, posAgeS: undefined }), radarReceivedMono: NOW }), { monoMs: NOW + ms });
       expect(html).not.toContain('Posición');
       expect(html).not.toContain('-3.5000');
       expect(html).not.toContain('data-pos');
     }
   });
   it('«Última señal» lleva su clase propia (el contador de app.js solo reescribe su valor)', () => {
-    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW });
     expect(html).toContain('<div class="kv adv-signal"><span class="k">Última señal</span><span class="v">hace 5 s</span></div>');
   });
   it.each([['old', 6], ['stale', 13]])('señal %s: altitud, velocidades y posición llevan «· hace X min» (nunca parecen actuales)', (_lvl, min) => {
-    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW + min * 60000 });
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW + min * 60000 });
     for (const v of ['9.144 m', '800 km/h', '-640 ft/min', '-3.5000']) expect(text(html)).toContain(`${v} · hace ${min} min`);
     expect(html.match(/<span class="adv-age"[^>]*> · hace \d+ min<\/span>/g)).toHaveLength(4);
     expect(html).toContain('ABC123</span>'); // el indicativo no envejece
   });
   it('radar sin posición: no inventa lat/lon', () => {
-    const html = advancedFlightHtml(card({ radar: volando({ lat: undefined, lon: undefined }), radarReceivedAt: NOW }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ radar: volando({ lat: undefined, lon: undefined }), radarReceivedMono: NOW }), { monoMs: NOW });
     expect(html).not.toContain('Posición');
   });
   it('AeroDataBox con aircraftReg muestra la matrícula; Aena no', () => {
-    const adb = advancedFlightHtml(card({ source: 'aerodatabox', aircraftReg: 'EC-ABC', aircraftHex: '34abcd' }), { nowMs: NOW });
+    const adb = advancedFlightHtml(card({ source: 'aerodatabox', aircraftReg: 'EC-ABC', aircraftHex: '34abcd' }), { monoMs: NOW });
     expect(adb).toContain('EC-ABC');
     expect(adb).toContain('34ABCD');
-    const aena = advancedFlightHtml(card(), { nowMs: NOW });
+    const aena = advancedFlightHtml(card(), { monoMs: NOW });
     expect(aena).not.toContain('Matrícula');
     expect(has(aena, 'aircraft')).toBe(true);
   });
   it('conserva la atribución completa de la foto', () => {
-    const html = advancedFlightHtml(card({ photo: { thumb: 'x', artist: 'Autor <b>', license: 'CC BY', page: 'https://c.example/p' } }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ photo: { thumb: 'x', artist: 'Autor <b>', license: 'CC BY', page: 'https://c.example/p' } }), { monoMs: NOW });
     expect(html).toContain('Autor &lt;b&gt;');
     expect(html).toContain('CC BY');
     expect(html).toContain('href="https://c.example/p"');
   });
   it('sin photo.shared ni operator no hay «Códigos compartidos»', () => {
-    expect(has(advancedFlightHtml(card(), { nowMs: NOW }), 'codeshare')).toBe(false);
-    const op = advancedFlightHtml(card({ operator: 'Operadora Z' }), { nowMs: NOW });
+    expect(has(advancedFlightHtml(card(), { monoMs: NOW }), 'codeshare')).toBe(false);
+    const op = advancedFlightHtml(card({ operator: 'Operadora Z' }), { monoMs: NOW });
     expect(has(op, 'codeshare')).toBe(true);
     expect(op).toContain('Operadora Z');
-    expect(has(advancedFlightHtml(card({ photo: { shared: true } }), { nowMs: NOW }), 'codeshare')).toBe(true);
+    expect(has(advancedFlightHtml(card({ photo: { shared: true } }), { monoMs: NOW }), 'codeshare')).toBe(true);
   });
   it('información técnica: clave física, códigos de Aena y BUILD_ID', () => {
-    const html = advancedFlightHtml(card({ physicalKey: 'K-1', aenaCodes: { st: 'S1', std: null, sta: 'A2' } }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ physicalKey: 'K-1', aenaCodes: { st: 'S1', std: null, sta: 'A2' } }), { monoMs: NOW });
     expect(html).toContain('K-1');
     expect(html).toContain('S1');
     expect(html).toContain('A2');
     expect(html).toContain(BUILD_ID);
   });
   it('fuentes: Aena con su antigüedad, AeroDataBox con sourceNote y radar adsb.lol', () => {
-    const aena = advancedFlightHtml(card({ updatedAgo: 'hace 5 minutos', radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
+    const aena = advancedFlightHtml(card({ updatedAgo: 'hace 5 minutos', radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW });
     expect(aena).toContain('Aena');
     expect(aena).toContain('hace 5 minutos');
     expect(aena).toContain('adsb.lol');
-    const adb = advancedFlightHtml(card({ source: 'aerodatabox', sourceNote: 'Horario según AeroDataBox · consultado hace 1 minuto' }), { nowMs: NOW });
+    const adb = advancedFlightHtml(card({ source: 'aerodatabox', sourceNote: 'Horario según AeroDataBox · consultado hace 1 minuto' }), { monoMs: NOW });
     expect(adb).toContain('Horario según AeroDataBox · consultado hace 1 minuto');
     expect(adb).not.toContain('adsb.lol');
   });
   it('conserva las categorías abiertas', () => {
-    const html = advancedFlightHtml(card(), { open: new Set(['adv-aircraft']), nowMs: NOW });
+    const html = advancedFlightHtml(card(), { open: new Set(['adv-aircraft']), monoMs: NOW });
     expect(html).toMatch(/data-card="adv-aircraft" open/);
     expect(html).not.toMatch(/data-card="adv-tech" open/);
   });
   it('sin emojis', () => {
-    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW, operator: 'Op', physicalKey: 'k' }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW, operator: 'Op', physicalKey: 'k' }), { monoMs: NOW });
     expect(html).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 });
@@ -168,20 +168,20 @@ describe('integración mínima', () => {
 
 describe('Detalles avanzados con Flightradar24', () => {
   it('fuente «Flightradar24», sección «Datos del radar» e identificación «Flightradar24»; nunca «adsb.lol» ni «ADS-B»', () => {
-    const html = advancedFlightHtml(card({ updatedAgo: 'hace 5 minutos', radar: volando({ source: 'fr24', match: 'fr24' }), radarReceivedAt: NOW }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ updatedAgo: 'hace 5 minutos', radar: volando({ source: 'fr24', match: 'fr24' }), radarReceivedMono: NOW }), { monoMs: NOW });
     expect(text(html)).toContain('RadarFlightradar24');
     expect(text(html)).toContain('Datos del radar');
     expect(text(html)).toContain('IdentificaciónFlightradar24');
     expect(html).not.toContain('adsb.lol');
     expect(html).not.toContain('ADS-B');
     for (const radar of [{ state: 'aterrizado', source: 'fr24' }, { state: 'reciente', ageMin: 3, source: 'fr24' }]) {
-      const h = advancedFlightHtml(card({ radar }), { nowMs: NOW });
+      const h = advancedFlightHtml(card({ radar }), { monoMs: NOW });
       expect(text(h)).toContain('RadarFlightradar24');
       expect(h).not.toContain('adsb.lol');
     }
   });
   it('adsb.lol, como siempre', () => {
-    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedMono: NOW }), { monoMs: NOW });
     expect(text(html)).toContain('Radar ADS-Badsb.lol');
     expect(text(html)).toContain('Datos ADS-B');
   });

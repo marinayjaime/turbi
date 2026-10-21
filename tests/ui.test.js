@@ -147,7 +147,8 @@ const card = (over = {}) => ({
   aircraft: 'Airbus A321', photo: null, phase: 'programado', source: 'aena', timeConfidence: 'medium', punctuality: null,
   depFinal: false, arrFinal: false, depMs: NOW + 135 * MIN, arrMs: NOW + 225 * MIN, km: 547, ...over,
 });
-const html = (c, opts = {}) => flightCardHtml(c, { nowMs: NOW, ...opts });
+// monoMs: el reloj monotónico de radarReceivedMono; en estas pruebas, el mismo número que nowMs.
+const html = (c, opts = {}) => flightCardHtml(c, { nowMs: NOW, monoMs: opts.nowMs ?? NOW, ...opts });
 // El <details> de una tarjeta, completo (hasta su cierre).
 const block = (h, name) => {
   const i = h.indexOf(`data-card="${name}"`);
@@ -181,7 +182,7 @@ describe('estructura de la ficha', () => {
   });
   it('sin emojis', () => {
     const variants = [card(), card({ status: { text: 'Volando', tone: 'info', flying: true }, phase: 'en-curso',
-      radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, altFt: 35000, kmh: 830, seenS: 2, remainingKm: 300 }, radarReceivedAt: NOW }),
+      radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, altFt: 35000, kmh: 830, seenS: 2, remainingKm: 300 }, radarReceivedMono: NOW }),
     card({ photo: { thumb: 'x.jpg', artist: 'A', license: 'CC', page: 'p' } }), card({ stale: true, updatedAgo: 'hace 2 h' }),
     card({ phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' } })];
     for (const c of variants) expect(html(c)).not.toMatch(/\p{Extended_Pictographic}/u);
@@ -362,7 +363,7 @@ describe('Ahora: puerta de embarque (sin radar)', () => {
 describe('Ahora: radar', () => {
   const r = { state: 'volando', callsign: 'AEA039', altM: 10668, altFt: 35000, kmh: 851, seenS: 0, remainingKm: 8411, source: 'adsb.lol' };
   const flying = (radar = r, over = {}) => card({ phase: 'en-curso', status: { text: 'Volando', tone: 'info', flying: true }, a: 'DUB',
-    arr: null, radar, radarReceivedAt: NOW, ...over });
+    arr: null, radar, radarReceivedMono: NOW, ...over });
   const cell = (h, label) => h.match(new RegExp(`<div class="tm-cell[^"]*">\\s*${label}[\\s\\S]*?</div>`))?.[0] ?? '';
   it('volando: cuatro celdas (altitud, velocidad, distancia y última señal)', () => {
     const h = html(flying());
@@ -385,7 +386,7 @@ describe('Ahora: radar', () => {
     expect(html(flying({ ...r, seenS: 800 }))).toMatch(/data-signal-level="stale"/);
   });
   it('sin instante de recepción: ni «Última señal» ni indicador inventados', () => {
-    const h = html(flying(r, { radarReceivedAt: undefined }));
+    const h = html(flying(r, { radarReceivedMono: undefined }));
     expect(h).not.toContain('data-signal-level');
     expect(h.match(/class="tm-cell/g)).toHaveLength(3);
   });
@@ -445,7 +446,7 @@ describe('Ahora: radar', () => {
 
 describe('datos de Aena antiguos', () => {
   const c = card({ status: { text: 'Embarcando', tone: 'info' }, updatedAgo: 'hace 2 h', stale: true,
-    radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, altFt: 35000, kmh: 830, seenS: 2, remainingKm: 300 }, radarReceivedAt: NOW });
+    radar: { state: 'volando', callsign: 'IBE1668', altM: 10668, altFt: 35000, kmh: 830, seenS: 2, remainingKm: 300 }, radarReceivedMono: NOW });
   it('chip gris con «… hace X» y la línea «Datos de Aena de hace X»; sin telemetría', () => {
     const h = html(c);
     expect(h).toContain('<span class="chip status tone-stale">Embarcando hace 2 h</span>');
@@ -624,7 +625,7 @@ describe('estado principal: radar «volando» frente al estado de puerta de Aena
   it('Aena «Puerta cerrada» + radar volando → el chip dice «En vuelo», no «Puerta cerrada»', () => {
     const merged = withRadar(cer(), flying, null, NOW);
     expect(merged.status.text).toBe('Volando'); // el valor interno no cambia: solo el texto visible
-    const h = html({ ...merged, radarReceivedAt: NOW });
+    const h = html({ ...merged, radarReceivedMono: NOW });
     expect(chip(h)).toBe('En vuelo');
     expect(h).not.toMatch(/class="chip status[^"]*">\s*Puerta cerrada/);
   });
@@ -645,7 +646,7 @@ describe('estado principal: radar «volando» frente al estado de puerta de Aena
 import { withLanding, radarNote, landedNote, LANDED_NOTE, rememberLanding, recallLandingSource } from '../js/radar.js';
 describe('Ahora: radar de Flightradar24', () => {
   const fr = { state: 'volando', callsign: 'IBE403', altM: 4115, altFt: 13500, kmh: 556, seenS: 2, remainingKm: 800, source: 'fr24', match: 'fr24', fr24Id: '3c' };
-  const flying = radar => card({ phase: 'en-curso', status: { text: 'Volando', tone: 'info', flying: true }, arr: null, radar, radarReceivedAt: NOW });
+  const flying = radar => card({ phase: 'en-curso', status: { text: 'Volando', tone: 'info', flying: true }, arr: null, radar, radarReceivedMono: NOW });
   it('volando: fuente «Flightradar24» (title «Datos de Flightradar24»), sin «ADS-B» ni «fr24» suelto', () => {
     const h = html(flying(fr));
     expect(h).toMatch(/<span class="v" title="Datos de Flightradar24">Flightradar24<\/span>/);

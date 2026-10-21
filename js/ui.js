@@ -1,6 +1,6 @@
 import { LEVELS, CAUSES } from './turbulence.js';
 import { icon } from './icons.js';
-import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL } from './card-model.js';
+import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL, monoNow } from './card-model.js';
 import { formatLocal } from './time.js';
 
 // dot: el punto de color que sustituye al emoji de antes (verde, ámbar, rojo = ligera, moderada, fuerte).
@@ -183,8 +183,9 @@ const tmCell = (name, label, value, cls = '', extra = '', cellCls = '') => `
 // verde mientras la distancia aún se mueve, ámbar después y, desde STALE_MIN, celdas atenuadas con su antigüedad.
 // Sin instante de recepción no hay antigüedad: ni «Última señal» ni indicador. Al desplegar: indicativo, fuente
 // (proveedor solo en el title) y cómo se identificó el avión.
-function flyingNowHtml(c, r, nowMs, open) {
-  const sig = signalState(r, c.radarReceivedAt, nowMs);
+// monoMs: el «ahora» del reloj monotónico, el de c.radarReceivedMono (la antigüedad nunca usa la hora del móvil).
+function flyingNowHtml(c, r, monoMs, open) {
+  const sig = signalState(r, c.radarReceivedMono, monoMs);
   const meters = Number.isFinite(r.altM) ? thousands(Math.round(r.altM / 100) * 100) : null;
   const alt = Number.isFinite(r.altFt)
     ? tmCell('altitude', 'Altitud', `${thousands(Math.round(r.altFt / 100) * 100)}<small>ft</small>`, '', meters ? `
@@ -242,10 +243,10 @@ function radarLineHtml(r) {
 // «Ahora» (§5.5): telemetría con el radar «volando»; si no, el mensaje del radar o, sin radar, el estado operativo y
 // la terminal; y la puerta. No existe en un vuelo finalizado o cancelado. Con datos de Aena antiguos no hay
 // telemetría (no se mezcla un radar actual con un estado viejo).
-function nowHtml(c, phase, nowMs, open) {
+function nowHtml(c, phase, monoMs, open) {
   if (phase === 'finalizado' || phase === 'cancelado') return '';
   const r = c.stale ? null : c.radar;
-  if (r?.state === 'volando') return flyingNowHtml(c, r, nowMs, open);
+  if (r?.state === 'volando') return flyingNowHtml(c, r, monoMs, open);
   const radarLine = radarLineHtml(r);
   const ground = radarLine ?? `
           <div class="now-ground">${icon('clock')}
@@ -330,13 +331,13 @@ function flightSummaryHtml(c) {
 
 // card: el de buildFlight (app.js), con los campos de presentación de js/card-model.js. open: qué data-card van
 // abiertos (los conserva el repintado). punctualityBody: contenido inicial de #punctuality (situación de hoy).
-export function flightCardHtml(c, { nowMs = Date.now(), open = new Set(), punctualityBody = '' } = {}) {
+export function flightCardHtml(c, { nowMs = Date.now(), monoMs = monoNow(), open = new Set(), punctualityBody = '' } = {}) {
   const phase = flightPhase(c);
   const mt = mainTime(c, nowMs);
   return `
     <section class="flight" data-phase="${phase}">
       <div class="card flight-main">${heroHtml(c)}${routeHtml(c)}${mainTimeHtml(c, mt)}${tilesHtml(c)}
-      </div>${nowHtml(c, phase, nowMs, open)}${scheduleHtml(c, mt, open, punctualityBody)}${
+      </div>${nowHtml(c, phase, monoMs, open)}${scheduleHtml(c, mt, open, punctualityBody)}${
   phase === 'programado' ? aircraftHtml(c, open) : ''}${phase === 'finalizado' ? flightSummaryHtml(c) : ''}
     </section>`;
 }

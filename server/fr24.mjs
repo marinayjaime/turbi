@@ -46,8 +46,10 @@ export async function fr24Lookup(flight, { fetchFn = fetch, env = process.env, t
   }
   if (!res.ok) {
     const out = { state: 'unavailable', reason: reasonOf(res.status), httpStatus: res.status, flight };
-    const retry = Number(res.headers?.get?.('Retry-After'));
-    if (res.status === 429 && Number.isFinite(retry)) out.retryAfterSec = retry;
+    // Retry-After en segundos, solo si FR24 lo da (sin cabecera, Number(null) sería un 0 inventado).
+    const header = res.headers?.get?.('Retry-After');
+    const retry = header === null || header === undefined || String(header).trim() === '' ? NaN : Number(header);
+    if (res.status === 429 && Number.isFinite(retry) && retry >= 0) out.retryAfterSec = retry;
     return out;
   }
   let body;
@@ -59,7 +61,7 @@ export async function fr24Lookup(flight, { fetchFn = fetch, env = process.env, t
 }
 
 // GET /fr24-test/<vuelo>.json: valida el número de vuelo y consulta FR24 una vez. lookup: en Render, la consulta con caché
-// de 60 s por número y contadores de /health (fr24CachedLookup, server/fr24-radar.mjs): el endpoint es público.
+// de 40 s por número y contadores de /health (fr24CachedLookup, server/fr24-radar.mjs): el endpoint es público.
 export async function fr24TestResponse(path, { fetchFn = fetch, env = process.env, lookup = fr24Lookup } = {}) {
   const m = String(path).match(TEST_PATH);
   const flight = m?.[1].toUpperCase();

@@ -6,38 +6,41 @@
 //  - Freno: nunca baja de REMAINING_FLOOR_KM por extrapolación (si la lectura real ya está por debajo, no se mueve).
 //    Cerca del aeropuerto hay aproximación, esperas y vectores: la distancia en línea recta deja de bajar a la
 //    velocidad del avión. La llegada la decide una lectura real o Aena, nunca el paso del tiempo.
-//  - Señal antigua: se deja de extrapolar cuando la posición tiene más de MAX_EXTRAPOLATION_S (seenS + tiempo en la
-//    caché del servidor + tiempo desde que se recibió). En crucero son ~70 km: el error de usar la velocidad sobre el suelo como velocidad de
-//    acercamiento es pequeño (< 5 %, unos 4 km); más allá, descensos y virajes la hacen poco representativa. Está por
-//    encima de los 180 s con los que el servidor aún da por buena una posición (MAX_SEEN_S).
+//  - Señal antigua: se deja de extrapolar cuando la posición tiene más de MAX_EXTRAPOLATION_S (seenS al recibirla +
+//    tiempo desde que se recibió, en el reloj monotónico). En crucero son ~70 km: el error de usar la velocidad sobre el
+//    suelo como velocidad de acercamiento es pequeño (< 5 %, unos 4 km); más allá, descensos y virajes la hacen poco
+//    representativa. Está por encima de los 180 s con los que el servidor aún da por buena una posición (MAX_SEEN_S).
 //  - Sin velocidad creíble de vuelo (< MIN_KMH: en tierra o rodando), no se extrapola.
 export const REMAINING_FLOOR_KM = 30;
 export const MAX_EXTRAPOLATION_S = 300;
 export const MIN_KMH = 200;
 export const TICK_MS = 1000;
 
-// Referencia a partir de una lectura real; null si no se puede interpolar.
-// Antigüedad de la posición al recibirla: seenS (lo que tenía cuando el servidor la leyó, en `checked`) más lo que la
-// respuesta ha podido pasar en la caché de 60 s del servidor (recepción − checked). Un `checked` futuro (pequeño
-// desfase de reloj) no resta; sin `checked` válido, solo seenS. Solo acorta el margen de extrapolación: la distancia
-// mostrada al llegar sigue siendo exactamente la del servidor.
-export function distanceReference(radar, receivedAtMs) {
+// Referencia a partir de una lectura real (ya pasada por receivedRadar); null si no se puede interpolar. at: instante de
+// recepción en el MISMO reloj que el `now` del contador (la app usa el monotónico, performance.now). ageAtReceiptS: seenS
+// tal cual (la antigüedad al recibirla). Solo acorta el margen de extrapolación: la distancia mostrada al llegar sigue
+// siendo exactamente la del servidor.
+export function distanceReference(radar, receivedAt) {
   if (radar?.state !== 'volando' || !Number.isFinite(radar.remainingKm) || radar.remainingKm < 0) return null;
-  return { km: radar.remainingKm, kmh: Number.isFinite(radar.kmh) ? radar.kmh : null, at: receivedAtMs, ageAtReceiptS: receiptAgeS(radar, receivedAtMs) };
+  const seenS = Number.isFinite(radar.seenS) && radar.seenS >= 0 ? radar.seenS : 0;
+  return { km: radar.remainingKm, kmh: Number.isFinite(radar.kmh) ? radar.kmh : null, at: receivedAt, ageAtReceiptS: seenS };
 }
 
-// La misma antigüedad al recibir, sin exigir remainingKm: la usan también «Última señal» y el avión del mapa
-// (js/card-model.js), para que la ficha, la distancia y el mapa envejezcan con una sola cuenta.
-export function receiptAgeS(radar, receivedAtMs) {
-  const seenS = Number.isFinite(radar?.seenS) && radar.seenS >= 0 ? radar.seenS : 0;
-  return seenS + cachedAgeS(radar, receivedAtMs);
-}
-
-// Segundos que la respuesta pasó en la caché del servidor (recepción − checked); 0 sin `checked` válido o con uno
-// futuro. Es el término común de receiptAgeS (seenS) y de la antigüedad de la posición (posAgeS, js/card-model.js).
-export function cachedAgeS(radar, receivedAtMs) {
-  const checkedMs = typeof radar?.checked === 'string' ? Date.parse(radar.checked) : NaN;
-  return Number.isFinite(checkedMs) ? Math.max(0, receivedAtMs - checkedMs) / 1000 : 0;
+// La lectura tal como vale AL RECIBIRLA (la que guarda la tarjeta; de ella envejecen «Última señal», el avión del mapa y la
+// distancia con una sola cuenta: js/card-model.js). Con Flightradar24 (source 'fr24') el servidor ya da posAgeS y seenS
+// del instante en que responde, también desde su caché (server/fr24-radar.mjs): se usa tal cual y el reloj civil del
+// móvil no interviene. Con adsb.lol (flujo antiguo, que sirve su caché de 60 s sin recalcular) se suma UNA vez el tiempo
+// que pasó en esa caché (recepción − checked; 0 con un `checked` futuro o no válido), como hasta ahora. receivedAtMs: la
+// hora del móvil al recibirla (solo para ese flujo antiguo).
+export function receivedRadar(radar, receivedAtMs) {
+  if (!radar || radar.source === 'fr24') return radar;
+  const checkedMs = typeof radar.checked === 'string' ? Date.parse(radar.checked) : NaN;
+  const cacheS = Number.isFinite(checkedMs) && Number.isFinite(receivedAtMs) ? Math.max(0, receivedAtMs - checkedMs) / 1000 : 0;
+  if (!cacheS) return radar;
+  const out = { ...radar };
+  out.seenS = (Number.isFinite(radar.seenS) && radar.seenS >= 0 ? radar.seenS : 0) + cacheS;
+  if (Number.isFinite(radar.posAgeS) && radar.posAgeS >= 0) out.posAgeS = radar.posAgeS + cacheS;
+  return out;
 }
 
 // Distancia visible en nowMs. { km, moving }: moving = false cuando ya no se extrapola (freno, señal antigua…).
@@ -53,6 +56,7 @@ export function estimateRemaining(ref, nowMs) {
 
 // Temporizador encadenado (1 s) que repinta solo el número. render(km) → false si el elemento ya no existe.
 // Se detiene con stop(), si isActive() deja de ser cierto, si desaparece el elemento o cuando ya no hay movimiento.
+// now: el mismo reloj que ref.at (la app, el monotónico).
 export function startRemainingTicker({ ref, render, isActive = () => true, now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id) }) {
   let timer = null, stopped = false;

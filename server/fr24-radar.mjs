@@ -8,17 +8,25 @@
 //     vuelo físico, en memoria 24 h). Con varios compatibles, ninguno. Un fr24Id es de UN solo vuelo físico: si ya está
 //     asociado a otro, no vale; y si hay otro tramo elegible del mismo número y ruta (p. ej. el de ayer, conservado por
 //     keepDeparted), solo vale el ya asociado a este.
-//   - Créditos: una respuesta por vuelo físico cada 60 s (también «sin datos» y «no disponible»; ?poll=1 igual), la
-//     respuesta cruda de FR24 por número consultado 60 s (la comparten tramos del mismo número y /fr24-test) y las
-//     peticiones simultáneas comparten la misma promesa. Sin reintentos, sin temporizadores, sin trabajos en segundo plano.
+//   - Créditos: una respuesta por vuelo físico cada CACHE_MS = 40 s (también «sin datos» y «no disponible»; ?poll=1
+//     igual), la respuesta cruda de FR24 por número consultado otros 40 s (la comparten tramos del mismo número y
+//     /fr24-test) y las peticiones simultáneas comparten la misma promesa. Sin reintentos, sin temporizadores, sin trabajos
+//     en segundo plano. 40 s (decisión del controlador, 21/10/2026) va con el seguimiento en vivo de la ficha
+//     (js/live-tracker.js, cada 45 s): con 45 > 40 cada ciclo del navegador trae una lectura nueva y varios usuarios del
+//     mismo vuelo comparten caché y promesa (≈ 1 llamada a FR24 por vuelo cada 45 s). El sondeo de «Localizando…»
+//     (20/40/60/90… s) cae casi siempre dentro de la caché: como mucho una llamada cada 40–60 s, igual que con 60 s.
+//   - Antigüedad al RESPONDER: desde la caché, posAgeS/seenS (y la pausa de un 429) se recalculan con el reloj del servidor
+//     al servir y `checked` es esa misma hora; la posición (lat/lon/posAgeS) solo mientras tenga ≤ 180 s. La app suma
+//     después su reloj monotónico, nunca el reloj civil del móvil. Sin caché HTTP en el navegador (no-store): una copia
+//     guardada allí llevaría una antigüedad vieja.
 // El token nunca sale de server/fr24.mjs: las respuestas y el diagnóstico (?debug=1) son listas cerradas de campos.
 import { fr24Lookup, fr24Configured, FLIGHT_RE, REAL_SOURCES } from './fr24.mjs';
-import { radarGateFor, plannedMinFor, distanceKm, landedAt, POSITION_MAX_AGE_S, MAX_SEEN_S } from './radar.mjs';
+import { radarGateFor, plannedMinFor, distanceKm, landedAt, MAX_SEEN_S } from './radar.mjs';
 import { legTimes, aenaTz, RADAR_GATE } from '../js/radar-gate.js';
 import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js';
 import { adbPhysicalKey, adbRadarGate } from '../js/adb.js';
 
-const CACHE_MS = 60000;
+const CACHE_MS = 40000;
 export const ASSOC_MS = 24 * 3600000; // asociación vuelo físico → fr24Id: solo en memoria, purgada a las 24 h
 const LOCATING_AFTER_MIN = 45; // «Localizando…» hasta la última salida conocida + 45 min (heurística)
 const AIRBORNE_KT = 50; // FR24 da alt 0 en tierra; por debajo de 50 kt (rodaje, parado) no se da por volando
@@ -28,6 +36,7 @@ export { REAL_SOURCES };
 const RADAR_PATH = /^\/radar\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 const ADB_RADAR_PATH = /^\/radar-adb\/([A-Z0-9]{2,3}\d{1,4}[A-Z]?)\/(\d{4}-\d{2}-\d{2})\.json$/;
 const HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=60' };
+// Respuestas del radar FR24: nunca en la caché HTTP del navegador (su antigüedad es la del instante de responder).
 const NO_STORE = { ...HEADERS, 'Cache-Control': 'no-store' };
 const MIN = 60000;
 const fin = v => Number.isFinite(v);
@@ -75,8 +84,9 @@ export function fr24Result(c, { dest = null, origin = null, depMs = null, nowMs 
       altFt: c.alt, altM: Math.round(c.alt * 0.3048), kmh: Math.round(c.gspeed * 1.852), vRateFpm: fin(c.vspeed) ? c.vspeed : null,
       track: fin(c.track) ? c.track : null, seenS: posAgeS, source: 'fr24', match: 'fr24' };
     if (dest && hasPos) out.remainingKm = Math.round(distanceKm([c.lat, c.lon], dest));
-    // Posición medida de hace ≤ 60 s, tal cual (los tres campos juntos); si es más antigua, no existen (regla del frontend).
-    if (hasPos && posAgeS <= POSITION_MAX_AGE_S) Object.assign(out, { lat: Math.round(c.lat * 1e4) / 1e4, lon: Math.round(c.lon * 1e4) / 1e4, posAgeS });
+    // Posición medida, tal cual (los tres campos juntos), mientras tenga ≤ 180 s (MAX_SEEN_S, ya garantizado arriba): la
+    // app la pinta fresca hasta 60 s y como «última posición conocida», quieta y atenuada, hasta 180 s (js/card-model.js).
+    if (hasPos) Object.assign(out, { lat: Math.round(c.lat * 1e4) / 1e4, lon: Math.round(c.lon * 1e4) / 1e4, posAgeS });
     return out;
   }
   // En tierra (altitud 0 Y menos de 50 kt, las dos conocidas): aterrizado solo con las reglas de siempre (landedAt: en el
@@ -95,7 +105,7 @@ export function fr24Result(c, { dest = null, origin = null, depMs = null, nowMs 
 const locating = (firstDep, latestDep, nowMs) => fin(firstDep) && fin(latestDep)
   && nowMs >= firstDep - RADAR_GATE.earlyMin * MIN && nowMs <= latestDep + LOCATING_AFTER_MIN * MIN;
 
-// fr24Lookup con caché de 60 s por número consultado y promesa compartida en curso (la usan el radar y /fr24-test).
+// fr24Lookup con caché de 40 s por número consultado y promesa compartida en curso (la usan el radar y /fr24-test).
 // Los contadores de /health son de llamadas reales; una respuesta fallida también se guarda (también cuesta).
 export async function fr24CachedLookup(state, number, { fetchFn = fetch, env = process.env, nowMs = Date.now() } = {}) {
   const stats = state.fr24Stats ??= freshStats();
@@ -116,15 +126,35 @@ export async function fr24CachedLookup(state, number, { fetchFn = fetch, env = p
   return job;
 }
 
+// Motivo de «no disponible» para la app (js/live-tracker.js decide con él: 401/403 para, 429 espera, el resto con
+// espera creciente). Lista cerrada; un motivo desconocido es 'http'.
+const UNAVAILABLE_REASON = { autorizacion: 'autorizacion', 'sin-configurar': 'autorizacion', limite: 'limite', servidor: 'servidor',
+  'respuesta-invalida': 'servidor', red: 'red', error: 'red', timeout: 'timeout', http: 'http' };
+
+// La respuesta guardada (en `at`) tal como es en nowMs: antigüedades de la señal, de la posición y de la pausa de un 429
+// más lo transcurrido (reloj del servidor) y `checked` = nowMs. Una posición que pasa de 180 s deja de existir.
+export function agedPayload(payload, at, nowMs) {
+  const dt = Math.max(0, Math.round((nowMs - at) / 1000));
+  const out = { ...payload, checked: new Date(nowMs).toISOString() };
+  if (!dt) return out;
+  if (fin(out.seenS)) out.seenS += dt;
+  if (fin(out.posAgeS)) out.posAgeS += dt;
+  if (fin(out.posAgeS) && out.posAgeS > MAX_SEEN_S) { delete out.lat; delete out.lon; delete out.posAgeS; }
+  if (fin(out.retryAfterSec)) out.retryAfterSec = Math.max(0, out.retryAfterSec - dt);
+  return out;
+}
+
 // Consulta (o caché) de un vuelo físico. q: { phys (asociación), cacheKey, number, o, a, ctx, pending, firstDep, latestDep,
 // exclusiveOnly, diagnostic, debug }.
 async function serve(state, q, { fetchFn, env, nowMs }) {
   const stats = state.fr24Stats ??= freshStats();
   const cache = state.fr24Radar ??= new Map();
   const jobs = state.fr24Jobs ??= new Map();
-  const send = ({ payload, diag }, extra = {}) => ({ status: 200,
-    headers: payload.identifying || payload.state === 'no-disponible' ? NO_STORE : HEADERS,
-    body: JSON.stringify(q.debug ? { ...payload, diagnostic: { ...q.diagnostic, ...diag, ...extra } } : payload) });
+  const send = ({ payload: stored, diag, at }, extra = {}) => {
+    const payload = agedPayload(stored, at, nowMs);
+    return { status: 200, headers: NO_STORE,
+      body: JSON.stringify(q.debug ? { ...payload, diagnostic: { ...q.diagnostic, ...diag, ...extra } } : payload) };
+  };
   const hit = cache.get(q.cacheKey);
   if (hit && nowMs - hit.at < CACHE_MS) { stats.cacheHits++; return send(hit, { cached: true }); }
   if (jobs.has(q.cacheKey)) { stats.cacheHits++; return send(await jobs.get(q.cacheKey), { shared: true }); }
@@ -132,7 +162,8 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
     const r = await fr24CachedLookup(state, q.number, { fetchFn, env, nowMs });
     let result, diag;
     if (!['found', 'multiple', 'not-found'].includes(r.state)) {
-      result = { state: 'no-disponible' };
+      result = { state: 'no-disponible', reason: UNAVAILABLE_REASON[r.reason] ?? 'http',
+        ...(r.reason === 'limite' && fin(r.retryAfterSec) && r.retryAfterSec >= 0 ? { retryAfterSec: Math.round(r.retryAfterSec) } : {}) };
       diag = { lookup: 'unavailable', lookupReason: r.reason ?? null, ...(fin(r.httpStatus) ? { httpStatus: r.httpStatus } : {}), results: 0, compatible: 0, fr24Id: null, reason: 'no-disponible' };
     } else {
       const candidates = r.state === 'multiple' ? r.candidates ?? [] : r.state === 'found' ? [r] : [];
@@ -149,13 +180,13 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
       diag = { lookup: r.state, results: pick.results, compatible: pick.compatible, fr24Id: pick.chosen?.fr24Id ?? null,
         reason: pick.reason ?? (result.fr24Estimated ? 'estimada' : result.state === 'sin-datos' ? 'sin-posicion-en-vuelo' : null) };
     }
-    // Aún sin avión cerca de la salida: la app sigue con su sondeo (la caché de 60 s lo deja en ~1 llamada/min).
+    // Aún sin avión cerca de la salida: la app sigue con su sondeo (la caché de 40 s lo deja en ≤ 1 llamada cada 40–60 s).
     const identifying = result.state === 'sin-datos' && locating(q.firstDep, q.latestDep, nowMs) ? { identifying: true, phase: 'fr24' } : {};
     // source: 'fr24' en todas las respuestas, para que la ficha atribuya bien también «sin señal» y «aterrizado».
     const payload = { ...result, source: 'fr24', ...identifying, ...q.pending, checked: new Date(nowMs).toISOString() };
     if (cache.size > 500) cache.clear();
     cache.set(q.cacheKey, { at: nowMs, payload, diag });
-    return { payload, diag };
+    return { payload, diag, at: nowMs };
   })().finally(() => jobs.delete(q.cacheKey));
   jobs.set(q.cacheKey, job);
   return send(await job);

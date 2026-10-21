@@ -5,12 +5,18 @@
 // no cambia la prioridad Aena / ETA Turbi / AeroDataBox (la hora es la que ya trae card.dep / card.arr), no decide
 // aterrizajes (status.landing o la fase) y no duplica umbrales del radar (se importan de eta.js y radar-distance.js).
 import { STALE_MIN } from './eta.js';
-import { receiptAgeS, cachedAgeS, MAX_EXTRAPOLATION_S } from './radar-distance.js';
+import { MAX_EXTRAPOLATION_S } from './radar-distance.js';
 import { formatLocal } from './time.js';
 
 const MIN = 60000;
-// Antigüedad máxima de una posición para pintar el avión en el mapa (regla aprobada, §10 bis): pasada, sin avión.
+// Avión en el mapa (§10 bis y decisión del controlador de 21/10/2026): con una posición de PLANE_MAX_AGE_S o menos es
+// «fresca» (se anima de A a B y prolonga la estela); hasta PLANE_LAST_KNOWN_S es la «última posición conocida» (quieta y
+// atenuada, nunca presentada como medición nueva); pasada, sin avión.
 export const PLANE_MAX_AGE_S = 60;
+export const PLANE_LAST_KNOWN_S = 180;
+// Reloj MONOTÓNICO (ms, sin relación con la hora civil): el de toda la antigüedad de la ficha. Cambiar la hora del móvil
+// no envejece ni rejuvenece una lectura.
+export const monoNow = () => globalThis.performance?.now?.() ?? Date.now();
 const PENDING = '--:--';
 
 // 'programado' | 'en-curso' | 'finalizado' | 'cancelado'. Solo agrupa lo que ya dicen la fase del tramo (legPhase o
@@ -129,39 +135,44 @@ export function milestones(card) {
   ];
 }
 
-// Antigüedad de la lectura «volando» en nowMs: la de distanceReference al recibirla (seenS + caché del servidor) más
-// lo que lleva en pantalla. Solo envejece la presentación: no pide nada ni cambia el estado del radar.
-const radarAgeS = (radar, receivedAtMs, nowMs) => receiptAgeS(radar, receivedAtMs) + Math.max(0, nowMs - receivedAtMs) / 1000;
+// Antigüedades sin el reloj civil del móvil: la tarjeta guarda la lectura tal como valía al recibirla (receivedRadar,
+// js/radar-distance.js: posAgeS/seenS del instante en que respondió el servidor) y el instante MONOTÓNICO de recepción
+// (radarReceivedMono). receivedMono y nowMono son del mismo reloj monotónico (monoNow); solo se suma lo transcurrido.
+// Solo envejece la presentación: no pide nada ni cambia el estado del radar.
+const elapsedS = (receivedMono, nowMono) => Math.max(0, nowMono - receivedMono) / 1000;
+const radarAgeS = (radar, receivedMono, nowMono) =>
+  (Number.isFinite(radar?.seenS) && radar.seenS >= 0 ? radar.seenS : 0) + elapsedS(receivedMono, nowMono);
 
 // Antigüedad legible: segundos por debajo del minuto, minutos a partir de ahí (la de «Última señal» y la de la posición).
 export const ageText = ageS => ageS < 60 ? `${Math.floor(ageS)} s` : `${Math.floor(ageS / 60)} min`;
 
 // «Última señal» en vivo (§10 bis): live por debajo de MAX_EXTRAPOLATION_S (la distancia aún se mueve), stale desde
 // STALE_MIN (la ETA pasa a «la última disponible»), old entre medias. Fuera de «volando», null.
-export function signalState(radar, receivedAtMs, nowMs) {
-  if (radar?.state !== 'volando') return null;
-  const ageS = radarAgeS(radar, receivedAtMs, nowMs);
+export function signalState(radar, receivedMono, nowMono) {
+  if (radar?.state !== 'volando' || !Number.isFinite(receivedMono)) return null;
+  const ageS = radarAgeS(radar, receivedMono, nowMono);
   if (!Number.isFinite(ageS)) return null; // sin instante de recepción no hay antigüedad: no se inventa «NaN min»
   const level = ageS < MAX_EXTRAPOLATION_S ? 'live' : ageS >= STALE_MIN * 60 ? 'stale' : 'old';
   return { ageS, level, text: ageText(ageS) };
 }
 
-// Antigüedad REAL de la posición en nowMs: posAgeS (seen_pos de adsb.lol al leerla) más la caché del servidor (misma
-// cuenta `checked` que receiptAgeS) más lo que lleva en pantalla. Nunca seenS: el último mensaje puede ser reciente
-// con la posición vieja. null si no está «volando», sin posAgeS finito o sin instante de recepción válido.
-export function positionAgeS(radar, receivedAtMs, nowMs) {
-  if (radar?.state !== 'volando' || !Number.isFinite(radar.posAgeS) || radar.posAgeS < 0 || !Number.isFinite(receivedAtMs)) return null;
-  return radar.posAgeS + cachedAgeS(radar, receivedAtMs) + Math.max(0, nowMs - receivedAtMs) / 1000;
+// Antigüedad REAL de la posición: posAgeS (al responder el servidor) más lo transcurrido desde que se recibió (reloj
+// monotónico). Nunca seenS: el último mensaje puede ser reciente con la posición vieja. null si no está «volando», sin
+// posAgeS finito o sin instante de recepción válido.
+export function positionAgeS(radar, receivedMono, nowMono) {
+  if (radar?.state !== 'volando' || !Number.isFinite(radar.posAgeS) || radar.posAgeS < 0 || !Number.isFinite(receivedMono)) return null;
+  return radar.posAgeS + elapsedS(receivedMono, nowMono);
 }
 
-// Avión en el mapa: la posición recibida tal cual, solo con «volando» y si la POSICIÓN tiene PLANE_MAX_AGE_S o menos.
-// Una posición antigua (o de antigüedad desconocida) nunca se pinta, ni como «última posición»: sin avión, solo la
-// ruta y los aeropuertos. Sin interpolar.
-export function planeOnMap(radar, receivedAtMs, nowMs) {
+// Avión en el mapa: la posición recibida tal cual, solo con «volando» y con antigüedad de la POSICIÓN conocida.
+// → { lat, lon, heading, fresh }: fresh con PLANE_MAX_AGE_S o menos; fresh: false (última posición conocida, quieta y
+// atenuada) hasta PLANE_LAST_KNOWN_S; más antigua (o de antigüedad desconocida) → null: sin avión, solo la ruta, la
+// estela real pasada y los aeropuertos. heading: el `track` medido (grados, 0 = norte) o null. Sin interpolar.
+export function planeOnMap(radar, receivedMono, nowMono) {
   if (!Number.isFinite(radar?.lat) || !Number.isFinite(radar.lon)) return null;
-  const ageS = positionAgeS(radar, receivedAtMs, nowMs);
-  if (ageS === null || ageS > PLANE_MAX_AGE_S) return null;
-  return { lat: radar.lat, lon: radar.lon };
+  const ageS = positionAgeS(radar, receivedMono, nowMono);
+  if (ageS === null || ageS > PLANE_LAST_KNOWN_S) return null;
+  return { lat: radar.lat, lon: radar.lon, heading: Number.isFinite(radar.track) ? radar.track : null, fresh: ageS <= PLANE_MAX_AGE_S };
 }
 
 // Barras de la gráfica de turbulencias: muestreo uniforme de view.route (un punto por paso de tiempo, sobre el tiempo
