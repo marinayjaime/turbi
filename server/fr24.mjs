@@ -67,3 +67,53 @@ export async function fr24TestResponse(path, { fetchFn = fetch, env = process.en
   const out = await lookup(flight, { fetchFn, env }).catch(() => ({ state: 'unavailable', reason: 'error', flight }));
   return { status: 200, headers: HEADERS, body: JSON.stringify(scrub(out, tokenOf(env))) };
 }
+
+// Fuentes de posición REAL (decisión conservadora): cualquier otra (ESTIMATED, FAA, OTHER, vacía…) no es una medida.
+// La usan el radar (server/fr24-radar.mjs) y la estela (fr24Track).
+export const REAL_SOURCES = new Set(['ADSB', 'MLAT', 'SATELLITE', 'UAT', 'FLARM']);
+// fr24Id: identificador corto alfanumérico (hexadecimal en la práctica). Nada más entra en la URL de Flight Tracks.
+export const FR24_ID_RE = /^[A-Za-z0-9]{4,16}$/;
+const TRACK_MAX_POINTS = 600;
+const FUTURE_TOLERANCE_MS = 30000;
+const round4 = v => Math.round(v * 1e4) / 1e4;
+
+// Estela real de un vuelo de FR24 (Flight Tracks) por su fr24Id, que SOLO viene de la asociación del radar
+// (server/fr24-track.mjs). Una llamada, sin reintentos, timeout de 10 s. → { state: 'found', fr24Id, points: [[lat, lon]…],
+// times: [s…] (hora de cada punto, epoch en segundos), lastAt } | { state: 'not-found' } | { state: 'unavailable', reason,
+// httpStatus? }. Solo posiciones de fuente real con lat/lon finitos y hora válida (no del futuro), ordenadas por tiempo y,
+// si pasan de 600, un submuestreo uniforme que conserva el primero y el último (sin interpolar ni inventar nada). Una
+// respuesta de otro fr24_id (o sin él) no se acepta: nunca se mezclan vuelos.
+export async function fr24Track(fr24Id, { fetchFn = fetch, env = process.env, timeoutMs = TIMEOUT_MS, nowMs = Date.now() } = {}) {
+  if (typeof fr24Id !== 'string' || !FR24_ID_RE.test(fr24Id)) return { state: 'unavailable', reason: 'id-no-valido' };
+  const token = tokenOf(env);
+  if (!token) return { state: 'unavailable', reason: 'sin-configurar' };
+  let res;
+  try {
+    res = await fetchFn(`${FR24_BASE}/flight-tracks?flight_id=${encodeURIComponent(fr24Id)}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Accept: 'application/json', 'Accept-Version': 'v1', Authorization: `Bearer ${token}` },
+    });
+  } catch (err) {
+    return { state: 'unavailable', reason: err?.name === 'TimeoutError' || err?.name === 'AbortError' ? 'timeout' : 'red' };
+  }
+  if (res.status === 404) return { state: 'not-found' };
+  if (!res.ok) return { state: 'unavailable', reason: reasonOf(res.status), httpStatus: res.status };
+  let body;
+  try { body = await res.json(); } catch { return { state: 'unavailable', reason: 'respuesta-invalida' }; }
+  const flight = (Array.isArray(body) ? body : [body]).find(b => b && typeof b === 'object' && String(b.fr24_id ?? '').toLowerCase() === fr24Id.toLowerCase());
+  const real = [];
+  for (const p of Array.isArray(flight?.tracks) ? flight.tracks : []) {
+    const ms = typeof p?.timestamp === 'string' ? Date.parse(p.timestamp) : NaN;
+    if (!REAL_SOURCES.has(String(p?.source ?? '').toUpperCase()) || !Number.isFinite(ms) || ms > nowMs + FUTURE_TOLERANCE_MS) continue;
+    if (typeof p.lat !== 'number' || typeof p.lon !== 'number' || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)
+      || Math.abs(p.lat) > 90 || Math.abs(p.lon) > 180) continue;
+    real.push({ ms, lat: round4(p.lat), lon: round4(p.lon) });
+  }
+  real.sort((a, b) => a.ms - b.ms);
+  const unique = real.filter((p, i) => i === 0 || p.ms !== real[i - 1].ms);
+  if (!unique.length) return { state: 'not-found' };
+  const kept = unique.length <= TRACK_MAX_POINTS ? unique
+    : Array.from({ length: TRACK_MAX_POINTS }, (_, i) => unique[Math.round((i * (unique.length - 1)) / (TRACK_MAX_POINTS - 1))]);
+  return { state: 'found', fr24Id, points: kept.map(p => [p.lat, p.lon]), times: kept.map(p => Math.round(p.ms / 1000)),
+    lastAt: new Date(kept.at(-1).ms).toISOString() };
+}

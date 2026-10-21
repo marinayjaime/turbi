@@ -12,19 +12,19 @@
 //     respuesta cruda de FR24 por número consultado 60 s (la comparten tramos del mismo número y /fr24-test) y las
 //     peticiones simultáneas comparten la misma promesa. Sin reintentos, sin temporizadores, sin trabajos en segundo plano.
 // El token nunca sale de server/fr24.mjs: las respuestas y el diagnóstico (?debug=1) son listas cerradas de campos.
-import { fr24Lookup, fr24Configured, FLIGHT_RE } from './fr24.mjs';
+import { fr24Lookup, fr24Configured, FLIGHT_RE, REAL_SOURCES } from './fr24.mjs';
 import { radarGateFor, plannedMinFor, distanceKm, landedAt, POSITION_MAX_AGE_S, MAX_SEEN_S } from './radar.mjs';
 import { legTimes, aenaTz, RADAR_GATE } from '../js/radar-gate.js';
 import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js';
 import { adbPhysicalKey, adbRadarGate } from '../js/adb.js';
 
 const CACHE_MS = 60000;
-const ASSOC_MS = 24 * 3600000; // asociación vuelo físico → fr24Id: solo en memoria, purgada a las 24 h
+export const ASSOC_MS = 24 * 3600000; // asociación vuelo físico → fr24Id: solo en memoria, purgada a las 24 h
 const LOCATING_AFTER_MIN = 45; // «Localizando…» hasta la última salida conocida + 45 min (heurística)
 const AIRBORNE_KT = 50; // FR24 da alt 0 en tierra; por debajo de 50 kt (rodaje, parado) no se da por volando
 const FUTURE_TOLERANCE_MS = 30000; // una posición «del futuro» (reloj de FR24 o dato roto) no se toma por reciente
-// Fuentes de posición REAL (decisión conservadora): cualquier otra (ESTIMATED, FAA, OTHER, vacía…) no es una medida.
-export const REAL_SOURCES = new Set(['ADSB', 'MLAT', 'SATELLITE', 'UAT', 'FLARM']);
+// Fuentes de posición REAL (REAL_SOURCES, server/fr24.mjs): cualquier otra (ESTIMATED, FAA, OTHER, vacía…) no es una medida.
+export { REAL_SOURCES };
 const RADAR_PATH = /^\/radar\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 const ADB_RADAR_PATH = /^\/radar-adb\/([A-Z0-9]{2,3}\d{1,4}[A-Z]?)\/(\d{4}-\d{2}-\d{2})\.json$/;
 const HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=60' };
@@ -33,7 +33,9 @@ const MIN = 60000;
 const fin = v => Number.isFinite(v);
 
 // Contadores de /health: solo llamadas reales a FR24 disparadas por usuarios (abrir /health no consulta FR24).
-const freshStats = () => ({ requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0 });
+// trackRequests/trackCacheHits: Flight Tracks (estela, server/fr24-track.mjs).
+const freshStats = () => ({ requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0, trackRequests: 0, trackCacheHits: 0 });
+export const fr24StatsOf = state => (state.fr24Stats ??= freshStats());
 export const fr24Health = (state, env = process.env) => ({ configured: fr24Configured(env), ...freshStats(), ...state?.fr24Stats });
 
 // Candidato de FR24 para un tramo o → a. associated: fr24Id ya aceptado para este vuelo físico; taken: fr24Id asociados
@@ -163,18 +165,14 @@ const notApplicable = (nowMs, debug, diagnostic) => ({ status: 200, headers: HEA
   body: JSON.stringify({ state: 'no-aplica', checked: new Date(nowMs).toISOString(), ...(debug ? { diagnostic } : {}) }) });
 
 // GET /radar/AL/N.json?leg=<physicalFlightKey>[&poll=1][&debug=1] — vuelos de Aena.
-export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), airports = {}, env = process.env } = {}) {
-  const url = new URL(path, 'http://turbi.local');
-  const m = url.pathname.match(RADAR_PATH);
-  if (!m) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
-  const debug = url.searchParams.get('debug') === '1';
+// Vuelo físico de Aena: el que pide la app (?leg=<physicalFlightKey>, solo entre los tramos de este número) o, sin ?leg,
+// el único elegible; siempre con la puerta ≠ none. Exactamente como el flujo de adsb.lol (server/live.mjs); la espera de
+// 15 min de «identify» no limita a FR24, y FR24 no necesita el código OACI. Lo usan /radar y /track (server/fr24-track.mjs).
+export function fr24AenaLeg(state, al, n, legParam, { nowMs, airports = {} }) {
   const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
   const tzs = l => ({ originTz: airports[l.o]?.[4] ?? aenaTz(l.o), destTz: airports[l.a]?.[4] ?? aenaTz(l.a) });
   const gateOf = l => radarGateFor(l, nowMs, { ...tzs(l), plannedMin: plannedMinFor(coords(l.o), coords(l.a)) });
-  // Qué vuelo físico: exactamente como el flujo de adsb.lol (server/live.mjs), con la puerta ≠ none. La espera de
-  // 15 min de «identify» no limita a FR24, y FR24 no necesita el código OACI (no se construyen indicativos).
-  const legParam = url.searchParams.get('leg');
-  const sameNumber = (state.legs ?? []).filter(l => l.al === m[1] && l.n === m[2]);
+  const sameNumber = (state.legs ?? []).filter(l => l.al === al && l.n === n);
   let leg = null, legReason = null;
   if (legParam !== null) {
     const chosen = legParam.length <= 64 ? sameNumber.find(l => physicalFlightKey(l) === legParam) : null;
@@ -187,6 +185,17 @@ export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = 
     if (eligible.size === 1) [leg] = eligible.values();
     else if (eligible.size > 1) legReason = 'varios-tramos-sin-elegir';
   }
+  return { leg, legReason, coords, tzs, gateOf };
+}
+
+// GET /radar/AL/N.json?leg=<physicalFlightKey>[&poll=1][&debug=1] — vuelos de Aena.
+export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), airports = {}, env = process.env } = {}) {
+  const url = new URL(path, 'http://turbi.local');
+  const m = url.pathname.match(RADAR_PATH);
+  if (!m) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
+  const debug = url.searchParams.get('debug') === '1';
+  const legParam = url.searchParams.get('leg');
+  const { leg, legReason, coords, tzs, gateOf } = fr24AenaLeg(state, m[1], m[2], legParam, { nowMs, airports });
   const legDiag = legParam !== null ? { leg: legParam.slice(0, 64) } : {};
   if (!leg) return notApplicable(nowMs, debug, { source: 'fr24', gate: 'none', gateReason: legReason ?? 'vuelo-no-encontrado', ...legDiag });
   const gate = gateOf(leg);
@@ -212,6 +221,19 @@ export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = 
     pending: gate.confirmed ? {} : { departureConfirmed: false }, firstDep, latestDep, diagnostic, debug }, { fetchFn, env, nowMs });
 }
 
+// Vuelo físico de AeroDataBox: el que pide la app (?leg=<adbPhysicalKey>) o, sin ?leg, el único tramo. Lee solo la caché
+// de AeroDataBox (peek: 0 unidades). gate: la puerta de siempre (sin exigir identificador). Lo usan /radar-adb y /track-adb.
+export async function fr24AdbLeg(state, number, date, legParam, { nowMs, airports = {} }) {
+  const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
+  const entry = state.adb ? await state.adb.peek(number, date) : null;
+  if (entry?.status !== 'found') return { leg: null, reason: 'sin-horario-aerodatabox', coords };
+  const legs = entry.legs ?? [];
+  const leg = legParam !== null ? legs.find(l => adbPhysicalKey(entry, l) === legParam) : legs.length === 1 ? legs[0] : null;
+  if (!leg) return { entry, leg: null, reason: legParam !== null ? 'tramo-desconocido' : 'varios-tramos-sin-elegir', coords };
+  const gate = adbRadarGate(leg, entry, nowMs, { plannedMin: plannedMinFor(coords(leg.o), coords(leg.a)), requireIdentifier: false });
+  return { entry, leg, gate, coords };
+}
+
 // GET /radar-adb/<vuelo>/<fecha>.json?leg=<adbPhysicalKey>[&poll=1][&debug=1] — vuelos de AeroDataBox (sin Aena). Lee
 // solo la caché de AeroDataBox (peek: 0 unidades) y busca en FR24 por el número comercial, sin exigir modeS ni indicativo.
 export async function fr24AdbRadarResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), airports = {}, env = process.env } = {}) {
@@ -220,14 +242,10 @@ export async function fr24AdbRadarResponse(state, path, { fetchFn = fetch, nowMs
   if (!m) return { status: 404, headers: HEADERS, body: '{"error":"no encontrado"}' };
   const debug = url.searchParams.get('debug') === '1';
   const legParam = url.searchParams.get('leg');
-  const entry = state.adb ? await state.adb.peek(m[1], m[2]) : null;
-  if (entry?.status !== 'found') return notApplicable(nowMs, debug, { source: 'fr24', reason: 'sin-horario-aerodatabox' });
+  const { entry, leg, gate, reason, coords } = await fr24AdbLeg(state, m[1], m[2], legParam, { nowMs, airports });
+  if (!leg) return notApplicable(nowMs, debug, { source: 'fr24', reason });
   const legs = entry.legs ?? [];
-  const leg = legParam !== null ? legs.find(l => adbPhysicalKey(entry, l) === legParam) : legs.length === 1 ? legs[0] : null;
-  if (!leg) return notApplicable(nowMs, debug, { source: 'fr24', reason: legParam !== null ? 'tramo-desconocido' : 'varios-tramos-sin-elegir' });
-  const coords = iata => (airports[iata] ? [airports[iata][2], airports[iata][3]] : null);
   const origin = coords(leg.o), dest = coords(leg.a);
-  const gate = adbRadarGate(leg, entry, nowMs, { plannedMin: plannedMinFor(origin, dest), requireIdentifier: false });
   const number = String(entry.number ?? '');
   const diagnostic = { source: 'fr24', gate: gate.mode, gateReason: gate.reason, number, departureConfirmed: gate.confirmed };
   if (gate.mode === 'none') return notApplicable(nowMs, debug, diagnostic);

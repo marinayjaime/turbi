@@ -2,6 +2,7 @@
 // Cada 10 min descarga Aena, audita cada hora publicada contra su fila de origen y lo sirve por HTTP.
 // Radar de un vuelo: /radar/AL/N.json y /radar-adb/<vuelo>/<fecha>.json (radarRoute). Con FR24_API_TOKEN, solo
 // Flightradar24 (server/fr24-radar.mjs); sin ella, el flujo antiguo de adsb.lol (server/radar.mjs, server/radar-adb.mjs).
+// Estela real (FR24 Flight Tracks): /track/AL/N.json y /track-adb/<vuelo>/<fecha>.json (trackRoute, server/fr24-track.mjs).
 // No guarda nada: el histórico de puntualidad lo sigue calculando GitHub Actions.
 // Si el servicio se ha dormido, la primera petición lo despierta y dispara una descarga (la app, mientras, usa GitHub Pages).
 // Arranque: node server/live.mjs   (variable: PORT)
@@ -19,6 +20,7 @@ import { createGithubStore } from './adb-store.mjs';
 import { adbRadarResponse } from './radar-adb.mjs';
 import { fr24Configured, fr24TestResponse } from './fr24.mjs';
 import { fr24RadarResponse, fr24AdbRadarResponse, fr24Health, fr24CachedLookup } from './fr24-radar.mjs';
+import { fr24TrackResponse, trackNotApplicable, TRACK_PATH, ADB_TRACK_PATH } from './fr24-track.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -103,6 +105,17 @@ export function radarRoute(state, path, opts = {}) {
     return fr24 ? fr24AdbRadarResponse(state, path, opts) : adbRadarResponse(state, path, opts);
   }
   return fr24 ? fr24RadarResponse(state, path, opts) : radarResponse(state, path, opts);
+}
+
+// Estela real: /track/AL/N.json y /track-adb/<vuelo>/<fecha>.json (server/fr24-track.mjs). Solo con FR24 configurado;
+// sin la variable no hay estela («no-aplica», sin llamar a nada) y la app sigue con la ruta prevista.
+export function trackRoute(state, path, opts = {}) {
+  const pathname = new URL(path, 'http://turbi.local').pathname;
+  if (!TRACK_PATH.test(pathname) && !ADB_TRACK_PATH.test(pathname)) {
+    return Promise.resolve({ status: 404, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"error":"no encontrado"}' });
+  }
+  if (!fr24Configured(opts.env ?? process.env)) return Promise.resolve(trackNotApplicable(opts.nowMs ?? Date.now()));
+  return fr24TrackResponse(state, path, opts);
 }
 
 // /fr24-test/<vuelo>.json (prueba pedida por Jaime, pública): con la caché de 60 s por número, la promesa compartida y
@@ -358,6 +371,10 @@ async function main() {
     }
     if (path.startsWith('/fr24-test/')) { // prueba de Flightradar24, solo bajo demanda (server/fr24.mjs)
       fr24TestRoute(state, path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable","reason":"error"}' }));
+      return;
+    }
+    if (path.startsWith('/track/') || path.startsWith('/track-adb/')) { // estela real del vuelo (Flight Tracks de FR24)
+      trackRoute(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable"}' }));
       return;
     }
     if (path.startsWith('/radar/')) {
