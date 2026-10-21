@@ -95,6 +95,11 @@ describe('mainTime', () => {
       radar: { state: 'aterrizado' }, arr: arr({ est: '11:10' }), arrMs: NOW - 5 * MIN }), NOW);
     expect(t).toMatchObject({ time: '11:10', label: 'Aterrizado · radar ADS-B', aside: null });
   });
+  it('aterrizado según Flightradar24 → «Aterrizado · Flightradar24»', () => {
+    const t = mainTime(card({ phase: 'en-curso', depFinal: true, status: { text: 'Aterrizado', tone: 'ok', landing: 'confirmed-landed', source: 'fr24' },
+      radar: { state: 'aterrizado', source: 'fr24' }, arr: arr({ est: '11:10' }), arrMs: NOW - 5 * MIN }), NOW);
+    expect(t).toMatchObject({ time: '11:10', label: 'Aterrizado · Flightradar24', aside: null });
+  });
   it('cancelado → null; la fase pide un lado que no existe → null (no inventa hora)', () => {
     expect(mainTime(card({ phase: 'cancelado' }), NOW)).toBeNull();
     expect(mainTime(card({ dep: null }), NOW)).toBeNull();

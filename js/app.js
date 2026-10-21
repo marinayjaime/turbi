@@ -29,7 +29,7 @@ import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf }
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
-import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, LANDED_NOTE,
+import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
   rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { LIVE_BASE } from './config.js';
@@ -521,7 +521,8 @@ function paintRadar(q, flight, radar, ctx, stale) {
   }
   // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
   const landedAt = recallLanding(radarKey(q));
-  card = withLanding(card, landedAt, q.kind === 'adb' ? {} : q.leg);
+  const landedSource = recallLandingSource(radarKey(q));
+  card = withLanding(card, landedAt, q.kind === 'adb' ? {} : q.leg, landedSource);
   // Momento en que llegó esta lectura «volando» (envejecimiento de «Última señal» y del avión en js/card-model.js); el
   // mismo instante que toma la distancia animada como referencia.
   const receivedAt = Date.now();
@@ -546,7 +547,7 @@ function paintRadar(q, flight, radar, ctx, stale) {
   }
   // El aviso de llegada no puede contradecir al radar (en el aire) ni a un aterrizaje confirmado.
   const note = els.result.querySelector('.note');
-  const replacement = Number.isFinite(landedAt) ? LANDED_NOTE : radarNote(radar);
+  const replacement = Number.isFinite(landedAt) ? landedNote(landedSource) : radarNote(radar);
   if (replacement && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(note?.textContent)) note.textContent = replacement;
   // Aterrizado según el radar con el pronóstico de esta consulta en pantalla: se conserva, con su etiqueta (§10.2).
   if (card.radar?.state === 'aterrizado' && forecastOnScreen() && !$in('forecast-area').querySelector('.pre-landing')) {
@@ -651,8 +652,8 @@ async function buildFlight(q) {
   const landedAt = q.kind === 'schedule' && !aenaFinal(q.leg) ? recallLanding(etaKey(q)) : q.kind === 'adb' ? recallLanding(q.adbKey) : null;
   const flight = q.kind === 'schedule'
     ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
-      departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg)
-    : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin), landedAt, {}) : null;
+      departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg, recallLandingSource(etaKey(q)))
+    : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin), landedAt, {}, recallLandingSource(q.adbKey)) : null;
   // Para js/card-model.js (cuentas «Sale en / Llega en / Duración»): la salida y la llegada visibles en UTC, sin calcular
   // nada nuevo. En AeroDataBox, la llegada visible es su mejor hora (adbTimes), la misma que muestra la ficha.
   const arrMs = q.kind === 'adb' ? adbTimes(q.adbLeg).arr?.utc ?? null : visibleArrivalMs;
@@ -690,8 +691,9 @@ async function run(q, handoff = null) {
       ? arrivalNote({ leg: q.leg, officialMs, eta, departureMs, nowMs: Date.now() })
       : q.kind === 'adb' ? adbArrivalNote(q, profile)
       : profile.arrivalMs < Date.now() ? 'Este vuelo ya ha aterrizado.' : null;
-    const landedNote = Number.isFinite(landedAt) && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(arrived) ? LANDED_NOTE : null;
-    const note = landedNote ?? arrived ?? (rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
+    const landedText = Number.isFinite(landedAt) && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(arrived)
+      ? landedNote(recallLandingSource(radarKey(q))) : null;
+    const note = landedText ?? arrived ?? (rel === null ? 'Falta más de una semana: vuelve a consultar más cerca de la fecha.'
       : q.leg?.st === 'CAN' || ['Canceled', 'CanceledUncertain'].includes(q.adbLeg?.status) ? 'Vuelo cancelado.'
       : null);
     if (note) {

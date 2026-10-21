@@ -64,7 +64,7 @@ export function arrivalNote({ leg, officialMs = null, eta = null, departureMs = 
 
 // Si el radar ve el avión en el aire, sustituye al aviso de llegada estimada ya pasada (no puede contradecirlo).
 export function radarNote(radar) {
-  if (radar?.state === 'aterrizado') return LANDED_NOTE;
+  if (radar?.state === 'aterrizado') return landedNote(radar.source);
   return radar?.state === 'volando'
     ? 'El radar indica que el avión sigue en el aire: la previsión de turbulencias no se muestra con el vuelo en curso.' : null;
 }
@@ -161,7 +161,9 @@ export function pollRadar({ fetchOnce, onResult, isActive = () => true, delays =
 export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   if (!radar || !['volando', 'aterrizado', 'sin-datos', 'no-disponible'].includes(radar.state)) return card;
   if (radar.state === 'volando') return { ...card, status: { text: 'Volando', tone: 'info', flying: true }, radar };
-  if (radar.state === 'aterrizado') return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
+  // La fuente (solo Flightradar24; adsb.lol es la de siempre) acompaña a los estados sin telemetría para atribuirlos bien.
+  const src = radar.source === 'fr24' ? { source: 'fr24' } : {};
+  if (radar.state === 'aterrizado') return { ...card, status: landedStatus(radar.source), radar: { state: 'aterrizado', ...src } };
   // El servidor aún está buscando el avión (indicativos exactos, identificación por ruta o esperando a que adsb.lol
   // levante una pausa): «Localizando…», también si Aena ya dice «Volando» (el estado de Aena se queda).
   if (radar.identifying === true) return { ...card, radar: { state: 'localizando' } };
@@ -170,39 +172,63 @@ export function withRadar(card, radar, lastSeenMs = null, nowMs = Date.now()) {
   const ageMin = Number.isFinite(lastSeenMs) ? Math.round((nowMs - lastSeenMs) / MIN) : null; // igual que la ETA
   if (ageMin !== null && ageMin < STALE_MIN) {
     const ago = ageMin < 1 ? 'menos de 1 min' : `${ageMin} min`;
-    return { ...card, status: { text: `Última señal: volando hace ${ago}`, tone: 'info' }, radar: { state: 'reciente', ageMin } };
+    return { ...card, status: { text: `Última señal: volando hace ${ago}`, tone: 'info' }, radar: { state: 'reciente', ageMin, ...src } };
   }
   // Aena aún no confirma la salida (p. ej. «Última llamada»): el avión puede seguir en tierra. Se queda el estado de
   // Aena, sin «Sin señal ADS-B» (no se asume que haya despegado).
   if (radar.departureConfirmed === false) return card;
-  return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal' } };
+  return { ...card, radar: { state: ageMin === null && radar.state === 'no-disponible' ? 'no-disponible' : 'sin-senal', ...src } };
 }
 
 // Aterrizaje confirmado por ADS-B (el servidor exige tierra, en el destino, señal reciente, mismo indicativo y el
 // tiempo mínimo físico de vuelo). Se guarda para que al recargar no se vuelva a «Ha salido»; una lectura posterior
 // de «volando» no lo deshace. Aena manda si confirma la llegada; desviado o cancelado, nunca.
+// Con Flightradar24 (source 'fr24') los textos lo dicen a él, nunca «ADS-B»; sin fuente o adsb.lol, los de siempre.
 const LANDED_STATUS = { text: 'Aterrizado', tone: 'ok', note: 'Confirmado por radar ADS-B', landing: 'confirmed-landed' };
+const LANDED_STATUS_FR24 = { ...LANDED_STATUS, note: 'Confirmado por Flightradar24', source: 'fr24' };
+const landedStatus = source => (source === 'fr24' ? LANDED_STATUS_FR24 : LANDED_STATUS);
 export const LANDED_NOTE = 'Este vuelo ya ha aterrizado según el radar ADS-B: no se muestra la previsión de turbulencias.';
+const LANDED_NOTE_FR24 = 'Este vuelo ya ha aterrizado según Flightradar24: no se muestra la previsión de turbulencias.';
+export const landedNote = source => (source === 'fr24' ? LANDED_NOTE_FR24 : LANDED_NOTE);
 const LANDED_STORE = 'turbi-landed';
+const LANDED_SOURCE_STORE = 'turbi-landed-source'; // solo las confirmadas por Flightradar24 (aparte: el formato de siempre no cambia)
 const landings = new Map();
+const landingSources = new Map();
 
-export function withLanding(card, landedAtMs, leg) {
+// source: la fuente que confirmó el aterrizaje (recallLandingSource); por defecto, la de la lectura que lleve la tarjeta.
+export function withLanding(card, landedAtMs, leg, source = card?.radar?.source) {
   if (!Number.isFinite(landedAtMs)) return card;
   const flags = [leg.st, leg.std, leg.sta];
   if (ARR_FINAL.has(leg.sta) || flags.includes('CAN') || flags.includes('DES')) return card; // Aena manda
-  return { ...card, status: LANDED_STATUS, radar: { state: 'aterrizado' } };
+  return { ...card, status: landedStatus(source), radar: { state: 'aterrizado', ...(source === 'fr24' ? { source } : {}) } };
 }
 
 export function rememberLanding(key, radar, nowMs = Date.now(), storage = globalThis.localStorage) {
   if (radar?.state !== 'aterrizado') return;
   const at = nowMs - (radar.seenS ?? 0) * 1000;
+  const fr24 = radar.source === 'fr24';
   landings.set(key, at);
+  if (fr24) landingSources.set(key, 'fr24'); else landingSources.delete(key);
   try {
     const all = JSON.parse(storage?.getItem(LANDED_STORE) ?? '{}');
     for (const [k, t] of Object.entries(all)) if (nowMs - t > 7 * 24 * 3600000) delete all[k];
     all[key] = at;
     storage?.setItem(LANDED_STORE, JSON.stringify(all));
+    const src = JSON.parse(storage?.getItem(LANDED_SOURCE_STORE) ?? '{}');
+    for (const k of Object.keys(src)) if (!(k in all)) delete src[k];
+    if (fr24) src[key] = 'fr24'; else delete src[key];
+    storage?.setItem(LANDED_SOURCE_STORE, JSON.stringify(src));
   } catch { /* sin almacenamiento: queda en memoria */ }
+}
+
+// 'fr24' si el aterrizaje guardado lo confirmó Flightradar24; si no, null (radar ADS-B, como siempre).
+export function recallLandingSource(key, storage = globalThis.localStorage, { fresh = false } = {}) {
+  if (!fresh && landingSources.has(key)) return landingSources.get(key);
+  try {
+    return JSON.parse(storage?.getItem(LANDED_SOURCE_STORE) ?? '{}')[key] === 'fr24' ? 'fr24' : null;
+  } catch {
+    return null;
+  }
 }
 
 // fresh: lee solo el almacenamiento (como tras recargar la página).

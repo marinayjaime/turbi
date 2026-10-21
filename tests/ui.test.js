@@ -601,3 +601,41 @@ describe('estado principal: radar «volando» frente al estado de puerta de Aena
     expect(chip(h)).not.toBe('En vuelo');
   });
 });
+
+// Flightradar24 (radar.source === 'fr24'): la ficha atribuye los datos a Flightradar24 y no habla de «ADS-B».
+import { withLanding, radarNote, landedNote, LANDED_NOTE, rememberLanding, recallLandingSource } from '../js/radar.js';
+describe('Ahora: radar de Flightradar24', () => {
+  const fr = { state: 'volando', callsign: 'IBE403', altM: 4115, altFt: 13500, kmh: 556, seenS: 2, remainingKm: 800, source: 'fr24', match: 'fr24', fr24Id: '3c' };
+  const flying = radar => card({ phase: 'en-curso', status: { text: 'Volando', tone: 'info', flying: true }, arr: null, radar, radarReceivedAt: NOW });
+  it('volando: fuente «Flightradar24» (title «Datos de Flightradar24»), sin «ADS-B» ni «fr24» suelto', () => {
+    const h = html(flying(fr));
+    expect(h).toMatch(/<span class="v" title="Datos de Flightradar24">Flightradar24<\/span>/);
+    expect(h).not.toContain('ADS-B');
+    expect(h).not.toMatch(/>fr24<|de fr24/);
+  });
+  it('adsb.lol conserva sus textos de siempre', () => {
+    expect(html(flying({ ...fr, source: 'adsb.lol', match: 'indicativo' }))).toMatch(/<span class="v" title="Datos ADS-B de adsb\.lol">Radar ADS-B<\/span>/);
+  });
+  it('sin señal de FR24: «Sin señal reciente del radar», sin «ADS-B»', () => {
+    const c = withRadar(card({ phase: 'en-curso', status: { text: 'Ha salido', tone: 'info' } }), { state: 'sin-datos', source: 'fr24' });
+    const h = html(c);
+    expect(h).toMatch(/<p class="radar muted">[\s\S]*Sin señal reciente del radar para este vuelo\.<\/p>/);
+    expect(h).not.toContain('ADS-B');
+  });
+  it('aterrizado por FR24: «Confirmado por Flightradar24» (también al recuperarlo guardado) y su aviso', () => {
+    const c = withRadar(card({ phase: 'en-curso' }), { state: 'aterrizado', source: 'fr24', seenS: 20 });
+    expect(c.status).toMatchObject({ text: 'Aterrizado', note: 'Confirmado por Flightradar24', landing: 'confirmed-landed' });
+    expect(c.radar).toEqual({ state: 'aterrizado', source: 'fr24' });
+    expect(html(c)).not.toContain('ADS-B');
+    expect(withLanding(card({}), NOW, {}, 'fr24').status.note).toBe('Confirmado por Flightradar24');
+    expect(withLanding(card({}), NOW, {}).status.note).toBe('Confirmado por radar ADS-B');
+    expect(radarNote({ state: 'aterrizado', source: 'fr24' })).toBe(landedNote('fr24'));
+    expect(landedNote('fr24')).not.toContain('ADS-B');
+    expect(landedNote('adsb.lol')).toBe(LANDED_NOTE);
+    const store = new Map(), storage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+    rememberLanding('k-fr24', { state: 'aterrizado', source: 'fr24', seenS: 0 }, NOW, storage);
+    rememberLanding('k-adsb', { state: 'aterrizado', source: 'adsb.lol', seenS: 0 }, NOW, storage);
+    expect(recallLandingSource('k-fr24', storage, { fresh: true })).toBe('fr24');
+    expect(recallLandingSource('k-adsb', storage, { fresh: true })).toBeNull();
+  });
+});

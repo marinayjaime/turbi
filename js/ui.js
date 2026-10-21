@@ -196,7 +196,8 @@ function flyingNowHtml(c, r, nowMs, open) {
           <div class="tm-grid${stale ? ' is-stale' : ''}">${cells}
           </div>${stale ? tmOldHtml(sig) : ''}`;
   const body = `${r.callsign ? kv('Indicativo', esc(r.callsign)) : ''}${
-    kv('Fuente', 'Radar ADS-B', ` title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}"`)}${
+    (r.source === 'fr24' ? kv('Fuente', 'Flightradar24', ' title="Datos de Flightradar24"')
+      : kv('Fuente', 'Radar ADS-B', ` title="Datos ADS-B de ${esc(r.source ?? 'adsb.lol')}"`))}${
     r.match === 'ruta' ? '\n          <p class="tm-match">Avión localizado por su ruta, posición y modelo: la aerolínea emite con otro indicativo.</p>' : ''}${
     r.aircraftChanged ? '\n          <p class="tm-match">Avión localizado por su indicativo: no es el que AeroDataBox tenía asignado a este vuelo.</p>' : ''}`;
   return details('now', `now telemetry${stale ? ' aged' : ''}`, open, summary, body);
@@ -224,7 +225,9 @@ function radarLineHtml(r) {
           <p class="radar-recent"><span class="chip tone-warn">${ago ? `Última señal · hace ${esc(ago)}` : 'Sin señal reciente'}</span></p>`;
   }
   if (r?.state === 'localizando') return line('info pulse', 'Buscando el avión en el radar…');
-  if (r?.state === 'sin-senal' || r?.state === 'sin-datos') return line('stale', 'Sin señal ADS-B reciente para este vuelo.');
+  if (r?.state === 'sin-senal' || r?.state === 'sin-datos') {
+    return line('stale', r.source === 'fr24' ? 'Sin señal reciente del radar para este vuelo.' : 'Sin señal ADS-B reciente para este vuelo.');
+  }
   if (r?.state === 'no-disponible') return line('stale', 'El radar no responde ahora mismo.');
   return null;
 }

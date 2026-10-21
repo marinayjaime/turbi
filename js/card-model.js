@@ -54,7 +54,8 @@ export function mainTime(card, nowMs) {
   const flying = arr.estimated ? 'Llegada estimada' : 'Llegada prevista';
   const base = { time: shown(arr), plusDay: Boolean(card.dep && arr.date > card.dep.date), note: arr.note ?? null };
   if (phase === 'en-curso') return { ...base, label: flying, aside: aside('Llega en', formatCountdown(card.arrMs - nowMs)) };
-  const label = card.arrFinal ? 'Llegada final' : card.status?.landing === 'confirmed-landed' ? 'Aterrizado · radar ADS-B' : flying;
+  const label = card.arrFinal ? 'Llegada final' : card.status?.landing === 'confirmed-landed'
+    ? (card.status.source === 'fr24' ? 'Aterrizado · Flightradar24' : 'Aterrizado · radar ADS-B') : flying;
   // Duración solo con salida y llegada reales: con una de las dos prevista sería una cuenta sobre una estimación. Con
   // las horas de pista de AeroDataBox es el tiempo en el aire (la misma etiqueta que el Resumen del vuelo).
   const durLabel = card.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración';

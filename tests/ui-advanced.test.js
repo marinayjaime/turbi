@@ -165,3 +165,24 @@ describe('integración mínima', () => {
     expect(readFileSync('sw.js', 'utf8')).toContain("'js/ui-advanced.js'");
   });
 });
+
+describe('Detalles avanzados con Flightradar24', () => {
+  it('fuente «Flightradar24», sección «Datos del radar» e identificación «Flightradar24»; nunca «adsb.lol» ni «ADS-B»', () => {
+    const html = advancedFlightHtml(card({ updatedAgo: 'hace 5 minutos', radar: volando({ source: 'fr24', match: 'fr24' }), radarReceivedAt: NOW }), { nowMs: NOW });
+    expect(text(html)).toContain('RadarFlightradar24');
+    expect(text(html)).toContain('Datos del radar');
+    expect(text(html)).toContain('IdentificaciónFlightradar24');
+    expect(html).not.toContain('adsb.lol');
+    expect(html).not.toContain('ADS-B');
+    for (const radar of [{ state: 'aterrizado', source: 'fr24' }, { state: 'reciente', ageMin: 3, source: 'fr24' }]) {
+      const h = advancedFlightHtml(card({ radar }), { nowMs: NOW });
+      expect(text(h)).toContain('RadarFlightradar24');
+      expect(h).not.toContain('adsb.lol');
+    }
+  });
+  it('adsb.lol, como siempre', () => {
+    const html = advancedFlightHtml(card({ radar: volando(), radarReceivedAt: NOW }), { nowMs: NOW });
+    expect(text(html)).toContain('Radar ADS-Badsb.lol');
+    expect(text(html)).toContain('Datos ADS-B');
+  });
+});

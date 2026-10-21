@@ -28,7 +28,7 @@ function photoCredit(p) {
 }
 
 // Cómo se identificó el avión en el radar (radar.match, tal cual lo devuelve el servidor).
-export const MATCH = { ruta: 'Por ruta', transpondedor: 'Por transpondedor', indicativo: 'Por indicativo' };
+export const MATCH = { ruta: 'Por ruta', transpondedor: 'Por transpondedor', indicativo: 'Por indicativo', fr24: 'Flightradar24' };
 
 function aircraftRows(c) {
   const rows = [];
@@ -102,7 +102,9 @@ function sourceRows(c) {
   } else {
     rows.push(row('Aena', c.updatedAgo ? `horario y estado · ${esc(c.updatedAgo)}` : 'horario y estado'));
   }
-  if (['volando', 'aterrizado', 'reciente'].includes(c.radar?.state)) rows.push(row('Radar ADS-B', 'adsb.lol'));
+  if (['volando', 'aterrizado', 'reciente'].includes(c.radar?.state)) {
+    rows.push(c.radar.source === 'fr24' ? row('Radar', 'Flightradar24') : row('Radar ADS-B', 'adsb.lol'));
+  }
   return rows;
 }
 
@@ -110,7 +112,7 @@ function sourceRows(c) {
 export function advancedFlightHtml(card, { open = new Set(), nowMs = Date.now() } = {}) {
   const cats = [
     ['adv-aircraft', 'Datos del avión', 'plane', aircraftRows(card)],
-    ['adv-adsb', 'Datos ADS-B', 'signal', adsbRows(card, nowMs)],
+    ['adv-adsb', card.radar?.source === 'fr24' ? 'Datos del radar' : 'Datos ADS-B', 'signal', adsbRows(card, nowMs)],
     ['adv-codeshare', 'Códigos compartidos', 'route', codeshareRows(card)],
     ['adv-tech', 'Información técnica', 'info', techRows(card)],
     ['adv-sources', 'Fuentes utilizadas', 'sources', sourceRows(card)],

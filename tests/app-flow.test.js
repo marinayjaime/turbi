@@ -1231,6 +1231,19 @@ describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
     await until(() => $('.telemetry'), 'panel del radar');
     expect(radarCalls()).toHaveLength(1);
   });
+  it('Flightradar24: el panel y Detalles avanzados atribuyen los datos a Flightradar24, sin «ADS-B» ni «adsb.lol»', async () => {
+    await open(raw({ callSign: null, aircraft: { model: 'Boeing 777' } }), { ...FLYING, hex: '8A04C1', match: 'fr24', source: 'fr24', fr24Id: '4a4a4a4a' });
+    await until(() => $('.telemetry') && $('#adv-flight')?.textContent.includes('Flightradar24'), 'panel y detalles con Flightradar24');
+    expect($('.telemetry').textContent).toContain('Flightradar24');
+    expect($('.telemetry').textContent).not.toContain('ADS-B');
+    expect($('#adv-flight').textContent).not.toMatch(/ADS-B|adsb\.lol/);
+  });
+  it('Flightradar24 confirma el aterrizaje: «Confirmado por Flightradar24», sin «ADS-B»', async () => {
+    await open(raw(), { state: 'aterrizado', callsign: 'GIA89', seenS: 30, distanceKm: 2, source: 'fr24', fr24Id: '4a4a4a4a' });
+    await until(() => $('#result .flight .status')?.textContent.includes('Aterrizado'), 'aterrizado');
+    expect($('#result .flight').textContent).toContain('Confirmado por Flightradar24');
+    expect($('#result .flight').textContent).not.toContain('ADS-B');
+  });
   it('sin transpondedor ni indicativo y el servidor sin FR24 («no-aplica»): ficha sin radar ni «Sin señal»', async () => {
     await open(raw({ callSign: null, aircraft: { model: 'Boeing 777' } }), { state: 'no-aplica' });
     await networkIdle();
