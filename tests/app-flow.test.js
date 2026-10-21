@@ -1223,10 +1223,18 @@ describe('radar de un vuelo de AeroDataBox (sin Aena)', () => {
     expect(calls.some(u => u.includes('/radar/'))).toBe(false); // nunca el radar de Aena
     expect(calls.filter(u => u.includes('/schedule/'))).toHaveLength(1); // AeroDataBox: nada más que la consulta del horario
   });
-  it('sin transpondedor ni indicativo: ficha sin radar y 0 peticiones de radar', async () => {
-    await open(raw({ callSign: null, aircraft: { model: 'Boeing 777' } }), FLYING);
+  // Con Flightradar24 el servidor lo busca por su número comercial: la app ya no exige transpondedor ni indicativo
+  // (adbRadarGate con requireIdentifier: false). Si el servidor no tiene FR24 (flujo antiguo), responde «no-aplica».
+  it('sin transpondedor ni indicativo: pide el radar (FR24 lo busca por número) y lo pinta si vuela', async () => {
+    const fr24 = { ...FLYING, hex: '8A04C1', match: 'fr24', source: 'fr24', fr24Id: '4a4a4a4a' };
+    await open(raw({ callSign: null, aircraft: { model: 'Boeing 777' } }), fr24);
+    await until(() => $('.telemetry'), 'panel del radar');
+    expect(radarCalls()).toHaveLength(1);
+  });
+  it('sin transpondedor ni indicativo y el servidor sin FR24 («no-aplica»): ficha sin radar ni «Sin señal»', async () => {
+    await open(raw({ callSign: null, aircraft: { model: 'Boeing 777' } }), { state: 'no-aplica' });
     await networkIdle();
-    expect(radarCalls()).toEqual([]);
+    expect(radarCalls()).toHaveLength(1);
     expect($('.telemetry')).toBeNull();
     expect($('#result .flight').textContent).not.toContain('Sin señal');
   });
@@ -2178,6 +2186,38 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       expect(log.view.slice(views)).toEqual([]);
       expect(log.markers).toHaveLength(1); // el mismo avión, de A a B
       expect(document.querySelectorAll('#map-card')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  // Flightradar24 (server/fr24-radar.mjs): la identidad del avión es su fr24Id (luego hex o indicativo).
+  const FA = { ...A, source: 'fr24', match: 'fr24', fr24Id: '3c4d5e6f', hex: '3423C1', callsign: 'IBE715' };
+  const FB = { ...FA, lat: B.lat, lon: B.lon };
+  it('FR24: «Actualizar» del mismo vuelo (mismo fr24Id) conserva el mapa y anima entre dos posiciones reales', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([FA, FB]);
+      $('#refresh').click();
+      await refreshed(log);
+      await networkIdle();
+      expect(log.maps).toBe(1);
+      expect(log.mapsRemoved).toBe(0);
+      expect(log.markers).toHaveLength(1);
+      const { path } = log.markers[0];
+      expect(path[0]).toEqual(at(FA));
+      expect(path.at(-1)).toEqual(at(FB));
+      expect(path.slice(1, -1).filter(p => strictlyBetween(p, FA, FB)).length).toBeGreaterThan(0);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('FR24: cambio de fr24Id (mismo hex e indicativo) → el avión se coloca directamente en B, sin animar', async () => {
+    fake();
+    try {
+      const { log } = await firstLoad([FA, { ...FB, fr24Id: '7a8b9c0d', fr24IdChanged: true }]);
+      $('#refresh').click();
+      await refreshed(log);
+      await networkIdle();
+      expect(log.markers).toHaveLength(1);
+      expect(log.markers[0].path).toEqual([at(FA), at(FB)]);
     } finally { vi.useRealTimers(); }
   }, 30000);
 });

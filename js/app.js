@@ -465,10 +465,11 @@ function adbArrivalNote(q, profile) {
 const radarKey = q => (q.kind === 'adb' ? q.adbKey : etaKey(q));
 
 // Radar de un vuelo de AeroDataBox: mismo sondeo, mismo panel y misma distancia restante que los de Aena. Solo si la
-// regla compartida (adbRadarGate) lo permite: con transpondedor o indicativo y dentro de la ventana del vuelo.
+// regla compartida (adbRadarGate) lo permite: dentro de la ventana del vuelo. Sin exigir transpondedor ni indicativo:
+// con Flightradar24 el servidor lo busca por su número comercial (sin FR24, el servidor responde «no-aplica»).
 async function showAdbRadar(q, flight, stale, ctx) {
   if (!flight || !LIVE_BASE) return;
-  if (adbRadarGate(q.adbLeg, q.adbMeta, Date.now(), { plannedMin: ctx?.plannedMin }).mode === 'none') return;
+  if (adbRadarGate(q.adbLeg, q.adbMeta, Date.now(), { plannedMin: ctx?.plannedMin, requireIdentifier: false }).mode === 'none') return;
   stopRadarPoll();
   const cardVisible = () => Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]');
   const poll = pollRadar({
@@ -989,8 +990,9 @@ function mountMap(q, stale) {
 }
 
 // Avión en el mapa: posición real de 60 s o menos (planeOnMap) y la identidad de esa lectura (vuelo físico + avión
-// por transpondedor o, si no, indicativo), para que el mapa no anime entre dos aviones o dos vuelos distintos.
-const planeIdentity = card => `${card?.physicalKey ?? ''}|${card?.radar?.hex ?? card?.radar?.callsign ?? ''}`;
+// por su fr24Id de Flightradar24, por transpondedor o, si no, indicativo), para que el mapa no anime entre dos aviones o
+// dos vuelos distintos: un cambio de fr24Id coloca el avión directamente.
+const planeIdentity = card => `${card?.physicalKey ?? ''}|${card?.radar?.fr24Id ?? card?.radar?.hex ?? card?.radar?.callsign ?? ''}`;
 function showPlane(map, card) {
   // Traspaso de «Actualizar»: la ficha nueva aún sin lectura del radar (y sin terminar) no quita el avión retenido.
   if (heldPlane && card && !card.radar && !['finalizado', 'cancelado'].includes(flightPhase(card))) return;
