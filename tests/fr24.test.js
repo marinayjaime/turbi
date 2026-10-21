@@ -137,10 +137,10 @@ describe('/health.fr24', () => {
     try {
       process.env.FR24_API_TOKEN = TOKEN;
       const body = handle(createState(), '/health').body;
-      expect(JSON.parse(body).fr24).toEqual({ configured: true });
+      expect(JSON.parse(body).fr24).toMatchObject({ configured: true });
       noToken(body);
       delete process.env.FR24_API_TOKEN;
-      expect(JSON.parse(handle(createState(), '/health').body).fr24).toEqual({ configured: false });
+      expect(JSON.parse(handle(createState(), '/health').body).fr24).toMatchObject({ configured: false });
       expect(spy).not.toHaveBeenCalled();
     } finally {
       if (prev === undefined) delete process.env.FR24_API_TOKEN; else process.env.FR24_API_TOKEN = prev;

@@ -5,7 +5,7 @@ export const FR24_BASE = 'https://fr24api.flightradar24.com/api';
 const TIMEOUT_MS = 10000;
 // Número de vuelo: prefijo IATA (2, con al menos una letra) u OACI (3 letras), 1–4 cifras y sufijo opcional de hasta 2
 // letras (indicativos operativos como RYR19HB). Nada más entra en la URL.
-const FLIGHT_RE = /^(?:[A-Z]{3}|[A-Z][A-Z0-9]|[0-9][A-Z])\d{1,4}[A-Z]{0,2}$/;
+export const FLIGHT_RE = /^(?:[A-Z]{3}|[A-Z][A-Z0-9]|[0-9][A-Z])\d{1,4}[A-Z]{0,2}$/;
 const TEST_PATH = /^\/fr24-test\/([A-Za-z0-9]{3,9})\.json$/;
 const HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
 

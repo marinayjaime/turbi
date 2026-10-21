@@ -109,15 +109,18 @@ export const adbPhysicalKey = (entry, leg) =>
 
 // ¿Se mira el radar (ADS-B) de un vuelo de AeroDataBox? La MISMA regla en la app y en Render. Reutiliza radarGate
 // (ventana alrededor de la salida y hasta la llegada + 60 min) con las horas de AeroDataBox, y nunca pasa de «direct»:
-// para estos vuelos no hay identificación por zona ni por ruta. Sin transpondedor ni indicativo, no hay radar.
+// para estos vuelos no hay identificación por zona ni por ruta. Sin transpondedor ni indicativo, no hay radar en el flujo
+// antiguo de adsb.lol (requireIdentifier, por defecto); con Flightradar24 (server/fr24-radar.mjs) basta el número
+// comercial, y la app y ese flujo la llaman con requireIdentifier: false.
 // El estado de AeroDataBox solo cuenta si es reciente (consultado o refrescado hace ≤ STATUS_FRESH_MS); la hora real de
 // despegue confirma la salida aunque el estado sea antiguo.
 export const STATUS_FRESH_MS = 30 * 60000;
 const FINAL = new Set(['Canceled', 'CanceledUncertain', 'Diverted']);
 const IN_AIR = new Set(['Departed', 'EnRoute', 'Approaching']);
-export function adbRadarGate(leg, meta, nowMs, { plannedMin = null } = {}) {
+export function adbRadarGate(leg, meta, nowMs, { plannedMin = null, requireIdentifier = true } = {}) {
   const none = reason => ({ mode: 'none', reason, confirmed: false });
-  if (!leg?.modeS && !leg?.callSign) return none('sin-identificador');
+  if (!leg) return none(requireIdentifier ? 'sin-identificador' : 'sin-tramo');
+  if (requireIdentifier && !leg.modeS && !leg.callSign) return none('sin-identificador');
   if (FINAL.has(leg.status)) return none('cancelado o desviado');
   if (leg.arr?.runway) return none('llegada final');
   const fresh = nowMs - Date.parse(meta.refreshedAt ?? meta.fetchedAt) <= STATUS_FRESH_MS;

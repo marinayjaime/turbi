@@ -1,6 +1,7 @@
 // Servicio «turbi-live» (Render gratis): da a la app el estado en tiempo real de los vuelos de hoy y mañana.
 // Cada 10 min descarga Aena, audita cada hora publicada contra su fila de origen y lo sirve por HTTP.
-// Para vuelos al extranjero (Aena no publica la llegada) consulta el radar ADS-B: /radar/AL/N.json (server/radar.mjs).
+// Radar de un vuelo: /radar/AL/N.json y /radar-adb/<vuelo>/<fecha>.json (radarRoute). Con FR24_API_TOKEN, solo
+// Flightradar24 (server/fr24-radar.mjs); sin ella, el flujo antiguo de adsb.lol (server/radar.mjs, server/radar-adb.mjs).
 // No guarda nada: el histórico de puntualidad lo sigue calculando GitHub Actions.
 // Si el servicio se ha dormido, la primera petición lo despierta y dispara una descarga (la app, mientras, usa GitHub Pages).
 // Arranque: node server/live.mjs   (variable: PORT)
@@ -17,6 +18,7 @@ import { createAerodatabox } from './aerodatabox.mjs';
 import { createGithubStore } from './adb-store.mjs';
 import { adbRadarResponse } from './radar-adb.mjs';
 import { fr24Configured, fr24TestResponse } from './fr24.mjs';
+import { fr24RadarResponse, fr24AdbRadarResponse, fr24Health } from './fr24-radar.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -69,13 +71,13 @@ const HEADERS = {
   'Cache-Control': 'public, max-age=60',
 };
 
-export function handle(state, path) {
+export function handle(state, path, { env = process.env } = {}) {
   if (path === '/health') {
     return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' },
       body: JSON.stringify({ updated: state.updated, runs: state.runs, audit: state.audit, lastError: state.lastError, flights: state.flights.size,
         adsb: adsbHealth(), radar: state.radarStats ?? freshRadarStats(), // estado de adsb.lol sin consultarlo
         aerodatabox: state.adb?.health() ?? { configured: false },
-        fr24: { configured: fr24Configured() } }) }; // solo si la clave existe: nunca llama a FR24
+        fr24: fr24Health(state, env) }) }; // si la clave existe y contadores de uso: nunca llama a FR24 ni da la clave
   }
   const m = path.match(SAFE_PATH);
   const body = m && state.flights.get(`${m[1]}/${m[2]}.json`);
@@ -93,7 +95,17 @@ export async function scheduleResponse(state, path) {
   return { status: 200, headers: { ...HEADERS, 'Cache-Control': out.status === 'unavailable' ? 'no-store' : 'public, max-age=300' }, body: JSON.stringify(out) };
 }
 
-// Radar de un vuelo (solo si Aena dice que ha salido y no informa de la llegada). Respuesta guardada 60 s.
+// Radar: con FR24 configurado, /radar y /radar-adb usan SOLO Flightradar24 (ninguna petición a adsb.lol, sus trazas,
+// ADSBDB ni VRS); sin la variable, el flujo antiguo de adsb.lol, intacto. Revertir = quitar FR24_API_TOKEN en Render.
+export function radarRoute(state, path, opts = {}) {
+  const fr24 = fr24Configured(opts.env ?? process.env);
+  if (new URL(path, 'http://turbi.local').pathname.startsWith('/radar-adb/')) {
+    return fr24 ? fr24AdbRadarResponse(state, path, opts) : adbRadarResponse(state, path, opts);
+  }
+  return fr24 ? fr24RadarResponse(state, path, opts) : radarResponse(state, path, opts);
+}
+
+// Radar de un vuelo por adsb.lol (solo si Aena dice que ha salido y no informa de la llegada). Respuesta guardada 60 s.
 export async function radarResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), pauseMs, airports = {} } = {}) {
   const requestUrl = new URL(path, 'http://turbi.local');
   const pathname = requestUrl.pathname;
@@ -334,8 +346,8 @@ async function main() {
       scheduleResponse(state, path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"status":"unavailable","reason":"error"}' }));
       return;
     }
-    if (path.startsWith('/radar-adb/')) { // vuelos de AeroDataBox: radar solo por transpondedor o indicativo
-      adbRadarResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
+    if (path.startsWith('/radar-adb/')) { // vuelos de AeroDataBox: FR24 por número o, sin FR24, transpondedor/indicativo
+      radarRoute(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
       return;
     }
     if (path.startsWith('/fr24-test/')) { // prueba de Flightradar24, solo bajo demanda (server/fr24.mjs)
@@ -343,7 +355,7 @@ async function main() {
       return;
     }
     if (path.startsWith('/radar/')) {
-      radarResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
+      radarRoute(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
       return;
     }
     send(handle(state, path));
