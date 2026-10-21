@@ -1,7 +1,9 @@
 // Estela real del vuelo (Flightradar24 Flight Tracks): /track/AL/N.json?leg=<physicalFlightKey> (Aena) y
 // /track-adb/<vuelo>/<fecha>.json?leg=<adbPhysicalKey> (AeroDataBox). Solo con FR24_API_TOKEN (sin ella, server/live.mjs
 // responde «no-aplica»). Principio: falso negativo antes que avión incorrecto, y una posición estimada nunca se pinta.
-//   - Vuelo físico: el mismo que /radar y /radar-adb (fr24AenaLeg / fr24AdbLeg, con su puerta), siempre con ?leg=.
+//   - Vuelo físico: el mismo ?leg= que /radar y /radar-adb (obligatorio), entre los tramos de ese número. Sin exigir la
+//     puerta del radar: la asociación (≤ 24 h) ya prueba que el radar lo siguió, y así un vuelo aterrizado hace horas
+//     conserva su ruta realizada. Cancelado o desviado: no-aplica.
 //   - fr24Id: SOLO el que el radar ya asoció a ese vuelo físico (fr24Assoc, 24 h, server/fr24-radar.mjs). Nunca uno del
 //     usuario; sin asociación → «no-aplica» sin llamar a FR24.
 //   - Créditos: caché por fr24Id (encontrada 10 min, la app la prolonga con las posiciones en vivo; «sin estela» y «no
@@ -9,11 +11,12 @@
 //     temporizadores, sin segundo plano. Contadores trackRequests/trackCacheHits en /health.fr24.
 // El token nunca sale de server/fr24.mjs: la respuesta es una lista cerrada de campos (fr24Track).
 import { fr24Track } from './fr24.mjs';
-import { fr24AenaLeg, fr24AdbLeg, fr24StatsOf, ASSOC_MS } from './fr24-radar.mjs';
+import { fr24AdbLeg, fr24StatsOf, ASSOC_MS } from './fr24-radar.mjs';
 import { physicalFlightKey } from '../js/physical-flight.js';
 import { adbPhysicalKey } from '../js/adb.js';
 
 const FOUND_MS = 10 * 60000;
+const ADB_ENDED_BADLY = new Set(['Canceled', 'CanceledUncertain', 'Diverted']);
 const MISS_MS = 2 * 60000;
 export const TRACK_PATH = /^\/track\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
 export const ADB_TRACK_PATH = /^\/track-adb\/([A-Z0-9]{2,3}\d{1,4}[A-Z]?)\/(\d{4}-\d{2}-\d{2})\.json$/;
@@ -51,13 +54,15 @@ export async function fr24TrackResponse(state, path, { fetchFn = fetch, nowMs = 
   if (!aena && !adb) return { status: 404, headers: NO_STORE, body: '{"error":"no encontrado"}' };
   const legParam = url.searchParams.get('leg');
   if (legParam === null || legParam.length > 96) return trackNotApplicable(nowMs);
+  // Tramo conocido (el mismo ?leg= que /radar), aunque la puerta del radar ya esté cerrada: un vuelo aterrizado hace horas
+  // conserva su ruta realizada mientras dure la asociación (≤ 24 h). Cancelado o desviado: nunca.
   let phys = null;
   if (aena) {
-    const { leg } = fr24AenaLeg(state, aena[1], aena[2], legParam, { nowMs, airports });
-    if (leg) phys = `phys|${physicalFlightKey(leg)}`; // la misma clave de asociación que /radar
+    const leg = (state.legs ?? []).find(l => l.al === aena[1] && l.n === aena[2] && physicalFlightKey(l) === legParam);
+    if (leg && ![leg.st, leg.std, leg.sta].some(f => f === 'CAN' || f === 'DES')) phys = `phys|${physicalFlightKey(leg)}`; // la clave de /radar
   } else {
-    const { entry, leg, gate } = await fr24AdbLeg(state, adb[1], adb[2], legParam, { nowMs, airports });
-    if (leg && gate.mode !== 'none') phys = adbPhysicalKey(entry, leg);
+    const { entry, leg } = await fr24AdbLeg(state, adb[1], adb[2], legParam, { nowMs, airports });
+    if (leg && !ADB_ENDED_BADLY.has(leg.status)) phys = adbPhysicalKey(entry, leg);
   }
   const assoc = phys ? state.fr24Assoc?.get(phys) : null;
   if (!assoc?.fr24Id || nowMs - assoc.at > ASSOC_MS) return trackNotApplicable(nowMs);

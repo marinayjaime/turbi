@@ -159,11 +159,32 @@ describe('/track/AL/N.json?leg=: solo el fr24Id asociado a ese vuelo físico', (
     expect((await s.track(NOW, TRACK, {})).state).toBe('no-aplica');
     expect(s.trackCalls()).toEqual([]);
   });
-  it('Aena manda (llegada final, cancelado): no-aplica sin llamar, como /radar', async () => {
+  // Ruta realizada (requisito de Jaime): con la asociación vigente (≤ 24 h) y el tramo conocido, la estela se sirve aunque
+  // la puerta del radar ya esté cerrada (aterrizado hace horas). El coste lo limita la caché por fr24Id.
+  it('aterrizado hace 3 h (Aena LND, puerta cerrada) con asociación → found; sin asociación → no-aplica y 0 llamadas', async () => {
     const s = server();
     await s.radar();
-    s.state.legs = [ib403({ std: 'BOR', st: 'BOR', sta: 'LND' })];
-    expect((await s.track()).state).toBe('no-aplica');
+    s.state.legs = [ib403({ std: 'BOR', st: 'BOR', sta: 'LND', sa: '12:20', ea: '2026-10-21T12:20' })];
+    expect((await s.radar(T('13:20'))).state).toBe('no-aplica'); // /radar ya no aplica
+    expect((await s.track(T('13:20'))).state).toBe('found');
+    expect(s.trackCalls()).toHaveLength(1);
+    const none = server({}, [ib403({ std: 'BOR', st: 'BOR', sta: 'LND' })]);
+    expect((await none.track(T('13:20'))).state).toBe('no-aplica');
+    expect(none.calls).toEqual([]);
+  });
+  it('cancelado o desviado (aunque hubiera asociación) → no-aplica sin llamar', async () => {
+    for (const over of [{ st: 'CAN', std: 'CAN' }, { sta: 'DES' }, { std: 'DES' }]) {
+      const s = server();
+      await s.radar();
+      s.state.legs = [ib403(over)];
+      expect((await s.track()).state, JSON.stringify(over)).toBe('no-aplica');
+      expect(s.trackCalls()).toEqual([]);
+    }
+  });
+  it('asociación de hace más de 24 h → no-aplica sin llamar', async () => {
+    const s = server();
+    await s.radar();
+    expect((await s.track(NOW + 24 * 3600000 + 60000)).state).toBe('no-aplica');
     expect(s.trackCalls()).toEqual([]);
   });
   it('8) vuelo aterrizado según FR24 (asociado): la trayectoria realizada se sirve', async () => {
@@ -259,9 +280,9 @@ describe('/track-adb/<vuelo>/<fecha>.json?leg=: vuelos de AeroDataBox', () => {
     state.adb = createAerodatabox({ key: 'k', store: createMemoryStore({ [entryPath(entry.number, entry.date)]: entry }), fetchFn: adbApi, now: () => ADB_NOW });
     const q = `?leg=${encodeURIComponent(leg)}`;
     const radar = () => radarRoute(state, `/radar-adb/GA89/2026-09-26.json${q}`, { fetchFn: f.fetchFn, nowMs: ADB_NOW, airports, env }).then(r => JSON.parse(r.body));
-    const track = (p = `/track-adb/GA89/2026-09-26.json${q}`) => trackRoute(state, p, { fetchFn: f.fetchFn, nowMs: ADB_NOW, airports, env })
+    const track = (p = `/track-adb/GA89/2026-09-26.json${q}`, t = ADB_NOW) => trackRoute(state, p, { fetchFn: f.fetchFn, nowMs: t, airports, env })
       .then(r => { expect(r.body).not.toContain(TOKEN); return JSON.parse(r.body); });
-    return { ...f, adbApi, radar, track };
+    return { ...f, adbApi, radar, track, state };
   }
   it('con la asociación del radar → found · 0 unidades de AeroDataBox', async () => {
     const s = adb();
@@ -269,6 +290,21 @@ describe('/track-adb/<vuelo>/<fecha>.json?leg=: vuelos de AeroDataBox', () => {
     expect(await s.track()).toMatchObject({ state: 'found', fr24Id: '4a4a4a4a' });
     expect(s.trackCalls()).toEqual([`${FR24_BASE}/flight-tracks?flight_id=4a4a4a4a`]);
     expect(s.adbApi).not.toHaveBeenCalled();
+  });
+  it('aterrizado hace horas (puerta cerrada) con asociación → found; desviado o cancelado → no-aplica sin llamar', async () => {
+    const s = adb();
+    await s.radar();
+    const later = ADB_NOW + 20 * 3600000;
+    expect((await s.track(undefined, later)).state).toBe('found');
+    expect(s.trackCalls()).toHaveLength(1);
+    for (const status of ['Diverted', 'Canceled', 'CanceledUncertain']) {
+      const d = adb();
+      await d.radar();
+      d.state.adb = createAerodatabox({ key: 'k', store: createMemoryStore({ [entryPath(entry.number, entry.date)]: { ...entry, legs: normalizeFlights([{ ...raw, status }]) } }),
+        fetchFn: d.adbApi, now: () => ADB_NOW });
+      expect((await d.track()).state, status).toBe('no-aplica');
+      expect(d.trackCalls()).toEqual([]);
+    }
   });
   it('sin asociación o leg desconocido → no-aplica sin llamar', async () => {
     const s = adb();

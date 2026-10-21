@@ -2272,17 +2272,22 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     return { state: 'found', fr24Id: id, source: 'fr24', points: [[40.47, -3.56], [45, -2], [50.9, -1.1], [51.05, -0.95]],
       times: [s - 3000, s - 1500, s - 60, s + 25], lastAt: new Date((s + 25) * 1000).toISOString(), ...over };
   };
-  // Radar: una respuesta por consulta (la última se repite). tracks: una por petición a /track (null = 404).
-  async function load({ radar, tracks = [track()], openMeteo = () => tooMany }) {
+  // Radar: una respuesta por consulta (la última se repite); tracks: una por petición a /track (null = 404). Cada una puede
+  // ser una función (p. ej. una promesa retenida). Como el servidor, el radar lleva siempre `checked` (su hora).
+  // leg: otro tramo de Aena; photos: respuesta de las fotos de aerolínea a partir de la 2.ª (para retener «Actualizar»).
+  async function load({ radar, tracks = [track()], openMeteo = () => tooMany, leg: legOver = null, photos = null }) {
     const { L, log } = trackLeaflet();
     vi.stubGlobal('L', L);
-    const { d, leg } = flyingLeg();
+    const { d, leg } = legOver ?? flyingLeg();
     const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo });
-    let i = 0, j = 0;
+    let i = 0, j = 0, p = 0;
+    const answer = async a => { const r = typeof a === 'function' ? await a() : a; return r ? json(r.checked ? r : { ...r, checked: new Date().toISOString() }) : notFound; };
     await openApp(vi.fn((url, o) => {
       const u = String(url);
-      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); const r = radar[Math.min(i++, radar.length - 1)]; return Promise.resolve(r ? json(r) : notFound); }
-      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); const r = tracks[Math.min(j++, tracks.length - 1)]; return Promise.resolve(r ? json(r) : notFound); }
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return answer(radar[Math.min(i++, radar.length - 1)]); }
+      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return answer(tracks[Math.min(j++, tracks.length - 1)]); }
+      // Las fotos fallan en la primera carga (no se guardan) y en la segunda responden con photos() (p. ej. retenidas).
+      if (photos && u === 'data/airline-photos.json') { calls.push(u); return p++ === 0 ? Promise.reject(new TypeError('fallo')) : photos(); }
       return base(url, o);
     }));
     await search('IB715', d);
@@ -2290,6 +2295,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     await networkIdle();
     return { log, leg };
   }
+  const held = () => { let release; const promise = new Promise(r => { release = r; }); return { get: () => promise, release: v => release(v) }; };
   const refresh = async log => { const n = radarCalls().length; $('#refresh').click(); await until(() => radarCalls().length === n + 1, 'radar de nuevo'); await networkIdle(); return log; };
 
   it('1) fr24Id + estela → pide /track UNA vez con el ?leg= del vuelo físico y dibuja la estela real, que acaba en el avión', async () => {
@@ -2376,7 +2382,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     const { L, log } = trackLeaflet();
     vi.stubGlobal('L', L);
     const base = network({ flights: {}, schedule: { [`GA89|${d}`]: entry }, openMeteo: () => tooMany,
-      radarAdb: { ...FA, callsign: 'GIA89', fr24Id: '4a4a4a4a', lat: 45.1, lon: 40.2 } });
+      radarAdb: () => ({ ...FA, callsign: 'GIA89', fr24Id: '4a4a4a4a', lat: 45.1, lon: 40.2, checked: new Date().toISOString() }) });
     await openApp(vi.fn((url, o) => {
       const u = String(url);
       if (u.startsWith(`${LIVE_BASE}/track-adb/`)) { calls.push(u); return Promise.resolve(json(track('4a4a4a4a', { points: [[52.3, 4.76], [45, 39], [45.05, 40.1], [45.1, 40.2]] }))); }
@@ -2388,4 +2394,130 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     expect(trackCalls()).toEqual([`${LIVE_BASE}/track-adb/GA89/${d}.json?leg=${encodeURIComponent(legKey)}`]);
     expect(calls.some(u => u.includes('/track/'))).toBe(false);
   });
+  // Ronda de corrección 1: «Actualizar» con /track en curso, reloj del móvil desfasado, estela durante A → B, ruta
+  // realizada de un vuelo aterrizado hace horas y lecturas que no deben tocar la estela.
+  const S = () => Math.floor(Date.now() / 1000) * 1000; // hora del «servidor», en segundos enteros
+  it('«Actualizar» con /track retenida y liberada tras clearFicha (ficha nula, mapa en traspaso) → la estela se pinta, 1 sola petición', async () => {
+    const t = held(), photosHeld = held();
+    const s0 = S();
+    const fa = { ...FA, checked: new Date(s0).toISOString() };
+    const { log } = await load({ radar: [fa, fa], tracks: [t.get], photos: photosHeld.get });
+    expect(trackCalls()).toHaveLength(1);
+    $('#refresh').click();
+    await until(() => calls.filter(u => u === 'data/airline-photos.json').length === 2, '«Actualizar» retenida en buildFlight');
+    t.release(track('3c4d5e6f', { times: [s0 / 1000 - 3000, s0 / 1000 - 1500, s0 / 1000 - 60, s0 / 1000 + 25] }));
+    await new Promise(r => setTimeout(r, 50));
+    expect(trails(log)).toHaveLength(1); // pintada en el mapa conservado, con la ficha aún en traspaso
+    photosHeld.release(json({}));
+    await until(() => trails(log).length === 1 && radarCalls().length === 2, 'estela pintada tras «Actualizar»');
+    await networkIdle();
+    expect(trackCalls()).toHaveLength(1);
+    expect(log.maps).toBe(1);
+    expect(trails(log)[0].coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
+  });
+
+  it.each([['+5 min', 5], ['−5 min', -5]])('reloj del móvil desfasado %s: el corte de la estela usa solo horas del servidor', async (_label, offMin) => {
+    const s0 = S();
+    const fa = { ...FA, checked: new Date(s0).toISOString() }; // posición de s0 − 2 s
+    // Un punto 1 s DESPUÉS de la posición del avión (fuera) y otro 60 s antes (dentro).
+    const tr = track('3c4d5e6f', { times: [s0 / 1000 - 3000, s0 / 1000 - 1500, s0 / 1000 - 60, s0 / 1000 - 1] });
+    vi.useFakeTimers({ toFake: ['Date'], now: s0 + offMin * 60000, shouldAdvanceTime: true });
+    try {
+      const { log } = await load({ radar: [fa], tracks: [tr] });
+      await until(() => trails(log).length === 1, 'estela');
+      // Con el avión en pantalla, la estela acaba en él y deja fuera el punto posterior a su posición (horas del
+      // servidor). Si el desfase del móvil envejece la posición (planeOnMap, regla de siempre) no hay avión: la estela
+      // es la trayectoria real entera, sin cabeza. Nunca un punto posterior unido a un avión visible.
+      if (planeOnScreen(log)) expect(trails(log)[0].coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
+      else expect(trails(log)[0].coords).toEqual(tr.points);
+      expect(planeOnScreen(log)).toBe(offMin < 0); // −5 min: avión visible; +5 min: posición de más de 60 s para el móvil
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('10) la estela llega mientras el avión se desplaza de A a B: nada por delante del avión (límite = hora de A) y acaba en B', async () => {
+    const t = held();
+    const s0 = S();
+    const fa = { ...FA, checked: new Date(s0).toISOString() }; // A: s0 − 2 s
+    const fb = { ...FB, checked: new Date(s0 + 30000).toISOString() }; // B: s0 + 28 s (hora del servidor)
+    const { log } = await load({ radar: [fa, fb], tracks: [t.get] });
+    $('#refresh').click();
+    await until(() => radarCalls().length === 2 && log.markers[0].path.length > 2 && log.markers[0].ll[0] < FB.lat, 'avión desplazándose');
+    const between = [51.2, -0.8];
+    t.release(track('3c4d5e6f', { points: [[40.47, -3.56], [45, -2], [50.9, -1.1], between, [51.6, -0.4]],
+      times: [s0 / 1000 - 3000, s0 / 1000 - 1500, s0 / 1000 - 60, s0 / 1000 + 10, s0 / 1000 + 40] }));
+    await until(() => trails(log).length === 1, 'estela');
+    const [l] = trails(log);
+    const mid = l.coords;
+    expect(mid.slice(0, 3)).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1]]);
+    expect(mid.some(c => c[0] === between[0] || c[0] === 51.6)).toBe(false);
+    expect(mid.at(-1)).toEqual(log.markers[0].ll); // la cabeza es el avión que se ve
+    await until(() => log.markers[0].ll[0] === FB.lat, 'avión en B');
+    expect(l.coords.at(-1)).toEqual([51.4, -0.6]);
+    expect(l.coords.some(c => c[0] === 51.6)).toBe(false);
+    expect(trackCalls()).toHaveLength(1);
+  });
+
+  it('«Actualizar» sin lectura nueva aún (avión retenido): la estela se corta en la lectura que lo puso, no se pinta entera', async () => {
+    const t = held(), r2 = held();
+    const s0 = S();
+    const fa = { ...FA, checked: new Date(s0).toISOString() };
+    const { log } = await load({ radar: [fa, r2.get], tracks: [t.get] });
+    $('#refresh').click();
+    await until(() => radarCalls().length === 2, 'radar retenido');
+    await networkIdle();
+    t.release(track('3c4d5e6f', { times: [s0 / 1000 - 3000, s0 / 1000 - 1500, s0 / 1000 - 60, s0 / 1000 + 5] }));
+    await until(() => trails(log).length === 1, 'estela');
+    expect(trails(log)[0].coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
+    r2.release(fa);
+    await networkIdle();
+  });
+
+  it('una lectura estimada o «reciente» (sin posición) no prolonga ni borra la estela', async () => {
+    const est = { state: 'sin-datos', fr24Estimated: true, fr24Id: '3c4d5e6f', source: 'fr24' };
+    const { log } = await load({ radar: [FA, est, { state: 'sin-datos', source: 'fr24' }] });
+    await until(() => trails(log).length === 1, 'estela');
+    const [l] = trails(log);
+    const before = JSON.stringify(l.coords);
+    await refresh(log);
+    await refresh(log);
+    expect(trails(log)).toEqual([l]);
+    expect(JSON.stringify(l.coords)).toBe(before); // la misma trayectoria real, sin puntos nuevos ni borrada
+    expect(trackCalls()).toHaveLength(1);
+  });
+
+  it('aterrizado hace 3 h (Aena), sin fr24Id en la ficha: pide /track UNA vez y pinta la ruta realizada con el fr24Id de la respuesta', async () => {
+    const dep = Date.now() - 5 * 3600000, arr = dep + 2 * 3600000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, 'Europe/London');
+    const leg = { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, st: 'LND', std: 'BOR', sta: 'LND', ac: 'A21N' };
+    const { log } = await load({ leg: { d, leg }, radar: [null], tracks: [track('9f9f9f9f')] });
+    await until(() => trails(log).length === 1, 'ruta realizada');
+    expect(radarCalls()).toEqual([]);
+    expect(trackCalls()).toEqual([`${LIVE_BASE}/track/IB/715.json?leg=${encodeURIComponent(physicalFlightKey(leg))}`]);
+    expect(trails(log)[0].coords).toEqual(track().points);
+    expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+    expect(planeOnScreen(log)).toBe(false);
+    await networkIdle();
+    expect(trackCalls()).toHaveLength(1);
+  });
+
+  it('aterrizado sin asociación en el servidor (no-aplica): sin estela y una sola petición', async () => {
+    const dep = Date.now() - 5 * 3600000, arr = dep + 2 * 3600000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, 'Europe/London');
+    const leg = { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, st: 'LND', std: 'BOR', sta: 'LND', ac: 'A21N' };
+    const { log } = await load({ leg: { d, leg }, radar: [null], tracks: [{ state: 'no-aplica', source: 'fr24' }] });
+    await networkIdle();
+    expect(trackCalls()).toHaveLength(1);
+    expect(trails(log)).toEqual([]);
+  });
+
+  it.each([['cancelado', { st: 'CAN', std: 'CAN' }], ['desviado', { sta: 'DES', st: 'DES', std: 'BOR' }]])('%s: ninguna petición de estela', async (_n, flags) => {
+    const dep = Date.now() - 5 * 3600000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    const leg = { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, ac: 'A21N', ...flags };
+    const { log } = await load({ leg: { d, leg }, radar: [null] });
+    await networkIdle();
+    expect(log.maps).toBe(1);
+    expect(trackCalls()).toEqual([]);
+  });
 });
+

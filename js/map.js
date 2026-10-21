@@ -220,6 +220,8 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       drawTrack();
     },
     clearTrack() { trackLine?.remove(); trackLine = null; trackPts = []; trackId = null; },
+    // El avión en pantalla: si está, si se está desplazando hacia la última lectura y de qué identidad es.
+    planeState: () => ({ shown: Boolean(plane), moving: frame !== null, identity }),
     trackIdentity: () => (trackLine ? trackId : null),
     // Quita lo que puso setForecast: la ruta inicial sin colorear (círculo máximo), sin SIGMET ni PIREP, como recién
     // creado. No toca la vista (ni centro ni zoom) ni el avión.
