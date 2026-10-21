@@ -164,6 +164,31 @@ describe('3–7) selección del candidato', () => {
     expect(amb).not.toHaveProperty('lat');
     expect(amb).not.toHaveProperty('fr24Id');
   });
+  it('7c) un fr24Id asociado a OTRO vuelo físico (24 h) no vale para este: asociado-a-otro-vuelo', async () => {
+    expect(fr24Pick([c('a')], { o: 'MAD', a: 'LHR', taken: new Set(['a']) })).toMatchObject({ chosen: null, reason: 'asociado-a-otro-vuelo', compatible: 0 });
+    const s = server([ib403()]);
+    s.state.fr24Assoc = new Map([['phys|2026-10-20|MAD|LHR|23:30', { fr24Id: '3c4d5e6f', at: NOW - 3600000 }]]);
+    const r = await s.ask(NOW, `${PATH}&debug=1`);
+    expect(r.state).toBe('sin-datos');
+    expect(r).not.toHaveProperty('lat');
+    expect(r.diagnostic.reason).toBe('asociado-a-otro-vuelo');
+    // Pasadas 24 h, esa asociación ya no cuenta.
+    s.state.fr24Assoc.set('phys|2026-10-20|MAD|LHR|23:30', { fr24Id: '3c4d5e6f', at: NOW - 25 * 3600000 });
+    expect((await s.ask(NOW + 61000)).state).toBe('volando');
+  });
+  it('7d) otro tramo elegible con el mismo número y ruta (el de ayer, conservado): solo vale el ya asociado a este vuelo', async () => {
+    const yesterday = ib403({ d: '2026-10-20', sd: '23:30', ed: '2026-10-20T23:40', st: 'BOR', std: 'BOR', sta: 'FLY' });
+    expect(fr24Pick([c('a')], { o: 'MAD', a: 'LHR', exclusiveOnly: true })).toMatchObject({ chosen: null, reason: 'varios-tramos-misma-ruta' });
+    expect(fr24Pick([c('a'), c('b')], { o: 'MAD', a: 'LHR', associated: 'b', exclusiveOnly: true })).toMatchObject({ chosen: { fr24Id: 'b' } });
+    expect(fr24Pick([c('n')], { o: 'MAD', a: 'LHR', associated: 'a', exclusiveOnly: true })).toMatchObject({ chosen: null, reason: 'varios-tramos-misma-ruta' });
+    const s = server([yesterday, ib403()]);
+    const r = await s.ask(NOW, `${PATH}&debug=1`);
+    expect(r.state).toBe('sin-datos');
+    expect(r.diagnostic.reason).toBe('varios-tramos-misma-ruta');
+    const assoc = server([yesterday, ib403()]);
+    assoc.state.fr24Assoc = new Map([[`phys|${KEY}`, { fr24Id: '3c4d5e6f', at: NOW - 600000 }]]);
+    expect(await assoc.ask(NOW)).toMatchObject({ state: 'volando', fr24Id: '3c4d5e6f' });
+  });
   it('la asociación caduca a las 24 h (en memoria, sin persistencia)', async () => {
     const s = server([ib403()]);
     await s.ask(NOW);
@@ -186,11 +211,22 @@ describe('8–13) posición, fuente y unidades', () => {
     expect(r.remainingKm).toBeGreaterThan(700);
     expect(planeOnMap(r, NOW, NOW)).toEqual({ lat: 44.0123, lon: -2.5432 });
   });
-  it('9) posición de hace más de 60 s → volando pero sin lat/lon/posAgeS; el frontend no pinta el avión', () => {
+  it('9) posición de hace más de 60 s (90 s) → volando pero sin lat/lon/posAgeS; el frontend no pinta el avión', () => {
     const r = fr24Result(norm({ timestamp: new Date(NOW - 90000).toISOString() }), ctx);
-    expect(r.state).toBe('volando');
+    expect(r).toMatchObject({ state: 'volando', seenS: 90 });
     for (const k of ['lat', 'lon', 'posAgeS']) expect(r).not.toHaveProperty(k);
     expect(planeOnMap(r, NOW, NOW)).toBeNull();
+    expect(fr24Result(norm({ timestamp: new Date(NOW - 180000).toISOString() }), ctx).state).toBe('volando');
+  });
+  it('9c) señal de hace más de 180 s (181 s, 20 min) → sin-datos sin telemetría: no tapa a Aena', () => {
+    for (const ago of [181000, 1200000]) {
+      const r = fr24Result(norm({ timestamp: new Date(NOW - ago).toISOString() }), ctx);
+      expect(r).toEqual({ state: 'sin-datos' });
+    }
+  });
+  it('9d) hora de la posición en el futuro (> 30 s) → sin-datos: no se toma por reciente', () => {
+    expect(fr24Result(norm({ timestamp: new Date(NOW + 120000).toISOString() }), ctx)).toEqual({ state: 'sin-datos' });
+    expect(fr24Result(norm({ timestamp: new Date(NOW + 10000).toISOString() }), ctx)).toMatchObject({ state: 'volando', posAgeS: 0 });
   });
   it('9b) sin hora válida de la posición → no se inventa antigüedad: ni volando ni posición', () => {
     for (const timestamp of [null, 'ayer', '']) {
@@ -230,6 +266,12 @@ describe('8–13) posición, fuente y unidades', () => {
     expect(fr24Result(norm({ alt: 0, gspeed: 12, lat: pos('LHR')[0], lon: pos('LHR')[1] }), ctx).state).toBe('sin-datos');
     // Lento pero alto (o velocidad desconocida): ni volando ni aterrizado.
     expect(fr24Result(norm({ gspeed: null }), ctx).state).toBe('sin-datos');
+    // 2.000 ft a 40 kt junto al destino y pasado el tiempo mínimo: nunca «aterrizado» (se guardaría 7 días).
+    const late = { ...ctx, nowMs: T('10:30') }, ts = new Date(T('10:30') - 20000).toISOString();
+    expect(fr24Result(norm({ alt: 2000, gspeed: 40, lat: pos('LHR')[0], lon: pos('LHR')[1], timestamp: ts }), late)).toEqual({ state: 'sin-datos' });
+    for (const over of [{ alt: 0, gspeed: null }, { alt: null, gspeed: 10 }, { alt: 0, gspeed: 60 }]) {
+      expect(fr24Result(norm({ ...over, lat: pos('LHR')[0], lon: pos('LHR')[1], timestamp: ts }), late).state, JSON.stringify(over)).toBe('sin-datos');
+    }
   });
 });
 
@@ -313,9 +355,19 @@ describe('19–20) créditos: caché de 60 s y peticiones simultáneas', () => {
     expect(await s.ask(NOW)).toMatchObject({ state: 'volando', fr24Id: 'ida' });
     const other = physicalFlightKey(legs[1]);
     expect(await s.ask(NOW, `/radar/IB/403.json?leg=${encodeURIComponent(other)}`)).toMatchObject({ state: 'volando', fr24Id: 'vuelta' });
-    // Sin ?leg y con dos tramos elegibles: no se escoge ninguno, sin llamar a FR24 de más.
+    // Sin ?leg y con dos tramos elegibles: no se escoge ninguno. La respuesta cruda de FR24 del mismo número se comparte
+    // 60 s entre los dos tramos: 1 sola llamada.
     expect((await s.ask(NOW, '/radar/IB/403.json')).state).toBe('no-aplica');
+    expect(s.fr24()).toHaveLength(1);
+    await s.ask(NOW + 61000, `/radar/IB/403.json?leg=${encodeURIComponent(other)}`);
     expect(s.fr24()).toHaveLength(2);
+  });
+  it('sin operadora segura: un «sin datos» de un código comercial no se sirve a otro código del mismo vuelo físico', async () => {
+    const legs = [ib403(), ib403({ al: 'AA', icao: 'AAL', n: '7777' })]; // Aena no dice quién opera
+    const s = server(legs, flight => (flight === 'IB403' ? [item()] : []));
+    expect((await s.ask(NOW, `/radar/AA/7777.json?leg=${encodeURIComponent(KEY)}`)).state).toBe('sin-datos');
+    expect(await s.ask(NOW + 1000)).toMatchObject({ state: 'volando', fr24Id: '3c4d5e6f' });
+    expect(s.fr24().map(u => new URL(u).searchParams.get('flights'))).toEqual(['AA7777', 'IB403']);
   });
 });
 
@@ -337,6 +389,25 @@ describe('21) Aena manda: cancelado, desviado o llegada final', () => {
     const s = server();
     expect((await s.ask(NOW, '/radar/IB/403.json?leg=2026-10-21%7CMAD%7CJFK%7C10%3A00')).state).toBe('no-aplica');
     expect(s.calls).toEqual([]);
+  });
+});
+
+describe('/fr24-test con caché', () => {
+  it('dos peticiones en 60 s → 1 llamada (y simultáneas, también); cuentan en /health.fr24; pasados 60 s, otra', async () => {
+    const { fr24TestRoute } = await import('../server/live.mjs');
+    const f = fake();
+    const state = createState();
+    const get = t => fr24TestRoute(state, '/fr24-test/IB403.json', { fetchFn: f.fetchFn, env, nowMs: t }).then(r => { expect(r.body).not.toContain(TOKEN); return JSON.parse(r.body); });
+    expect((await Promise.all([get(NOW), get(NOW)])).map(r => r.state)).toEqual(['found', 'found']);
+    await get(NOW + 59000);
+    expect(f.fr24()).toHaveLength(1);
+    expect(JSON.parse(handle(state, '/health', { env }).body).fr24).toMatchObject({ requests: 1, cacheHits: 2, found: 1 });
+    await get(NOW + 61000);
+    expect(f.fr24()).toHaveLength(2);
+    // La misma respuesta cruda la aprovecha el radar del mismo número dentro de los 60 s.
+    state.legs = [ib403()];
+    await radarRoute(state, PATH, { fetchFn: f.fetchFn, nowMs: NOW + 62000, airports, env });
+    expect(f.fr24()).toHaveLength(2);
   });
 });
 
@@ -368,6 +439,31 @@ describe('25) con FR24 configurado, ninguna ruta de radar llama a adsb.lol, ADSB
         expect(s.calls.every(u => u.startsWith(FR24))).toBe(true);
         expect(s.state.radarJobs?.size ?? 0).toBe(0);
       }
+    }
+  });
+  it('/radar-adb: todas las URLs pedidas son de fr24api (varias respuestas, sondeos y caché pasada)', async () => {
+    const ADB_NOW = Date.parse('2026-09-26T13:35Z');
+    const raw = { number: 'GA 89', status: 'EnRoute', codeshareStatus: 'IsOperator', airline: { name: 'Garuda Indonesia' }, callSign: 'GIA89',
+      departure: { airport: { iata: 'AMS' }, scheduledTime: { utc: '2026-09-26 10:35Z', local: '2026-09-26 12:35+02:00' } },
+      arrival: { airport: { iata: 'CGK' }, scheduledTime: { utc: '2026-09-27 03:00Z', local: '2026-09-27 10:00+07:00' } },
+      aircraft: { model: 'Boeing 777', reg: 'PK-GIK', modeS: '8A04C1' } };
+    const entry = { status: 'found', source: 'aerodatabox', number: 'GA89', date: '2026-09-26', fetchedAt: new Date(ADB_NOW - 5 * 60000).toISOString(), legs: normalizeFlights([raw]) };
+    const ga = over => item({ fr24_id: '4a', orig_iata: 'AMS', dest_iata: 'CGK', alt: 37000, gspeed: 490, ...over }, ADB_NOW);
+    const answers = [() => [ga()], () => [], () => [ga(), ga({ fr24_id: '4b' })], () => [ga({ orig_iata: 'CGK', dest_iata: 'AMS' })], () => ({ status: 429 }), () => [ga({ source: 'ESTIMATED' })]];
+    for (const answer of answers) {
+      const f = fake(answer);
+      const state = createState();
+      state.adb = createAerodatabox({ key: 'k', store: createMemoryStore({ [entryPath(entry.number, entry.date)]: entry }), fetchFn: f.fetchFn, now: () => ADB_NOW });
+      const path = `/radar-adb/GA89/2026-09-26.json?leg=${encodeURIComponent(adbPhysicalKey(entry, entry.legs[0]))}`;
+      const ask = (t, q = '') => radarRoute(state, `${path}${q}`, { fetchFn: f.fetchFn, nowMs: t, airports, env });
+      await ask(ADB_NOW);
+      await ask(ADB_NOW + 20000, '&poll=1');
+      await ask(ADB_NOW + 61000);
+      await ask(ADB_NOW + 125000, '&poll=1');
+      await new Promise(r => setTimeout(r, 20));
+      expect(f.others()).toEqual([]);
+      expect(f.fr24()).toHaveLength(3);
+      expect(state.adbRadarJobs?.size ?? 0).toBe(0);
     }
   });
   it('sin FR24 configurado, /radar sigue siendo el flujo de adsb.lol (para revertir quitando la variable)', async () => {

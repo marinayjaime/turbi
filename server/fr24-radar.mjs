@@ -5,12 +5,15 @@
 // del número de vuelo. Principio: falso negativo antes que avión incorrecto, y una posición estimada nunca se pinta.
 //   - Vuelo físico: el mismo que hoy (?leg=; sin él, solo si hay un único tramo elegible). Ninguna petición sin puerta.
 //   - Candidato: solo los de FR24 con el MISMO origen y destino IATA que el tramo; uno (o el fr24Id ya asociado a este
-//     vuelo físico, en memoria 24 h). Con varios compatibles, ninguno.
-//   - Créditos: una respuesta por vuelo físico cada 60 s (también «sin datos» y «no disponible»; ?poll=1 igual) y las
+//     vuelo físico, en memoria 24 h). Con varios compatibles, ninguno. Un fr24Id es de UN solo vuelo físico: si ya está
+//     asociado a otro, no vale; y si hay otro tramo elegible del mismo número y ruta (p. ej. el de ayer, conservado por
+//     keepDeparted), solo vale el ya asociado a este.
+//   - Créditos: una respuesta por vuelo físico cada 60 s (también «sin datos» y «no disponible»; ?poll=1 igual), la
+//     respuesta cruda de FR24 por número consultado 60 s (la comparten tramos del mismo número y /fr24-test) y las
 //     peticiones simultáneas comparten la misma promesa. Sin reintentos, sin temporizadores, sin trabajos en segundo plano.
 // El token nunca sale de server/fr24.mjs: las respuestas y el diagnóstico (?debug=1) son listas cerradas de campos.
 import { fr24Lookup, fr24Configured, FLIGHT_RE } from './fr24.mjs';
-import { radarGateFor, plannedMinFor, distanceKm, landedAt, POSITION_MAX_AGE_S } from './radar.mjs';
+import { radarGateFor, plannedMinFor, distanceKm, landedAt, POSITION_MAX_AGE_S, MAX_SEEN_S } from './radar.mjs';
 import { legTimes, aenaTz, RADAR_GATE } from '../js/radar-gate.js';
 import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js';
 import { adbPhysicalKey, adbRadarGate } from '../js/adb.js';
@@ -19,6 +22,7 @@ const CACHE_MS = 60000;
 const ASSOC_MS = 24 * 3600000; // asociación vuelo físico → fr24Id: solo en memoria, purgada a las 24 h
 const LOCATING_AFTER_MIN = 45; // «Localizando…» hasta la última salida conocida + 45 min (heurística)
 const AIRBORNE_KT = 50; // FR24 da alt 0 en tierra; por debajo de 50 kt (rodaje, parado) no se da por volando
+const FUTURE_TOLERANCE_MS = 30000; // una posición «del futuro» (reloj de FR24 o dato roto) no se toma por reciente
 // Fuentes de posición REAL (decisión conservadora): cualquier otra (ESTIMATED, FAA, OTHER, vacía…) no es una medida.
 export const REAL_SOURCES = new Set(['ADSB', 'MLAT', 'SATELLITE', 'UAT', 'FLARM']);
 const RADAR_PATH = /^\/radar\/([A-Z0-9]{2})\/(\d{1,4}[A-Z]?)\.json$/;
@@ -32,19 +36,22 @@ const fin = v => Number.isFinite(v);
 const freshStats = () => ({ requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0 });
 export const fr24Health = (state, env = process.env) => ({ configured: fr24Configured(env), ...freshStats(), ...state?.fr24Stats });
 
-// Candidato de FR24 para un tramo o → a. associated: fr24Id ya aceptado para este vuelo físico.
-// → { chosen | null, changed, reason, results, compatible }. Nunca se elige entre varios compatibles.
-export function fr24Pick(candidates, { o, a, associated = null }) {
-  const compatible = candidates.filter(c => c.originIata === o && c.destinationIata === a);
+// Candidato de FR24 para un tramo o → a. associated: fr24Id ya aceptado para este vuelo físico; taken: fr24Id asociados
+// (24 h) a OTROS vuelos físicos, que nunca valen; exclusiveOnly: hay otro tramo elegible del mismo número y ruta, así que
+// solo vale el asociado. → { chosen | null, changed, reason, results, compatible }. Nunca se elige entre varios.
+export function fr24Pick(candidates, { o, a, associated = null, taken = new Set(), exclusiveOnly = false }) {
+  const sameRoute = candidates.filter(c => c.originIata === o && c.destinationIata === a);
+  const compatible = sameRoute.filter(c => !(c.fr24Id && taken.has(c.fr24Id)));
   const out = (chosen, extra = {}) => ({ chosen, changed: false, reason: null, results: candidates.length, compatible: compatible.length, ...extra });
   if (associated) {
     const same = compatible.find(c => c.fr24Id === associated);
     if (same) return out(same);
     // El avión asociado sigue en FR24 pero con otra ruta: no se cambia de avión por eso.
     if (candidates.some(c => c.fr24Id === associated)) return out(null, { reason: 'asociado-otra-ruta' });
-    if (compatible.length === 1) return out(compatible[0], { changed: true }); // otro fr24Id, único compatible
-  } else if (compatible.length === 1) return out(compatible[0]);
-  return out(null, { reason: compatible.length > 1 ? 'varios-compatibles' : candidates.length ? 'otra-ruta' : 'no-aparece' });
+    if (!exclusiveOnly && compatible.length === 1) return out(compatible[0], { changed: true }); // otro fr24Id, único compatible
+  } else if (!exclusiveOnly && compatible.length === 1) return out(compatible[0]);
+  return out(null, { reason: exclusiveOnly && compatible.length ? 'varios-tramos-misma-ruta' : compatible.length > 1 ? 'varios-compatibles'
+    : sameRoute.length ? 'asociado-a-otro-vuelo' : candidates.length ? 'otra-ruta' : 'no-aparece' });
 }
 
 // Candidato normalizado (normalizeFlight) → respuesta del radar con el contrato que ya usa js/radar.js.
@@ -55,10 +62,13 @@ export function fr24Result(c, { dest = null, origin = null, depMs = null, nowMs 
   if (!REAL_SOURCES.has(String(c.source ?? '').toUpperCase())) return { state: 'sin-datos', fr24Estimated: true, ...id };
   // Sin hora válida de la posición no se inventa su antigüedad: no se afirma nada.
   const tsMs = typeof c.timestamp === 'string' ? Date.parse(c.timestamp) : NaN;
-  if (!fin(tsMs)) return { state: 'sin-datos' };
+  if (!fin(tsMs) || tsMs > nowMs + FUTURE_TOLERANCE_MS) return { state: 'sin-datos' };
   const posAgeS = Math.max(0, Math.round((nowMs - tsMs) / 1000));
   const hasPos = fin(c.lat) && fin(c.lon);
   if (fin(c.alt) && c.alt > 0 && fin(c.gspeed) && c.gspeed >= AIRBORNE_KT) {
+    // Señal de hace más de 180 s (el mismo tope que adsb.lol): no se afirma «volando» con datos viejos que taparían a
+    // Aena; la app usa su último avistamiento («Última señal: volando hace X min»).
+    if (posAgeS > MAX_SEEN_S) return { state: 'sin-datos' };
     const out = { state: 'volando', ...id, callsign: c.callsign ?? null, hex: c.hex ?? null, reg: c.reg ?? null, type: c.type ?? null,
       altFt: c.alt, altM: Math.round(c.alt * 0.3048), kmh: Math.round(c.gspeed * 1.852), vRateFpm: fin(c.vspeed) ? c.vspeed : null,
       track: fin(c.track) ? c.track : null, seenS: posAgeS, source: 'fr24', match: 'fr24' };
@@ -67,9 +77,10 @@ export function fr24Result(c, { dest = null, origin = null, depMs = null, nowMs 
     if (hasPos && posAgeS <= POSITION_MAX_AGE_S) Object.assign(out, { lat: Math.round(c.lat * 1e4) / 1e4, lon: Math.round(c.lon * 1e4) / 1e4, posAgeS });
     return out;
   }
-  // En tierra: aterrizado solo con las reglas de siempre (landedAt: en el destino, señal reciente y tiempo físico mínimo
-  // desde la salida); rodando en el origen u otra cosa → no se afirma nada.
-  const ground = (fin(c.alt) && c.alt <= 0) || (fin(c.gspeed) && c.gspeed < AIRBORNE_KT);
+  // En tierra (altitud 0 Y menos de 50 kt, las dos conocidas): aterrizado solo con las reglas de siempre (landedAt: en el
+  // destino, señal reciente y tiempo físico mínimo desde la salida); rodando en el origen, alto y lento, datos a medias…
+  // → no se afirma nada.
+  const ground = fin(c.alt) && c.alt <= 0 && fin(c.gspeed) && c.gspeed < AIRBORNE_KT;
   if (ground && hasPos) {
     const landed = landedAt({ alt_baro: 'ground', seen: posAgeS, seen_pos: posAgeS, flight: c.callsign ?? '', lat: c.lat, lon: c.lon },
       c.callsign ?? null, { dest, origin, depMs, nowMs, byHex: true });
@@ -82,7 +93,29 @@ export function fr24Result(c, { dest = null, origin = null, depMs = null, nowMs 
 const locating = (firstDep, latestDep, nowMs) => fin(firstDep) && fin(latestDep)
   && nowMs >= firstDep - RADAR_GATE.earlyMin * MIN && nowMs <= latestDep + LOCATING_AFTER_MIN * MIN;
 
-// Consulta (o caché) de un vuelo físico. q: { phys, number, o, a, ctx, pending, firstDep, latestDep, diagnostic, debug }.
+// fr24Lookup con caché de 60 s por número consultado y promesa compartida en curso (la usan el radar y /fr24-test).
+// Los contadores de /health son de llamadas reales; una respuesta fallida también se guarda (también cuesta).
+export async function fr24CachedLookup(state, number, { fetchFn = fetch, env = process.env, nowMs = Date.now() } = {}) {
+  const stats = state.fr24Stats ??= freshStats();
+  const cache = state.fr24Raw ??= new Map();
+  const jobs = state.fr24RawJobs ??= new Map();
+  const hit = cache.get(number);
+  if (hit && nowMs - hit.at < CACHE_MS) { stats.cacheHits++; return hit.r; }
+  if (jobs.has(number)) { stats.cacheHits++; return jobs.get(number); }
+  const job = (async () => {
+    stats.requests++;
+    const r = await fr24Lookup(number, { fetchFn, env }).catch(() => ({ state: 'unavailable', reason: 'error', flight: number }));
+    stats[{ found: 'found', multiple: 'multiple', 'not-found': 'notFound' }[r.state] ?? 'unavailable']++;
+    if (cache.size > 500) cache.clear();
+    cache.set(number, { at: nowMs, r });
+    return r;
+  })().finally(() => jobs.delete(number));
+  jobs.set(number, job);
+  return job;
+}
+
+// Consulta (o caché) de un vuelo físico. q: { phys (asociación), cacheKey, number, o, a, ctx, pending, firstDep, latestDep,
+// exclusiveOnly, diagnostic, debug }.
 async function serve(state, q, { fetchFn, env, nowMs }) {
   const stats = state.fr24Stats ??= freshStats();
   const cache = state.fr24Radar ??= new Map();
@@ -90,26 +123,23 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
   const send = ({ payload, diag }, extra = {}) => ({ status: 200,
     headers: payload.identifying || payload.state === 'no-disponible' ? NO_STORE : HEADERS,
     body: JSON.stringify(q.debug ? { ...payload, diagnostic: { ...q.diagnostic, ...diag, ...extra } } : payload) });
-  const hit = cache.get(q.phys);
+  const hit = cache.get(q.cacheKey);
   if (hit && nowMs - hit.at < CACHE_MS) { stats.cacheHits++; return send(hit, { cached: true }); }
-  if (jobs.has(q.phys)) { stats.cacheHits++; return send(await jobs.get(q.phys), { shared: true }); }
+  if (jobs.has(q.cacheKey)) { stats.cacheHits++; return send(await jobs.get(q.cacheKey), { shared: true }); }
   const job = (async () => {
-    stats.requests++;
-    const r = await fr24Lookup(q.number, { fetchFn, env }).catch(() => ({ state: 'unavailable', reason: 'error' }));
-    const key = { found: 'found', multiple: 'multiple', 'not-found': 'notFound' }[r.state] ?? 'unavailable';
-    stats[key]++;
+    const r = await fr24CachedLookup(state, q.number, { fetchFn, env, nowMs });
     let result, diag;
-    if (key === 'unavailable') {
+    if (!['found', 'multiple', 'not-found'].includes(r.state)) {
       result = { state: 'no-disponible' };
       diag = { lookup: 'unavailable', lookupReason: r.reason ?? null, ...(fin(r.httpStatus) ? { httpStatus: r.httpStatus } : {}), results: 0, compatible: 0, fr24Id: null, reason: 'no-disponible' };
     } else {
       const candidates = r.state === 'multiple' ? r.candidates ?? [] : r.state === 'found' ? [r] : [];
       const assoc = state.fr24Assoc ??= new Map();
-      const known = assoc.get(q.phys);
-      const pick = fr24Pick(candidates, { o: q.o, a: q.a, associated: known && nowMs - known.at <= ASSOC_MS ? known.fr24Id : null });
+      for (const [k, v] of assoc) if (nowMs - v.at > ASSOC_MS) assoc.delete(k);
+      const taken = new Set([...assoc].filter(([k]) => k !== q.phys).map(([, v]) => v.fr24Id));
+      const pick = fr24Pick(candidates, { o: q.o, a: q.a, associated: assoc.get(q.phys)?.fr24Id ?? null, taken, exclusiveOnly: q.exclusiveOnly });
       result = pick.chosen ? fr24Result(pick.chosen, { ...q.ctx, nowMs }) : { state: 'sin-datos' };
       if (pick.chosen?.fr24Id) {
-        for (const [k, v] of assoc) if (nowMs - v.at > ASSOC_MS) assoc.delete(k);
         assoc.set(q.phys, { fr24Id: pick.chosen.fr24Id, at: nowMs });
         if (pick.changed) result = { ...result, fr24IdChanged: true }; // el mapa coloca el avión sin animar
       }
@@ -119,12 +149,13 @@ async function serve(state, q, { fetchFn, env, nowMs }) {
     }
     // Aún sin avión cerca de la salida: la app sigue con su sondeo (la caché de 60 s lo deja en ~1 llamada/min).
     const identifying = result.state === 'sin-datos' && locating(q.firstDep, q.latestDep, nowMs) ? { identifying: true, phase: 'fr24' } : {};
-    const payload = { ...result, ...identifying, ...q.pending, checked: new Date(nowMs).toISOString() };
+    // source: 'fr24' en todas las respuestas, para que la ficha atribuya bien también «sin señal» y «aterrizado».
+    const payload = { ...result, source: 'fr24', ...identifying, ...q.pending, checked: new Date(nowMs).toISOString() };
     if (cache.size > 500) cache.clear();
-    cache.set(q.phys, { at: nowMs, payload, diag });
+    cache.set(q.cacheKey, { at: nowMs, payload, diag });
     return { payload, diag };
-  })().finally(() => jobs.delete(q.phys));
-  jobs.set(q.phys, job);
+  })().finally(() => jobs.delete(q.cacheKey));
+  jobs.set(q.cacheKey, job);
   return send(await job);
 }
 
@@ -162,6 +193,13 @@ export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = 
   // Número: el de la operadora entre los códigos compartidos de Aena (el que vuela el avión), o el consultado.
   const operator = leg.op && leg.op !== leg.al ? (state.legs ?? []).find(l => l.al === leg.op && samePhysicalFlight(l, leg)) : null;
   const number = `${(operator ?? leg).al}${(operator ?? leg).n}`;
+  // Caché por vuelo físico solo si el número es seguro (el de la operadora); si no, también por número consultado: un
+  // «sin datos» de un código comercial no se sirve a otro código del mismo vuelo.
+  const phys = `phys|${physicalFlightKey(leg)}`;
+  const cacheKey = operator || leg.op === leg.al ? phys : `${phys}|${number}`;
+  // Otro tramo elegible con el mismo número y la misma ruta (p. ej. el de ayer): solo vale el fr24Id ya asociado.
+  const exclusiveOnly = (state.legs ?? []).some(l => l.o === leg.o && l.a === leg.a && !samePhysicalFlight(l, leg)
+    && ((l.al === leg.al && l.n === leg.n) || `${l.al}${l.n}` === number) && gateOf(l).mode !== 'none');
   const diagnostic = { source: 'fr24', gate: gate.mode, gateReason: gate.reason, ...legDiag, number, departureConfirmed: gate.confirmed };
   if (!FLIGHT_RE.test(number)) return notApplicable(nowMs, debug, { ...diagnostic, reason: 'numero-no-valido' });
   const origin = coords(leg.o), dest = coords(leg.a);
@@ -170,7 +208,7 @@ export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = 
   let firstDep = fin(schedDepMs) && fin(estDepMs) ? Math.min(schedDepMs, estDepMs) : fin(schedDepMs) ? schedDepMs : fin(estDepMs) ? estDepMs : null;
   let latestDep = fin(estDepMs) ? estDepMs : fin(schedDepMs) ? schedDepMs : null;
   if (latestDep === null && fin(arrMs) && planned > 0) firstDep = latestDep = arrMs - planned * MIN; // origen extranjero
-  return serve(state, { phys: `phys|${physicalFlightKey(leg)}`, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep },
+  return serve(state, { phys, cacheKey, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep }, exclusiveOnly,
     pending: gate.confirmed ? {} : { departureConfirmed: false }, firstDep, latestDep, diagnostic, debug }, { fetchFn, env, nowMs });
 }
 
@@ -197,6 +235,9 @@ export async function fr24AdbRadarResponse(state, path, { fetchFn = fetch, nowMs
   const sched = leg.dep?.sched?.utc, est = (leg.dep?.runway ?? leg.dep?.revised)?.utc;
   const firstDep = fin(est) && fin(sched) ? Math.min(est, sched) : fin(sched) ? sched : null;
   const latestDep = fin(est) ? est : fin(sched) ? sched : null;
-  return serve(state, { phys: adbPhysicalKey(entry, leg), number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep },
+  const phys = adbPhysicalKey(entry, leg);
+  const exclusiveOnly = legs.some(l => l !== leg && l.o === leg.o && l.a === leg.a && adbPhysicalKey(entry, l) !== phys
+    && adbRadarGate(l, entry, nowMs, { plannedMin: plannedMinFor(coords(l.o), coords(l.a)), requireIdentifier: false }).mode !== 'none');
+  return serve(state, { phys, cacheKey: phys, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep }, exclusiveOnly,
     pending: gate.confirmed ? {} : { departureConfirmed: false }, firstDep, latestDep, diagnostic, debug }, { fetchFn, env, nowMs });
 }

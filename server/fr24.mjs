@@ -58,11 +58,12 @@ export async function fr24Lookup(flight, { fetchFn = fetch, env = process.env, t
   return scrub({ state: 'found', flight, ...normalizeFlight(items[0]) }, token);
 }
 
-// GET /fr24-test/<vuelo>.json: valida el número de vuelo y consulta FR24 una vez. Sin caché (es una prueba).
-export async function fr24TestResponse(path, { fetchFn = fetch, env = process.env } = {}) {
+// GET /fr24-test/<vuelo>.json: valida el número de vuelo y consulta FR24 una vez. lookup: en Render, la consulta con caché
+// de 60 s por número y contadores de /health (fr24CachedLookup, server/fr24-radar.mjs): el endpoint es público.
+export async function fr24TestResponse(path, { fetchFn = fetch, env = process.env, lookup = fr24Lookup } = {}) {
   const m = String(path).match(TEST_PATH);
   const flight = m?.[1].toUpperCase();
   if (!flight || !FLIGHT_RE.test(flight)) return { status: 400, headers: HEADERS, body: '{"state":"invalid","error":"número de vuelo no válido"}' };
-  const out = await fr24Lookup(flight, { fetchFn, env }).catch(() => ({ state: 'unavailable', reason: 'error', flight }));
+  const out = await lookup(flight, { fetchFn, env }).catch(() => ({ state: 'unavailable', reason: 'error', flight }));
   return { status: 200, headers: HEADERS, body: JSON.stringify(scrub(out, tokenOf(env))) };
 }

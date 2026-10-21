@@ -18,7 +18,7 @@ import { createAerodatabox } from './aerodatabox.mjs';
 import { createGithubStore } from './adb-store.mjs';
 import { adbRadarResponse } from './radar-adb.mjs';
 import { fr24Configured, fr24TestResponse } from './fr24.mjs';
-import { fr24RadarResponse, fr24AdbRadarResponse, fr24Health } from './fr24-radar.mjs';
+import { fr24RadarResponse, fr24AdbRadarResponse, fr24Health, fr24CachedLookup } from './fr24-radar.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -103,6 +103,12 @@ export function radarRoute(state, path, opts = {}) {
     return fr24 ? fr24AdbRadarResponse(state, path, opts) : adbRadarResponse(state, path, opts);
   }
   return fr24 ? fr24RadarResponse(state, path, opts) : radarResponse(state, path, opts);
+}
+
+// /fr24-test/<vuelo>.json (prueba pedida por Jaime, pública): con la caché de 60 s por número, la promesa compartida y
+// los contadores de /health.fr24 del radar, para que visitarla no gaste créditos de más.
+export function fr24TestRoute(state, path, { fetchFn = fetch, env = process.env, nowMs } = {}) {
+  return fr24TestResponse(path, { fetchFn, env, lookup: (flight, o) => fr24CachedLookup(state, flight, { ...o, nowMs: nowMs ?? Date.now() }) });
 }
 
 // Radar de un vuelo por adsb.lol (solo si Aena dice que ha salido y no informa de la llegada). Respuesta guardada 60 s.
@@ -351,7 +357,7 @@ async function main() {
       return;
     }
     if (path.startsWith('/fr24-test/')) { // prueba de Flightradar24, solo bajo demanda (server/fr24.mjs)
-      fr24TestResponse(path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable","reason":"error"}' }));
+      fr24TestRoute(state, path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable","reason":"error"}' }));
       return;
     }
     if (path.startsWith('/radar/')) {
