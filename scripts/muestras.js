@@ -158,6 +158,10 @@ const STATES = {
   desviado: () => ({ now: at('18:50'), card: inFlight(at('18:50'), { status: { text: 'Desviado', tone: 'bad' }, radar: null, radarReceivedAt: null,
     timeConfidence: null, punctuality: { state: 'desviado', text: 'Vuelo desviado', band: 'bad', dep: null, arr: null, basis: null } }),
   view: forecast({ depMs: at('18:08'), durationMin: 70, segs: [[0, 0, 6], [1, 6, 70]], headline: 'Mayormente tranquilo' }) }),
+  // Ciudades largas (Canarias): el bloque origen → destino sigue simétrico, con la ciudad en dos líneas como mucho.
+  'ciudad-larga': () => ({ now: at('15:40'), card: scheduled({ o: 'TFN', a: 'LPA', cities: { o: 'Santa Cruz de Tenerife', a: 'Las Palmas de Gran Canaria' },
+    route: 'Santa Cruz de Tenerife a Las Palmas de Gran Canaria', duration: 40, durationEstimated: true }),
+  view: forecast({ depMs: at('18:05'), durationMin: 40, segs: [[0, 0, 40]], headline: 'Tranquilo' }) }),
   tramos: () => ({ now: at('15:40'), legs: true, card: scheduled(), view: forecast({ depMs: at('18:05'), segs: NORMAL, headline: 'Algo de movimiento' }) }),
   alias: () => ({ now: at('15:40'), alias: true }),
   'aterrizado-adsb': () => {

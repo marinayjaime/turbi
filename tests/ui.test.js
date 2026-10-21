@@ -247,6 +247,45 @@ describe('ruta', () => {
   });
 });
 
+// Bloque origen → destino del hero (21/10/2026): rejilla simétrica de 3 columnas (origen · avión y duración · destino),
+// los dos lados con el mismo marcado; para lectores de pantalla, una sola frase «Origen X (ciudad) → Destino Y (ciudad)».
+describe('ruta: bloque origen → destino centrado', () => {
+  const routeOf = c => new JSDOM(html(c)).window.document.querySelector('.route-codes');
+  const shape = el => [el.tagName, el.className, el.getAttribute('aria-hidden'), ...[...el.children].map(shape)].join(' ');
+  it('11) tres columnas en orden: origen, avión con la duración debajo, destino', () => {
+    const rc = routeOf(card());
+    const cols = [...rc.children].filter(e => !e.classList.contains('sr-only'));
+    expect(cols.map(e => e.className)).toEqual(['rc rc-from', 'rc-mid', 'rc rc-to']);
+    const mid = cols[1];
+    expect([...mid.children].map(e => e.className)).toEqual(['rc-arrow', 'rc-dur']);
+    expect(mid.querySelector('.rc-arrow svg')).not.toBeNull();
+  });
+  it('12) peso equilibrado: origen y destino con exactamente los mismos elementos y clases', () => {
+    const rc = routeOf(card());
+    expect(shape(rc.querySelector('.rc-from'))).toBe(shape(rc.querySelector('.rc-to')).replace('rc rc-to', 'rc rc-from'));
+    expect(rc.querySelector('.rc-from strong').textContent).toBe('PMI');
+    expect(rc.querySelector('.rc-to strong').textContent).toBe('MAD');
+  });
+  it('13) códigos y ciudades correctos y escapados (también en el texto accesible)', () => {
+    const h = html(card({ o: '<x>', cities: { o: 'Palma & "Son"', a: '<b>Madrid</b>' } }));
+    expect(h).not.toContain('<x>');
+    expect(h).not.toContain('<b>Madrid</b>');
+    const rc = new JSDOM(h).window.document.querySelector('.route-codes');
+    expect(rc.querySelector('.rc-from strong').textContent).toBe('<x>');
+    expect(rc.querySelector('.rc-from span').textContent).toBe('Palma & "Son"');
+    expect(rc.querySelector('.rc-to span').textContent).toBe('<b>Madrid</b>');
+    expect(rc.querySelector('.sr-only').textContent).toBe('Origen <x> (Palma & "Son") → Destino MAD (<b>Madrid</b>) · duración 1 h 30 min');
+  });
+  it('15) accesibilidad: una frase para lectores de pantalla; columnas e icono decorativos (aria-hidden)', () => {
+    const rc = routeOf(card({ duration: 157, durationEstimated: true }));
+    expect(rc.querySelector('.sr-only').textContent).toBe('Origen PMI (Palma) → Destino MAD (Madrid) · duración estimada 2 h 37 min');
+    for (const c of ['.rc-from', '.rc-mid', '.rc-to']) expect(rc.querySelector(c).getAttribute('aria-hidden'), c).toBe('true');
+    expect(rc.querySelector('.rc-arrow').getAttribute('aria-hidden')).toBe('true');
+    const none = routeOf(card({ cities: { o: null, a: 'Madrid' }, duration: null }));
+    expect(none.querySelector('.sr-only').textContent).toBe('Origen PMI → Destino MAD (Madrid)');
+  });
+});
+
 describe('hora principal', () => {
   it('programado: la salida, su etiqueta y «Sale en»', () => {
     const h = html(card({ dep: { ...card().dep, est: '18:10', late: true } }));

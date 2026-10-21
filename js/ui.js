@@ -107,19 +107,26 @@ function heroHtml(c) {
       </header>`;
 }
 
-// Códigos grandes y la ciudad debajo (findAirport); sin ciudad conocida, solo el código. Bajo el avión, la duración
-// prevista del vuelo (card.duration), con «≈» si es un cálculo de Turbi (durationEstimated); sin duración, solo el avión.
+// Bloque origen → destino del hero: rejilla simétrica de 3 columnas (CSS: 1fr · auto · 1fr). Código IATA grande y la
+// ciudad debajo (findAirport), con el mismo marcado a los dos lados; sin ciudad conocida, solo el código. En medio, el
+// avión sobre una línea y debajo la duración prevista (card.duration), con «≈» si es un cálculo de Turbi
+// (durationEstimated); sin duración, solo el avión. Lo visible es decorativo (aria-hidden): los lectores de pantalla
+// leen una sola frase, «Origen X (ciudad) → Destino Y (ciudad)» y la duración.
 function routeHtml(c) {
-  const end = (code, city) => `<div class="rc"><strong>${esc(code)}</strong>${city ? `
+  const end = (side, code, city) => `<div class="rc rc-${side}" aria-hidden="true"><strong>${esc(code)}</strong>${city ? `
           <span>${esc(city)}</span>` : ''}
         </div>`;
   const dur = Number.isFinite(c.duration) ? formatCountdown(c.duration * 60000) : null;
+  const said = (code, city) => `${code}${city ? ` (${city})` : ''}`;
+  const spoken = `Origen ${said(c.o, c.cities?.o)} → Destino ${said(c.a, c.cities?.a)}${
+    dur ? ` · duración ${c.durationEstimated ? 'estimada ' : ''}${dur}` : ''}`;
   return `
       <div class="route-codes">
-        ${end(c.o, c.cities?.o)}
-        <div class="rc-mid"><span class="rc-arrow" aria-hidden="true">${icon('plane', { size: 22 })}</span>${dur ? `
+        <p class="sr-only">${esc(spoken)}</p>
+        ${end('from', c.o, c.cities?.o)}
+        <div class="rc-mid" aria-hidden="true"><span class="rc-arrow" aria-hidden="true">${icon('plane', { size: 22 })}</span>${dur ? `
           <span class="rc-dur">${c.durationEstimated ? '≈ ' : ''}${esc(dur)}</span>` : ''}</div>
-        ${end(c.a, c.cities?.a)}
+        ${end('to', c.a, c.cities?.a)}
       </div>`;
 }
 

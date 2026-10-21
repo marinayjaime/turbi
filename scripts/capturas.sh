@@ -19,7 +19,7 @@ mkdir -p "$OUT"
 
 ESTADOS=(programado en-curso finalizado sin-senal localizando turb-fuerte conf-baja incompleto aena-antigua solo-adb
   retrasado cancelado desviado tramos alias aterrizado-adsb aterrizado-oficial prev-no-disponible simplificado semana
-  consulta carga sin-conexion)
+  consulta carga sin-conexion ciudad-larga)
 [ $# -gt 0 ] && ESTADOS=("$@")
 
 # Puerto libre: el que asigne el sistema.

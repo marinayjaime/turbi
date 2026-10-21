@@ -80,3 +80,26 @@ describe('fondo claro', () => {
     expect(css).not.toMatch(/body::before/);
   });
 });
+
+// Bloque origen → destino del hero (21/10/2026): rejilla 1fr · auto · 1fr (los dos lados pesan lo mismo), todo centrado,
+// ambos códigos iguales y la ciudad en dos líneas como mucho (sin desbordar a 320 px); el texto accesible, oculto.
+describe('hero: bloque origen → destino centrado y simétrico', () => {
+  it('rejilla de 3 columnas con el mismo peso a los lados', () => {
+    expect(values('.route-codes', 'display')).toEqual(['grid']);
+    expect(values('.route-codes', 'grid-template-columns')).toEqual(['minmax(0, 1fr) auto minmax(0, 1fr)']);
+  });
+  it('origen y destino centrados en su columna, con el mismo estilo (ninguna regla propia de un lado)', () => {
+    expect(values('.route-codes .rc', 'text-align')).toEqual(['center']);
+    expect(values('.route-codes .rc', 'align-items')).toEqual(['center']);
+    for (const side of ['.rc-from', '.rc-to']) expect(css.includes(side), side).toBe(false);
+  });
+  it('ciudad: más pequeña y como mucho dos líneas, sin desbordar', () => {
+    expect(values('.route-codes .rc span', '-webkit-line-clamp')).toEqual(['2']);
+    expect(values('.route-codes .rc span', 'overflow')).toEqual(['hidden']);
+    expect(values('.route-codes .rc span', 'overflow-wrap')).toEqual(['anywhere']);
+  });
+  it('.sr-only: fuera de la vista y de la rejilla, pero legible', () => {
+    expect(values('.sr-only', 'position')).toEqual(['absolute']);
+    expect(values('.sr-only', 'clip')).toEqual(['rect(0 0 0 0)']);
+  });
+});
