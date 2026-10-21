@@ -16,6 +16,7 @@ import { physicalFlightKey, samePhysicalFlight } from '../js/physical-flight.js'
 import { createAerodatabox } from './aerodatabox.mjs';
 import { createGithubStore } from './adb-store.mjs';
 import { adbRadarResponse } from './radar-adb.mjs';
+import { fr24Configured, fr24TestResponse } from './fr24.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -73,7 +74,8 @@ export function handle(state, path) {
     return { status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' },
       body: JSON.stringify({ updated: state.updated, runs: state.runs, audit: state.audit, lastError: state.lastError, flights: state.flights.size,
         adsb: adsbHealth(), radar: state.radarStats ?? freshRadarStats(), // estado de adsb.lol sin consultarlo
-        aerodatabox: state.adb?.health() ?? { configured: false } }) };
+        aerodatabox: state.adb?.health() ?? { configured: false },
+        fr24: { configured: fr24Configured() } }) }; // solo si la clave existe: nunca llama a FR24
   }
   const m = path.match(SAFE_PATH);
   const body = m && state.flights.get(`${m[1]}/${m[2]}.json`);
@@ -334,6 +336,10 @@ async function main() {
     }
     if (path.startsWith('/radar-adb/')) { // vuelos de AeroDataBox: radar solo por transpondedor o indicativo
       adbRadarResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: HEADERS, body: '{"state":"sin-datos"}' }));
+      return;
+    }
+    if (path.startsWith('/fr24-test/')) { // prueba de Flightradar24, solo bajo demanda (server/fr24.mjs)
+      fr24TestResponse(path).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable","reason":"error"}' }));
       return;
     }
     if (path.startsWith('/radar/')) {
