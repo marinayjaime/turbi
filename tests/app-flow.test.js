@@ -77,6 +77,10 @@ async function networkIdle() {
 }
 
 async function openApp(fetchStub) {
+  // La app de la prueba anterior sigue viva sobre su DOM ya desconectado (con su .flight): sin esto, sus contadores de
+  // 1 s (señal, distancia) y su refresco de Aena seguirían reprogramándose y podrían saltar sobre el reloj simulado de
+  // la prueba siguiente. Su ficha oculta es «el usuario ya no la ve»: se paran solos en su siguiente vuelta.
+  document.getElementById('result-view')?.setAttribute('hidden', '');
   const html = readFileSync('index.html', 'utf8');
   document.documentElement.innerHTML = html.slice(html.indexOf('<head'), html.lastIndexOf('</html>'));
   vi.stubGlobal('fetch', fetchStub);
