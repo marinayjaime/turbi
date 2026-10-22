@@ -8,6 +8,7 @@ import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, ad
 import { fetchSchedule, loadAirlines, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh, refreshMode } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
+import { forecastDigest, legacyDigest, rememberTurb, recallTurb } from './turb-memory.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
 import { renderResult, esc, flightCardHtml, missingDateText, thousands, signalHtml, tmOldHtml } from './ui.js';
@@ -60,9 +61,6 @@ let lastQuery = null;
 let runId = 0; // solo la consulta más reciente puede pintar
 let airportsDb = null;
 let currentView = null; // pronóstico v2 en pantalla (para la timeline interactiva)
-// Cálculo simplificado (v1) pintado en la sección Turbulencias de ESTA ficha (no tiene currentView): §10.2 lo conserva
-// igual que el v2 al aterrizar. Vuelve a null con cada búsqueda (run) y al quitar la ficha (clearFicha).
-let legacyOnScreen = null;
 
 function show(view) {
   els.queryView.hidden = view !== 'query';
@@ -652,10 +650,8 @@ function paintRadar(q, flight, radar, ctx, stale) {
   const note = els.result.querySelector('.note');
   const replacement = Number.isFinite(landedAt) ? landedNote(landedSource) : radarNote(radar);
   if (replacement && [ENDED_ESTIMATED, NO_ARRIVAL_NOTE].includes(note?.textContent)) note.textContent = replacement;
-  // Aterrizado según el radar con el pronóstico de esta consulta en pantalla: se conserva, con su etiqueta (§10.2).
-  if (card.radar?.state === 'aterrizado' && forecastOnScreen() && !$in('forecast-area').querySelector('.pre-landing')) {
-    paintPreLanding();
-  }
+  // Aterrizado según el radar: repaintFlight ya quitó la tarjeta Turbulencias (syncTurbArea) y el pronóstico que se vio
+  // antes queda como «Turbulencias estimadas» en el Resumen del vuelo. Sin pedir nada.
 }
 
 // Estado oficial de Aena mientras el vuelo está en curso (js/status-refresh.js): solo /flights/AL/N.json, siempre el
@@ -705,14 +701,11 @@ async function applyAenaLeg(q, leg, updated, stale) {
     // Aena gana: fuera la telemetría, el radar (también su seguimiento en vivo) y la distancia animada.
     stopRadarPoll();
     stopLive();
+    // Llegada final, cancelado o desviado: repaintFlight quita la tarjeta Turbulencias (syncTurbArea), sin calcular ni
+    // pedir nada; si aterrizó, el pronóstico visto antes va al Resumen del vuelo.
     repaintFlight(flight, stale);
+    if (turbOver(flight)) return;
     const flags = [leg.st, leg.std, leg.sta];
-    // Llegada final con el pronóstico de esta consulta ya pintado: se conserva con «Previsión mostrada antes del
-    // aterrizaje» (§10.2), sin calcular ni pedir nada. Cancelado o desviado: la nota, aunque lo hubiera.
-    if (!flags.includes('CAN') && !flags.includes('DES') && forecastOnScreen()) {
-      paintPreLanding();
-      return;
-    }
     const note = flags.includes('CAN') ? 'Vuelo cancelado.' : flags.includes('DES') ? 'Vuelo desviado.'
       : endedNote(leg) ?? arrivalNote({ leg, officialMs, eta, departureMs, nowMs: Date.now() });
     const area = $in('forecast-area');
@@ -811,7 +804,7 @@ async function run(q, handoff = null) {
     if (note) {
       if (!flight) throw new Error(note);
       currentView = null;
-      els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight, punctuality: punct, note }); // la sección Turbulencias, con el motivo
+      els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight: withTurbEstimate(flight), punctuality: punct, note }); // Turbulencias con el motivo (terminado: initFicha la quita)
       show('result');
       initFicha(q, flight, stale);
       if (same) restoreScroll(same.scrollY);
@@ -824,7 +817,7 @@ async function run(q, handoff = null) {
     // de turbulencias se carga aparte en su sección. Un fallo meteorológico nunca sustituye la ficha.
     if (flight) {
       currentView = null;
-      els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight, punctuality: punct });
+      els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight: withTurbEstimate(flight), punctuality: punct });
       show('result');
       initFicha(q, flight, stale);
       if (same) restoreScroll(same.scrollY);
@@ -874,6 +867,8 @@ async function loadForecastSection(ctx) {
   const { q, profile, forecastProfile, flight, punct, oTz, dTz, etaCtx, rel, stale } = ctx;
   const area = () => $in('forecast-area');
   if (!area()) return;
+  // Vuelo ya terminado (o cancelado/desviado): ni tarjeta ni pronóstico calculado a posteriori (ninguna consulta).
+  if (turbOver(shownCard)) { syncTurbArea(); return; }
   area().innerHTML = forecastLoadingHtml();
   const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`; // horas de bloque
   let view;
@@ -881,6 +876,7 @@ async function loadForecastSection(ctx) {
     view = await forecastView({ q, profile: forecastProfile, flight, times, nowMs: Date.now() });
   } catch (err) {
     if (stale() || !area()) return;
+    if (turbOver(shownCard)) { syncTurbArea(); return; } // aterrizó mientras se calculaba
     if (!isWeatherUnavailable(err)) {
       // Los modelos ECMWF/GFS no dan datos: cálculo simplificado (v1), también dentro de la sección (su tarjeta ya
       // dice que es el cálculo simplificado).
@@ -889,17 +885,16 @@ async function loadForecastSection(ctx) {
         const route = buildRoute(q.origin, q.destination, forecastProfile.departureMs, forecastProfile.durationMin);
         const { segments, verdict } = analyze(route, await fetchRouteWeather(route));
         if (stale() || !area()) return;
+        if (turbOver(shownCard)) { syncTurbArea(); return; }
         const legacy = { verdict, reliability: rel, durationMin: route.durationMin, segments, sectionOnly: true };
-        legacyOnScreen = legacy; // en pantalla: al aterrizar se conserva con su etiqueta (§10.2), como el v2
-        // Con el vuelo ya aterrizado (ahora o mientras se calculaba o se ponían los lugares), con la etiqueta, como el v2.
-        const preLanding = () => Boolean(area().querySelector('.pre-landing')) || (Boolean(shownCard) && flightPhase(shownCard) === 'finalizado');
-        paintLegacySection(legacy, { preLanding: preLanding() });
+        paintLegacySection(legacy);
+        rememberForecast(q, legacyDigest(legacy, Date.now()));
         await nameSegments(segments, q.origin.iata);
-        // Solo si la tarjeta sigue ahí: una nota que la sustituyó entre medias (cancelado, desviado) no se pisa.
-        if (!stale() && area()?.querySelector('[data-card="turbulence"]')) paintLegacySection(legacy, { preLanding: preLanding() });
+        // Solo si la tarjeta sigue ahí: un aterrizaje o una nota entre medias (cancelado, desviado) no se pisa.
+        if (!stale() && area()?.querySelector('[data-card="turbulence"]')) paintLegacySection(legacy);
         return;
       } catch (err2) {
-        if (stale() || !area()) return;
+        if (stale() || !area() || turbOver(shownCard)) return;
         area().innerHTML = forecastUnavailableHtml(err2 instanceof TypeError ? new Error('Sin conexión o el servicio no responde.') : err2);
         return;
       }
@@ -908,10 +903,12 @@ async function loadForecastSection(ctx) {
     return;
   }
   if (stale() || !area()) return;
+  // Aterrizado mientras se calculaba: un pronóstico que llega después no se pinta ni se guarda como el del vuelo.
+  if (turbOver(shownCard)) { syncTurbArea(); return; }
   Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
   currentView = view;
-  // Si el radar ya dio el vuelo por aterrizado mientras se calculaba, el pronóstico llega con su etiqueta (§10.2).
-  paintForecastSection(view, { preLanding: Boolean(shownCard) && flightPhase(shownCard) === 'finalizado' });
+  paintForecastSection(view);
+  rememberForecast(q, forecastDigest(view));
   await safely(() => forecastExtras(view, q, stale));
 }
 
@@ -955,7 +952,7 @@ function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; }
 // (también uno conservado por «Actualizar» que aún no se montó), el avión retenido y los desplegables pendientes.
 // No va en stopRadarPoll: applyAenaLeg para el radar con la llegada final y el mapa se queda («Ruta realizada»). También
 // el seguimiento en vivo y la última posición real conocida.
-function clearFicha() { destroyMap(); dropKeptMap(); stopPlaneTimer(); stopLive(); lastFix = null; reopen.clear(); stopSignal(); shownCard = null; legacyOnScreen = null; }
+function clearFicha() { destroyMap(); dropKeptMap(); stopPlaneTimer(); stopLive(); lastFix = null; reopen.clear(); stopSignal(); shownCard = null; }
 
 // ---- «Actualizar» del mismo vuelo físico (decisión de 20/10/2026; solo presentación) ----
 // La consulta es la de siempre (submit → run: Aena, radar con su pollRadar, pronóstico, puntualidad); solo cambia cómo
@@ -1082,28 +1079,41 @@ function paintAviation(view) {
   if (cat) cat.hidden = !el.innerHTML.trim();
 }
 
-// §10.2: ¿está en pantalla el pronóstico de ESTA consulta, v2 o cálculo simplificado v1? (currentView y legacyOnScreen
-// vuelven a null al empezar cada búsqueda.)
-const forecastOnScreen = () => Boolean((currentView || legacyOnScreen) && $in('forecast-area')?.querySelector('[data-card="turbulence"]'));
-// El pronóstico en pantalla, conservado tras el aterrizaje con «Previsión mostrada antes del aterrizaje». Sin peticiones.
-function paintPreLanding() {
-  if (currentView) paintForecastSection(currentView, { preLanding: true });
-  else if (legacyOnScreen) paintLegacySection(legacyOnScreen, { preLanding: true });
+// Vuelo terminado, cancelado o desviado: la tarjeta Turbulencias desaparece entera (#forecast-area vacío y oculto, sin
+// dejar hueco). Nunca se calcula un pronóstico después: lo que se pronosticó ANTES de aterrizar queda, si lo hay, como
+// «Turbulencias estimadas» en el Resumen del vuelo (withTurbEstimate).
+const turbOver = card => Boolean(card) && ['finalizado', 'cancelado'].includes(flightPhase(card));
+function syncTurbArea(card = shownCard) {
+  const area = $in('forecast-area');
+  if (!area || !turbOver(card)) return;
+  if (area.innerHTML) area.innerHTML = '';
+  area.hidden = true;
+}
+// El último pronóstico válido de ESTE vuelo físico (js/turb-memory.js), solo en un vuelo aterrizado: cancelado y
+// desviado (fase «cancelado») nunca lo llevan.
+function withTurbEstimate(card) {
+  if (!card || flightPhase(card) !== 'finalizado') return card;
+  const t = recallTurb(card.physicalKey);
+  return t ? { ...card, turbEstimate: t } : card;
+}
+// Se guarda el pronóstico mostrado solo mientras el vuelo no ha terminado, con la clave de su vuelo físico.
+function rememberForecast(q, digest) {
+  if (!turbOver(shownCard)) rememberTurb(physicalOf(q), digest);
 }
 // La tarjeta del cálculo simplificado (renderResult con sectionOnly) en #forecast-area, conservando sus desplegables.
-function paintLegacySection(legacy, { preLanding = false } = {}) {
+function paintLegacySection(legacy) {
   const area = $in('forecast-area');
   if (!area) return;
   const tmp = { innerHTML: '' };
-  renderResult(tmp, legacy, { preLanding, open: openCards() });
+  renderResult(tmp, legacy, { open: openCards() });
   area.innerHTML = tmp.innerHTML;
   reopenCards();
 }
 // Pinta (o repinta) la tarjeta de Turbulencias con la vista ya calculada, conservando sus desplegables. Sin peticiones.
-function paintForecastSection(view, { preLanding = false } = {}) {
+function paintForecastSection(view) {
   const area = $in('forecast-area');
   if (!area) return;
-  area.innerHTML = forecastSectionHtml(view, Date.now(), { preLanding, open: openCards() });
+  area.innerHTML = forecastSectionHtml(view, Date.now(), { open: openCards() });
   reopenCards();
   wireSpeak(view);
 }
@@ -1237,6 +1247,7 @@ function paintMapFacts(card) {
 // Lo común del armazón (ficha con pronóstico o con nota): Detalles avanzados y el mapa.
 function initFicha(q, flight, stale) {
   shownCard = flight;
+  syncTurbArea(flight);
   paintAdvancedFlight(flight);
   paintMapFacts(flight);
   paintHistory(null);
@@ -1255,10 +1266,11 @@ function repaintFlight(card, stale) {
   const top = scroller?.scrollTop ?? 0, resultTop = els.result.scrollTop;
   const punct = el.querySelector('#punctuality');
   punct?.remove();
-  el.outerHTML = flightCardHtml(card, { open, nowMs: Date.now(), monoMs: monoNow() });
+  el.outerHTML = flightCardHtml(withTurbEstimate(card), { open, nowMs: Date.now(), monoMs: monoNow() });
   const slot = els.result.querySelector('.flight #punctuality');
   if (punct && slot) slot.replaceWith(punct);
   shownCard = card;
+  syncTurbArea(card);
   paintAdvancedFlight(card, open);
   paintHistory(currentView, open);
   const title = $in('map-card')?.querySelector('.card-title');
@@ -1374,7 +1386,8 @@ async function forecastExtras(view, q, stale) {
     safely(async () => {
       view.aviation = aviationView(await loadAviation(), view, Date.now());
       if (stale()) return;
-      $in('wx-alerts').innerHTML = weatherAlertsHtml(view.aviation); // línea compacta de avisos en la tarjeta (§10 bis.1)
+      const wx = $in('wx-alerts'); // no está si el vuelo aterrizó entre medias (sin tarjeta Turbulencias)
+      if (wx) wx.innerHTML = weatherAlertsHtml(view.aviation); // línea compacta de avisos en la tarjeta (§10 bis.1)
       paintAviation(view); // el detalle, en Detalles avanzados
     }),
   ]);

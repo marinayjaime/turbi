@@ -171,6 +171,21 @@ describe('Actualizar con un pronóstico válido en caché', () => {
 const shell = () => ({ flight: Boolean($('#result .flight')), turbulencias: [...document.querySelectorAll('#result h3.section')].some(h => h.textContent === 'Turbulencias'),
   area: Boolean($('#forecast-area')), error: !$('#error').hidden });
 const SHELL_OK = { flight: true, turbulencias: true, area: true, error: false };
+// Vuelo terminado, cancelado o desviado: sin tarjeta Turbulencias (#forecast-area vacío y oculto), con el mapa y
+// Detalles avanzados en su sitio.
+const TURB_GONE = { flight: true, turbulencias: false, area: true, error: false };
+function turbGone() {
+  expect(shell()).toEqual(TURB_GONE);
+  expect($('#forecast-area').hidden).toBe(true);
+  expect($('#forecast-area').innerHTML).toBe('');
+  expect($('#map-card')).not.toBeNull();
+  expect($('details[data-card="advanced"]')).not.toBeNull();
+}
+// «Turbulencias estimadas» del Resumen del vuelo (null si no está).
+function turbEstimate() {
+  const el = $('.flight-summary [data-fs="turbulence"]');
+  return el ? [...el.querySelectorAll('.k, .v > span')].map(e => e.textContent).join(' ') : null;
+}
 const radarCalls = () => calls.filter(u => u.includes('/radar/'));
 // Avanza el reloj simulado; entre temporizador y temporizador se resuelven las promesas (cada sondeo programa el siguiente).
 async function advance(ms) { await vi.advanceTimersByTimeAsync(ms); await networkIdle(); }
@@ -417,14 +432,16 @@ describe('flujo DOM completo: la ficha y la sección Turbulencias están siempre
     const { d, leg } = tomorrowLeg();
     await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [{ ...leg, st: 'CAN', std: 'CAN' }] } }, openMeteo: openMeteoOk }));
     await search('IB1668', d);
-    await until(() => $('#forecast-area .note'), 'motivo');
-    expect($('#forecast-area .note').textContent).toBe('Vuelo cancelado.');
-    expect(shell()).toEqual(SHELL_OK);
+    await until(() => $('#result .flight'), 'ficha');
+    await networkIdle();
+    expect($('#result .status').textContent).toContain('Cancelado');
+    turbGone(); // cancelado: sin tarjeta Turbulencias ni resumen de turbulencias
+    expect(turbEstimate()).toBeNull();
   });
 });
 
-describe('la sección Turbulencias aparece siempre en la ficha de un vuelo', () => {
-  it('vuelo ya aterrizado (Aena) y Open-Meteo con 429: ficha, puntualidad y la sección con el motivo', async () => {
+describe('la sección Turbulencias aparece siempre en la ficha de un vuelo (salvo terminado)', () => {
+  it('vuelo ya aterrizado (Aena) y Open-Meteo con 429: ficha y puntualidad, sin la sección Turbulencias', async () => {
     const dep = Date.now() - 4 * 3600000, arr = dep + 75 * 60000;
     const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, MAD);
     const leg = { d, o: 'PMI', a: 'MAD', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, st: 'LND', std: 'BOR', sta: 'LND', ac: '738W' };
@@ -432,8 +449,7 @@ describe('la sección Turbulencias aparece siempre en la ficha de un vuelo', () 
     await search('UX6031', d);
     await until(() => $('#result .flight'), 'ficha');
     await networkIdle();
-    expect([...document.querySelectorAll('#result h3')].map(h => h.textContent)).toContain('Turbulencias');
-    expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+    turbGone();
     expect($('#punctuality')).not.toBeNull();
     expect($('#error').hidden).toBe(true);
   });
@@ -638,11 +654,9 @@ describe('refresco del estado oficial de Aena mientras el vuelo está en curso (
       render.updated = new Date(T + 600000).toISOString();
       await advance(330000); // 630 s
       await until(() => statusText().includes('En tierra'), 'estado En tierra');
-      // §10.2 (Tarea 8): el pronóstico de esta consulta ya estaba pintado, así que se conserva con su etiqueta en vez de
-      // sustituirse por la nota «Este vuelo ya ha aterrizado.» (sin pronóstico pintado, la nota sigue igual).
-      expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
-      expect(area()).toContain('Previsión mostrada antes del aterrizaje');
-      expect(shell()).toEqual(SHELL_OK);
+      // Aterrizado: fuera la tarjeta Turbulencias; lo pronosticado antes va al Resumen del vuelo.
+      turbGone();
+      expect(turbEstimate()).toContain('Turbulencias estimadas');
       expect(meteoCalls()).toHaveLength(meteo); // ni una consulta más a Open-Meteo
       const after = renderCalls().length;
       await advance(3600000);
@@ -1560,8 +1574,11 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     const landed = raw({ status: 'Arrived', arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr, 2), runwayTime: t(rwyDep + 48 * 60000, 2) } });
     await openApp(network({ flights: {}, openMeteo: openMeteoOk, schedule: { [`XX100|${dayOf(dep)}`]: entry(landed) } }));
     await search('XX100', dayOf(dep));
-    await until(() => $('#forecast-area .note'), 'nota');
-    expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
+    await until(() => $('#result .flight'), 'ficha');
+    await networkIdle();
+    turbGone(); // ya aterrizado y sin resumen guardado (almacenamiento vacío): ni tarjeta ni «Turbulencias estimadas»
+    expect(turbEstimate()).toBeNull();
+    expect(calls.filter(u => u.includes('open-meteo'))).toEqual([]); // nada calculado a posteriori
   });
 
   it('AeroDataBox sin horas de pista: estimación en el aire (no el bloque completo)', async () => {
@@ -1859,10 +1876,15 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     expect($('#adv-sources #fresh').textContent).toContain('Consulta realizada');
   });
 
-  describe('previsión tras el aterrizaje (§10.2)', () => {
+  // Al terminar el vuelo la tarjeta Turbulencias desaparece; lo pronosticado ANTES del aterrizaje (el último pronóstico
+  // válido de ese vuelo físico) queda como «Turbulencias estimadas» en el Resumen del vuelo. Nunca se calcula después.
+  describe('Turbulencias al terminar el vuelo: «Turbulencias estimadas» en el Resumen del vuelo', () => {
     const T = Date.parse('2026-09-26T12:00:00Z');
     const D = '2026-09-26';
     const flyLeg = over => ({ d: D, o: 'MLA', a: 'BCN', sd: null, sa: '14:40', ea: `${D}T14:40`, st: 'FLY', sta: 'FLY', ac: '738W', ...over });
+    const KEY = physicalFlightKey(flyLeg());
+    const STORE = 'turbi-turb-estimates';
+    const stored = () => JSON.parse(localStorage.getItem(STORE) ?? '{}');
     function app(render, radar = null, openMeteo = openMeteoOk) {
       const base = network({ flights: { FR1526: { name: 'Ryanair', updated: new Date(T).toISOString(), legs: [flyLeg()] } }, radar, openMeteo });
       return vi.fn((url, o) => {
@@ -1873,8 +1895,14 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     }
     const meteoCalls = () => calls.filter(u => u.includes('open-meteo'));
     const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], now: T, shouldAdvanceTime: true });
+    // Aena trae otro estado en el siguiente ciclo de Render (630 s).
+    async function aena(render, over) {
+      render.legs = [flyLeg(over)];
+      render.updated = new Date(T + 600000).toISOString();
+      await advance(630000);
+    }
 
-    it('aterriza con pronóstico (Aena LND): se conserva con «Previsión mostrada antes del aterrizaje» y sin pedir nada a Open-Meteo', async () => {
+    it('en curso con pronóstico → Aena LND: fuera Turbulencias, «Turbulencias estimadas» en el resumen, sin Open-Meteo y con «Ruta realizada»', async () => {
       fake();
       try {
         const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
@@ -1882,30 +1910,34 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         await search('FR1526', D);
         await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
         await networkIdle();
-        $('details[data-card="turbulence"]').open = true;
+        expect(shell()).toEqual(SHELL_OK); // en curso: la tarjeta Turbulencias, como siempre
+        expect($('.flight-summary')).toBeNull();
+        // Guardado con la clave del vuelo físico, solo el resumen (nada del pronóstico completo).
+        expect(Object.keys(stored())).toEqual([KEY]);
+        expect(Object.keys(stored()[KEY]).sort()).toEqual(['confidence', 'headline', 'maxDurationMin', 'maxLevel', 'percentages', 'queriedAt', 'verdict']);
         const meteo = meteoCalls().length;
-        render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
-        render.updated = new Date(T + 600000).toISOString();
-        await advance(630000);
+        await aena(render, { st: 'LND', sta: 'LND' });
         await until(() => ($('#result .status')?.textContent ?? '').includes('En tierra'), 'En tierra');
-        expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
-        expect($('#forecast-area [data-card="turbulence"]').open).toBe(true); // el desplegable sigue como estaba
-        expect(area()).toContain('Previsión mostrada antes del aterrizaje');
-        expect($('#forecast-area .note')).toBeNull();
+        turbGone();
+        expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
+        expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo Sin turbulencia relevante prevista');
+        expect([...$('#result').children].map(c => c.id || c.dataset.card || c.className)).toEqual(['summary', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
         expect(meteoCalls()).toHaveLength(meteo);
         expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
       } finally { vi.useRealTimers(); }
     });
 
-    it('aterriza según el radar (lectura «aterrizado») con pronóstico: se conserva con la misma etiqueta', async () => {
+    it('aterriza según Flightradar24 (lectura «aterrizado»), sin recargar y con localStorage roto: misma transición', async () => {
       fake();
+      const broken = () => { throw new DOMException('denegado', 'SecurityError'); };
+      vi.stubGlobal('localStorage', { getItem: broken, setItem: broken, removeItem: broken, clear: broken, key: broken, length: 0 });
       try {
         const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
         let releaseRadar;
         const base = app(render);
         await openApp(vi.fn((url, o) => {
           const u = String(url);
-          if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return new Promise(r => { releaseRadar = () => r(json({ state: 'aterrizado', seenS: 30 })); }); }
+          if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return new Promise(r => { releaseRadar = () => r(json({ state: 'aterrizado', seenS: 30, source: 'fr24' })); }); }
           return base(url, o);
         }));
         await search('FR1526', D);
@@ -1913,9 +1945,12 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         await networkIdle();
         const meteo = meteoCalls().length;
         releaseRadar();
-        await until(() => area().includes('Previsión mostrada antes del aterrizaje'), 'etiqueta tras el aterrizaje');
-        expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
+        await until(() => $('#forecast-area').hidden, 'Turbulencias fuera tras el aterrizaje');
+        turbGone();
+        expect($('#result .status').textContent).toContain('Aterrizado');
+        expect(turbEstimate()).toContain('Turbulencias estimadas'); // sin almacenamiento, el de esta sesión
         expect(meteoCalls()).toHaveLength(meteo);
+        expect($('#error').hidden).toBe(true);
       } finally { vi.useRealTimers(); }
     });
 
@@ -1928,7 +1963,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       return { ...r, json: async () => { const b = await body(); return Array.isArray(b) ? b.map(strip) : strip(b); } };
     };
 
-    it('cálculo simplificado (v1) en pantalla y Aena LND: se conserva con la misma etiqueta (no se sustituye por la nota)', async () => {
+    it('cálculo simplificado (v1) y Aena LND: su resumen (sin confianza ni porcentajes) en «Turbulencias estimadas»', async () => {
       fake();
       try {
         const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
@@ -1936,71 +1971,68 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         await search('FR1526', D);
         await until(() => area().includes('Cálculo simplificado') && $('#forecast-area [data-card="turbulence"]'), 'cálculo simplificado');
         await networkIdle();
-        expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
+        const d = stored()[KEY];
+        expect(d).toMatchObject({ headline: 'Tranquilo', verdict: 'tranquilo', maxLevel: 0 });
+        expect(d).not.toHaveProperty('confidence');
+        expect(d).not.toHaveProperty('percentages');
         const meteo = meteoCalls().length;
-        render.legs = [flyLeg({ st: 'LND', sta: 'LND' })];
-        render.updated = new Date(T + 600000).toISOString();
-        await advance(630000);
+        await aena(render, { st: 'LND', sta: 'LND' });
         await until(() => ($('#result .status')?.textContent ?? '').includes('En tierra'), 'En tierra');
-        expect($('#forecast-area [data-card="turbulence"]')).not.toBeNull();
-        expect(area()).toContain('Cálculo simplificado');
-        expect(area()).toContain('Previsión mostrada antes del aterrizaje');
-        expect($('#forecast-area .note')).toBeNull();
+        turbGone();
+        expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo Sin turbulencia relevante prevista');
         expect(meteoCalls()).toHaveLength(meteo);
       } finally { vi.useRealTimers(); }
     });
 
-    it('cálculo simplificado (v1) en pantalla y Aena CAN: la nota «Vuelo cancelado.», como con el v2', async () => {
-      fake();
-      try {
-        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
-        await openApp(app(render, null, modelsEmpty));
-        await search('FR1526', D);
-        await until(() => area().includes('Cálculo simplificado') && $('#forecast-area [data-card="turbulence"]'), 'cálculo simplificado');
-        await networkIdle();
-        render.legs = [flyLeg({ st: 'CAN', sta: 'CAN' })];
-        render.updated = new Date(T + 600000).toISOString();
-        await advance(630000);
-        await until(() => $('#forecast-area .note'), 'nota');
-        expect($('#forecast-area .note').textContent).toBe('Vuelo cancelado.');
-        expect($('#forecast-area [data-card="turbulence"]')).toBeNull();
-      } finally { vi.useRealTimers(); }
+    it('cancelado (v2) o desviado (v1) tras un pronóstico: fuera Turbulencias y sin «Turbulencias estimadas»', async () => {
+      for (const [flag, openMeteo, status] of [['CAN', openMeteoOk, 'Cancelado'], ['DES', modelsEmpty, 'Desviado']]) {
+        fake();
+        try {
+          localStorage.clear();
+          const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
+          await openApp(app(render, null, openMeteo));
+          await search('FR1526', D);
+          await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
+          await networkIdle();
+          expect(stored()[KEY]).toBeTruthy(); // el pronóstico del vuelo existe, pero no describe el vuelo realizado
+          await aena(render, { st: flag, sta: flag });
+          await until(() => ($('#result .status')?.textContent ?? '').includes(status), status);
+          turbGone();
+          expect(turbEstimate()).toBeNull();
+          expect($('.flight-summary')).toBeNull();
+          expect(document.querySelectorAll('#result .disclaimer')).toHaveLength(1); // ni el aviso legal (§5.7)
+          expect($('#result').lastElementChild.className).toBe('disclaimer');
+        } finally { vi.useRealTimers(); }
+      }
     });
 
-    it('cancelado con pronóstico (Aena CAN): la nota «Vuelo cancelado.» y ninguna tarjeta de pronóstico', async () => {
-      fake();
-      try {
-        const render = { updated: new Date(T).toISOString(), legs: [flyLeg()] };
-        await openApp(app(render));
-        await search('FR1526', D);
-        await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
-        await networkIdle();
-        render.legs = [flyLeg({ st: 'CAN', sta: 'CAN' })];
-        render.updated = new Date(T + 600000).toISOString();
-        await advance(630000);
-        await until(() => $('#forecast-area .note'), 'nota');
-        expect($('#forecast-area .note').textContent).toBe('Vuelo cancelado.');
-        expect($('#forecast-area [data-card="turbulence"]')).toBeNull();
-        expect($('#map-card')).not.toBeNull(); // el mapa y los detalles no desaparecen
-        expect($('details[data-card="advanced"]')).not.toBeNull();
-        expect(document.querySelectorAll('#result .disclaimer')).toHaveLength(1); // ni el aviso legal (§5.7)
-        expect($('#result').lastElementChild.className).toBe('disclaimer');
-      } finally { vi.useRealTimers(); }
-    });
-
-    it('abre un vuelo ya terminado: la nota corta de siempre y ningún pronóstico', async () => {
+    it('abre un vuelo ya terminado: sin resumen guardado, nada (ni Open-Meteo); con él, el de ESE vuelo físico y no el de otro tramo', async () => {
       const dep = Date.now() - 4 * 3600000, arr = dep + 75 * 60000;
       const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, MAD);
       const leg = { d, o: 'PMI', a: 'MAD', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, st: 'LND', std: 'BOR', sta: 'LND', ac: '738W' };
-      await openApp(network({ flights: { UX6031: { name: 'Air Europa', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk }));
+      const other = { ...leg, sd: formatLocal(dep - 3 * 3600000, MAD) }; // el mismo número, otro tramo del día
+      const flights = { UX6031: { name: 'Air Europa', updated: new Date().toISOString(), legs: [leg] } };
+      await openApp(network({ flights, openMeteo: openMeteoOk }));
       await search('UX6031', d);
-      await until(() => $('#forecast-area .note'), 'nota');
+      await until(() => $('#result .flight'), 'ficha');
       await networkIdle();
-      expect($('#forecast-area .note').textContent).toBe('Este vuelo ya ha aterrizado.');
-      expect($('[data-card="turbulence"]')).toBeNull();
-      expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
-      expect(meteoCalls()).toHaveLength(0);
+      turbGone();
+      expect(turbEstimate()).toBeNull();
+      expect(meteoCalls()).toHaveLength(0); // nada calculado a posteriori
       expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+
+      const at = Date.now() - 5 * 3600000;
+      localStorage.setItem(STORE, JSON.stringify({
+        [physicalFlightKey(leg)]: { headline: 'Mayormente tranquilo', verdict: 'tranquilo', maxLevel: 1, maxDurationMin: 9, percentages: [90, 10, 0, 0], confidence: 'media', queriedAt: at },
+        [physicalFlightKey(other)]: { headline: 'Turbulento', verdict: 'turbulento', maxLevel: 3, maxDurationMin: 20, percentages: [50, 20, 20, 10], confidence: 'alta', queriedAt: at },
+      }));
+      await openApp(network({ flights, openMeteo: openMeteoOk }));
+      await search('UX6031', d);
+      await until(() => turbEstimate(), 'Turbulencias estimadas');
+      await networkIdle();
+      expect(turbEstimate()).toBe('Turbulencias estimadas Mayormente tranquilo Máximo previsto: Ligera · ≈ 10 min');
+      turbGone();
+      expect(meteoCalls()).toHaveLength(0);
     });
   });
 });
@@ -2114,7 +2146,7 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
     fake();
     try {
       // Tras «Actualizar», el radar primero localiza (repinta .flight) y a los 20 s da el aterrizaje (repinta .flight y
-      // Turbulencias, con su etiqueta): repintados posteriores reales para comprobar que lo cerrado sigue cerrado.
+      // quita Turbulencias): repintados posteriores reales para comprobar que lo cerrado sigue cerrado.
       await firstLoad([A, { state: 'sin-datos', identifying: true }, { state: 'aterrizado', seenS: 30 }], { openMeteo: openMeteoOk });
       await until(() => $('#forecast-area [data-card="turbulence"]'), 'pronóstico');
       await networkIdle();
@@ -2125,16 +2157,14 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       await networkIdle();
       for (const c of ['schedule', 'turbulence', 'advanced']) expect($(`details[data-card="${c}"]`).open, c).toBe(true);
       // Ya aplicados: si el usuario cierra uno, el repintado siguiente (otro nodo) no lo vuelve a abrir.
-      const schedule = $('details[data-card="schedule"]'), turbulence = $('details[data-card="turbulence"]');
+      const schedule = $('details[data-card="schedule"]');
       schedule.open = false;
-      turbulence.open = false;
       await advance(25000);
-      await until(() => area().includes('Previsión mostrada antes del aterrizaje'), 'aterrizaje repintado');
+      await until(() => $('#forecast-area').hidden, 'aterrizaje repintado');
       expect(radarCalls()).toHaveLength(3);
+      expect($('details[data-card="turbulence"]')).toBeNull(); // aterrizado: sin tarjeta Turbulencias
       expect($('details[data-card="schedule"]')).not.toBe(schedule);
-      expect($('details[data-card="turbulence"]')).not.toBe(turbulence);
       expect($('details[data-card="schedule"]').open).toBe(false);
-      expect($('details[data-card="turbulence"]').open).toBe(false);
       expect($('details[data-card="advanced"]').open).toBe(true);
     } finally { vi.useRealTimers(); }
   }, 30000);

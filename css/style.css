@@ -407,6 +407,9 @@ h3.card-head { text-transform: none; letter-spacing: -0.01em; margin: 0 0 14px; 
 .fs-item > .icon { box-sizing: content-box; padding: 8px; border-radius: 50%; background: rgba(26, 111, 224, 0.08); color: var(--accent); }
 
 .fs-item .kv { align-items: center; }
+/* «Turbulencias estimadas»: titular con el color de su nivel y, debajo, el máximo previsto. */
+.fs-item[data-fs="turbulence"] .v > [class^="lvl-ink"] { display: block; color: var(--ink); }
+.fs-item .fs-sub { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {
   .fly-plane { animation: none; transform: translate(10px, 0); }
@@ -423,8 +426,6 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 .turb .card-head h3.section, .turb h3.section.card-head { margin: 0; padding: 0; border: 0; font-size: 17px; font-weight: 600;
   letter-spacing: -0.01em; text-transform: none; color: var(--text); }
 .turb-plain h3.section.card-head { margin-bottom: 12px; }
-.pre-landing { margin: 10px 0 0; }
-.pre-landing .chip { white-space: normal; }
 /* «General» a la izquierda (icono y titular en el color del nivel máximo) y «Tramo más movido» a la derecha. */
 .turb-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .turb-general { display: flex; align-items: center; gap: 10px; min-width: 0; }

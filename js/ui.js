@@ -312,21 +312,29 @@ function aircraftHtml(c, open) {
 
 // «Resumen del vuelo» (§5.10, finalizado): solo lo que Turbi ya tiene. Distancia en ruta directa (no es la volada);
 // con salida y llegada reales, la duración: de bloque en Aena y, con las horas de pista de AeroDataBox, el tiempo en
-// el aire. Nada estimado ni consumos.
+// el aire. Nada estimado ni consumos, salvo «Turbulencias estimadas»: el último pronóstico que Turbi calculó ANTES del
+// aterrizaje (c.turbEstimate, js/turb-memory.js), dicho siempre como previsión, nunca como turbulencia observada.
 function flightSummaryHtml(c) {
   const real = c.depFinal && c.arrFinal ? formatCountdown(c.arrMs - c.depMs) : null;
   const items = [
-    Number.isFinite(c.km) && ['distance', 'Distancia en ruta directa', `${thousands(Math.round(c.km))} km`],
-    real && ['clock', c.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración real', real],
+    Number.isFinite(c.km) && ['distance', 'Distancia en ruta directa', esc(`${thousands(Math.round(c.km))} km`)],
+    real && ['clock', c.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración real', esc(real)],
+    c.turbEstimate && ['turbulence', 'Turbulencias estimadas', turbEstimateHtml(c.turbEstimate)],
   ].filter(Boolean);
   if (!items.length) return '';
   return `
       <section class="card flight-summary" data-card="flight-summary">
         <h3 class="card-head">Resumen del vuelo</h3>
         <div class="fs-grid">${items.map(([name, k, v]) => `
-          <div class="fs-item">${icon(name, { size: 18 })}${kv(k, esc(v))}</div>`).join('')}
+          <div class="fs-item"${name === 'turbulence' ? ' data-fs="turbulence"' : ''}>${icon(name, { size: 18 })}${kv(k, v)}</div>`).join('')}
         </div>
       </section>`;
+}
+// Titular y, debajo, el máximo previsto con la duración aproximada de ese nivel (el mismo redondeo que la tarjeta).
+function turbEstimateHtml(t) {
+  const mins = Number.isFinite(t.maxDurationMin) && t.maxDurationMin > 0 ? ` · ≈ ${Math.max(5, Math.round(t.maxDurationMin / 5) * 5)} min` : '';
+  const line = t.maxLevel > 0 ? `Máximo previsto: ${TURB_LEVELS[t.maxLevel]}${mins}` : 'Sin turbulencia relevante prevista';
+  return `<span class="lvl-ink${t.maxLevel}">${esc(t.headline)}</span><span class="fs-sub">${esc(line)}</span>`;
 }
 
 // card: el de buildFlight (app.js), con los campos de presentación de js/card-model.js. open: qué data-card van
@@ -350,14 +358,12 @@ export const TURB_LEVELS = ['Nula', 'Ligera', 'Moderada', 'Fuerte'];
 export const DISCLAIMER = '<p class="disclaimer">Estimación orientativa para pasajeros a partir de modelos meteorológicos públicos. No es información operacional ni de seguridad.</p>';
 const turbTitle = '<h3 class="section card-title">Turbulencias</h3>';
 
-// La tarjeta desplegable. preLanding (Tarea 8, §10.2): el pronóstico que ya estaba en pantalla se conserva tras el
-// aterrizaje con su etiqueta, para que nunca se lea como turbulencia observada.
-export function turbCardHtml({ open = new Set(), preLanding = false, summary, body }) {
+// La tarjeta desplegable. Solo antes del aterrizaje: con el vuelo terminado no se pinta (app.js, syncTurbArea).
+export function turbCardHtml({ open = new Set(), summary, body }) {
   return `
     <details class="card turb" data-card="turbulence"${open.has('turbulence') ? ' open' : ''}>
       <summary class="card-sum">
-        <div class="card-head">${turbTitle}${chevron()}</div>${preLanding ? `
-        <p class="pre-landing"><span class="chip tone-stale">Previsión mostrada antes del aterrizaje</span></p>` : ''}${summary}
+        <div class="card-head">${turbTitle}${chevron()}</div>${summary}
       </summary>
       <div class="card-body">${body}
       </div>
@@ -508,9 +514,8 @@ const SIMPLIFIED = 'Cálculo simplificado: los modelos ECMWF y GFS no han dado d
 
 // Cálculo simplificado (v1): respaldo si los modelos ECMWF/GFS no dan datos, y consulta manual. Misma tarjeta de
 // Turbulencias que el pronóstico v2, con la línea que dice que es el cálculo simplificado. sectionOnly: sin la ficha,
-// para #forecast-area. preLanding (§10.2) y open: como en el pronóstico v2 (la etiqueta tras el aterrizaje y los
-// desplegables abiertos al repintar).
-export function renderResult(el, view, { preLanding = false, open = new Set() } = {}) {
+// para #forecast-area. open: como en el pronóstico v2 (los desplegables abiertos al repintar).
+export function renderResult(el, view, { open = new Set() } = {}) {
   if (view.note) {
     el.innerHTML = `${flightCardHtml(view.flight)}${turbPlainCardHtml(`<p class="note">${esc(view.note)}</p>`)}`;
     return;
@@ -528,7 +533,7 @@ export function renderResult(el, view, { preLanding = false, open = new Set() } 
         <p class="turb-lead">${v.text}</p>
         <div class="pills">${explainHtml(view.verdict)}${reliabilityHtml(view.reliability)}</div>
         <section id="segments">${segListHtml(rows)}</section>`;
-  const card = turbCardHtml({ open, preLanding, summary, body });
+  const card = turbCardHtml({ open, summary, body });
   // En la ficha el aviso legal va al final de la ficha (afterForecastHtml), fuera de #forecast-area.
   if (view.sectionOnly) { el.innerHTML = card; return; }
   const head = view.flight

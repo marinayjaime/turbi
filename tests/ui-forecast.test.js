@@ -291,11 +291,6 @@ describe('tarjeta de Turbulencias', () => {
     expect(card(calm).querySelector('.turb-span')).toBeNull();
     expect(card(calm).querySelector('.turb-general').classList.contains('lvl-ink0')).toBe(true);
   });
-  it('preLanding: el chip exacto «Previsión mostrada antes del aterrizaje»; sin él, nada', () => {
-    const chip = card(full, { preLanding: true }).querySelector(':scope > summary .chip');
-    expect(chip.textContent).toBe('Previsión mostrada antes del aterrizaje');
-    expect(forecastSectionHtml(full, NOW)).not.toContain('antes del aterrizaje');
-  });
   it('avisos: 1 SIGMET que cruza la ruta → línea ámbar «1 aviso oficial (SIGMET)» con su etiqueta y «Ver detalles»', () => {
     const aviation = { sigmets: [{ label: 'Turbulencia fuerte', crosses: true, distanceKm: 0, raw: 'x' }], pireps: [] };
     const s = card({ ...full, aviation }).querySelector(':scope > summary');
@@ -338,7 +333,7 @@ describe('tarjeta de Turbulencias', () => {
     expect(segmentListHtml({ ...full, segments: [seg(0, 0, 119)] })).toContain('Ningún tramo con turbulencia.');
   });
   it('aviso legal fuera de #forecast-area (al final de la ficha, una vez); sin #aviation ni #map; ningún emoji', () => {
-    const doc = dom(`<div id="forecast-area">${forecastSectionHtml({ ...full, aviation: { sigmets: [{ label: 'x', crosses: true }], pireps: [] } }, NOW, { preLanding: true })}</div>`);
+    const doc = dom(`<div id="forecast-area">${forecastSectionHtml({ ...full, aviation: { sigmets: [{ label: 'x', crosses: true }], pireps: [] } }, NOW)}</div>`);
     const area = doc.querySelector('#forecast-area');
     expect(area.querySelector('.disclaimer')).toBeNull(); // si una nota sustituye la sección, el aviso no se va con ella
     const el = { innerHTML: '' };
