@@ -31,7 +31,7 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
 import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, keepPolling, endedNote, fetchTrack, fetchAdbTrack } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { LIVE_BASE } from './config.js';
 import { BUILD_ID } from './build.js';
@@ -471,8 +471,8 @@ const cardVisible = () => els.result.isConnected && Boolean(els.result.querySele
 // Con la ficha recibiendo «volando» de FR24, UN solo seguidor por ficha (identidad: tipo de consulta + vuelo físico)
 // vuelve a pedir cada 45 s EXACTAMENTE la misma consulta del radar (fetchOnce de showRadar / showAdbRadar, sin ?poll) y
 // pinta la respuesta por el camino de siempre (paintRadar → withRadar/withLanding → repaintFlight → avión y estela).
-// Nunca dos temporizadores: los repintados no crean otro y «Actualizar» del mismo vuelo físico conserva el mismo
-// (en espera mientras se consulta; su primera respuesta lo reprograma). Se para con otra búsqueda, «Nueva consulta»,
+// Nunca dos temporizadores ni dos caminos de consulta: los repintados no crean otro y «Actualizar» del mismo vuelo
+// físico conserva el mismo (en espera mientras rehace la ficha; luego él mismo hace la consulta: adoptLive). Se para con otra búsqueda, «Nueva consulta»,
 // otro tramo, clearFicha, Aena final, cancelado o desviado, aterrizado, 401/403 o un «no-aplica». Pestaña oculta: cero
 // peticiones. Un fallo no se pinta: la ficha se queda con la última lectura real.
 let live = null; // { key, ctx: { q, flight, ctx, stale, fetchOnce }, tracker }
@@ -485,19 +485,15 @@ function followLive(q, flight, ctx, stale, radar, fetchOnce) {
   const key = liveKey(q);
   if (live?.tracker.stopped) live = null; // uno que se paró solo (aterrizado, 401/403…) no impide crear otro
   if (live && live.key !== key) stopLive();
-  if (live) {
-    Object.assign(live.ctx, { q, flight, ctx, stale, fetchOnce });
-    // Mientras el sondeo siga (localizando o sin respuesta), manda él: el seguidor espera, sin pedir nada.
-    if (keepPolling(radar)) live.tracker.hold(); else live.tracker.feed(radar);
-    if (live.tracker.stopped) live = null;
-    return;
-  }
+  if (live) return; // ya hay UNA autoridad para este vuelo físico: ningún sondeo la sustituye ni la duplica
   if (radar?.state !== 'volando' || radar.source !== 'fr24' || !key || stale() || liveOver(q)) return;
   const c = { q, flight, ctx, stale, fetchOnce };
   const tracker = startLiveTracker({
     key,
     fetchOnce: () => c.fetchOnce({ poll: false }),
     onReading: r => paintRadar(c.q, c.flight, r, c.ctx, c.stale),
+    // Fallo de la consulta de «Actualizar»: paintRadar conserva la última lectura real sobre la base nueva de Aena.
+    onFailure: r => paintRadar(c.q, c.flight, r, c.ctx, c.stale),
     isActive: () => !c.stale() && cardVisible(),
     isOver: () => liveOver(c.q),
     // Si deja de ir al día (fallo, espera, pausa, parada) o vuelve, el avión puede pasar a atenuado o dejar de estarlo.
@@ -505,6 +501,17 @@ function followLive(q, flight, ctx, stale, radar, fetchOnce) {
     now: monoNow,
   });
   live = { key, ctx: c, tracker };
+}
+// «Actualizar» del mismo vuelo físico con el seguidor ya en marcha: la consulta de la ficha nueva la hace ESE seguidor
+// (refresh; con una petición suya en curso, se usa esa), nunca un pollRadar aparte. Así nunca hay dos caminos de
+// consulta del mismo vuelo, ni aunque una petición tarde minutos. → true si lo ha tomado.
+function adoptLive(q, flight, ctx, stale, fetchOnce) {
+  if (live?.tracker.stopped) live = null;
+  if (!live || live.key !== liveKey(q) || stale()) return false;
+  Object.assign(live.ctx, { q, flight, ctx, stale, fetchOnce });
+  live.tracker.refresh();
+  if (live.tracker.stopped) live = null;
+  return true;
 }
 // El sondeo de esta consulta no llega a arrancar o se agota sin respuesta útil: un seguidor en espera (traspaso de
 // «Actualizar») sale de ella como tras un fallo (siguiente intento a los 90 s), nunca se queda parado.
@@ -524,6 +531,7 @@ async function showAdbRadar(q, flight, stale, ctx) {
   if (adbRadarGate(q.adbLeg, q.adbMeta, Date.now(), { plannedMin: ctx?.plannedMin, requireIdentifier: false }).mode === 'none') { liveIdle(); return; }
   stopRadarPoll();
   const fetchOnce = ({ poll: isPoll }) => fetchAdbRadar(q.adbMeta.number, q.adbMeta.date, q.adbKey, undefined, undefined, { poll: isPoll });
+  if (adoptLive(q, flight, ctx, stale, fetchOnce)) return;
   const poll = pollRadar({
     fetchOnce,
     onResult: radar => { paintRadar(q, flight, radar, ctx, stale); followLive(q, flight, ctx, stale, radar, fetchOnce); },
@@ -542,6 +550,7 @@ async function showRadar(q, flight, stale, ctx = null) {
   q.etaCtx = ctx;
   // El mismo vuelo físico en la primera consulta, en todos los sondeos y en el seguimiento en vivo.
   const fetchOnce = ({ poll: isPoll }) => fetchRadar(q.schedule.al, q.schedule.n, undefined, undefined, { poll: isPoll, leg: physicalFlightKey(q.leg) });
+  if (adoptLive(q, flight, ctx, stale, fetchOnce)) return;
   const poll = pollRadar({
     fetchOnce,
     onResult: radar => { paintRadar(q, flight, radar, ctx, stale); followLive(q, flight, ctx, stale, radar, fetchOnce); },

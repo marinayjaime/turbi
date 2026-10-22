@@ -14,8 +14,9 @@ function harness({ answers = [flying()], visible = true, active = true, over = f
   const env = { visible, active, over };
   const fetchOnce = vi.fn(async () => { const a = answers.length > 1 ? answers.shift() : answers[0]; return typeof a === 'function' ? a() : a; });
   const onReading = vi.fn();
+  const onFailure = vi.fn();
   const tracker = startLiveTracker({
-    key: 'k1', fetchOnce, onReading, isActive: () => env.active, isOver: () => env.over, visible: () => env.visible,
+    key: 'k1', fetchOnce, onReading, onFailure, isActive: () => env.active, isOver: () => env.over, visible: () => env.visible,
     now: () => t, setTimer: (fn, ms) => { const id = ++seq; timers.set(id, { at: t + ms, fn }); return id; }, clearTimer: id => timers.delete(id),
   });
   const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
@@ -33,7 +34,7 @@ function harness({ answers = [flying()], visible = true, active = true, over = f
     await flush();
   }
   const pendingIn = () => { const n = [...timers.values()]; return n.length ? n.map(x => x.at - t) : []; };
-  return { tracker, fetchOnce, onReading, run, env, timers, pendingIn, flush, at: () => t };
+  return { tracker, fetchOnce, onReading, onFailure, run, env, timers, pendingIn, flush, at: () => t };
 }
 
 describe('liveDecision: qué hacer con cada respuesta', () => {
@@ -268,5 +269,81 @@ describe('startLiveTracker', () => {
     expect(h.timers.size).toBe(0);
     await h.run(600000);
     expect(h.fetchOnce).not.toHaveBeenCalled();
+  });
+});
+
+// «Actualizar» con el seguidor ya en marcha (decisión de Jaime, 22/10/2026): UNA sola autoridad por vuelo físico. La
+// consulta de «Actualizar» la hace el MISMO seguidor (refresh), nunca un sondeo paralelo; con una petición ya en curso,
+// se usa esa (ninguna segunda); una petición colgada no deja nacer otro ciclo.
+describe('startLiveTracker: refresh («Actualizar») con una sola autoridad', () => {
+  // fetchOnce controlable: cada petición queda pendiente hasta resolve(i, valor); cuenta las simultáneas.
+  function gated() {
+    const pend = [];
+    let open = 0, maxOpen = 0;
+    const answers = [];
+    const h = harness({ answers: [() => new Promise(r => { open++; maxOpen = Math.max(maxOpen, open); pend.push(v => { open--; r(v); }); })] });
+    return { ...h, resolve: (v, i = 0) => pend.splice(i, 1)[0](v), get maxOpen() { return maxOpen; }, get open() { return open; }, answers };
+  }
+  it('refresh pide en el acto (con el mismo seguidor), pinta la lectura y vuelve a 45 s', async () => {
+    const h = harness();
+    await h.run(10000);
+    h.tracker.refresh();
+    await h.flush();
+    expect(h.fetchOnce).toHaveBeenCalledTimes(1);
+    expect(h.onReading).toHaveBeenCalledTimes(1);
+    expect(h.pendingIn()).toEqual([45000]);
+  });
+  it('refresh con fallo: se entrega a onFailure (la ficha nueva decide cómo conservar la última lectura real) y espera 90 s', async () => {
+    const h = harness({ answers: [unavailable('servidor')] });
+    h.tracker.refresh();
+    await h.flush();
+    expect(h.onReading).not.toHaveBeenCalled();
+    expect(h.onFailure).toHaveBeenCalledTimes(1);
+    expect(h.pendingIn()).toEqual([90000]);
+    await h.run(90000); // los ciclos normales no entregan los fallos
+    expect(h.onFailure).toHaveBeenCalledTimes(1);
+  });
+  it('refresh con una petición del ciclo en curso: ninguna segunda petición; esa respuesta es la de «Actualizar»', async () => {
+    const g = gated();
+    await g.run(45000); // el ciclo pide y se queda esperando
+    expect(g.fetchOnce).toHaveBeenCalledTimes(1);
+    g.tracker.hold(); // run() de «Actualizar»
+    g.tracker.refresh(); // showRadar de la consulta nueva
+    await g.flush();
+    expect(g.fetchOnce).toHaveBeenCalledTimes(1);
+    g.resolve(unavailable('timeout'));
+    await g.flush();
+    expect(g.onFailure).toHaveBeenCalledTimes(1); // entregada a la ficha nueva
+    expect(g.pendingIn()).toEqual([90000]);
+    expect(g.maxOpen).toBe(1);
+  });
+  it('una respuesta que llega en espera (hold) se guarda y la usa refresh, sin pedir otra', async () => {
+    const g = gated();
+    await g.run(45000);
+    g.tracker.hold();
+    g.resolve(flying());
+    await g.flush();
+    expect(g.onReading).not.toHaveBeenCalled();
+    g.tracker.refresh();
+    await g.flush();
+    expect(g.fetchOnce).toHaveBeenCalledTimes(1);
+    expect(g.onReading).toHaveBeenCalledTimes(1);
+    expect(g.pendingIn()).toEqual([45000]);
+  });
+  it('petición colgada más de 3 min: ningún otro ciclo ni temporizador nace; al responder, una sola secuencia a 45 s', async () => {
+    const g = gated();
+    g.tracker.refresh();
+    await g.flush();
+    await g.run(200000);
+    expect(g.fetchOnce).toHaveBeenCalledTimes(1);
+    expect(g.timers.size).toBe(0);
+    g.tracker.onVisibility(); // ni un evento de visibilidad abre otro
+    g.tracker.refresh(); // ni otra pulsación
+    expect(g.fetchOnce).toHaveBeenCalledTimes(1);
+    g.resolve(flying());
+    await g.flush();
+    expect(g.pendingIn()).toEqual([45000]);
+    expect(g.timers.size).toBe(1);
+    expect(g.maxOpen).toBe(1);
   });
 });

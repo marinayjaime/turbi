@@ -2881,18 +2881,151 @@ describe('seguimiento en vivo con Flightradar24', () => {
     } finally { vi.useRealTimers(); }
   }, 30000);
 
-  it('Importante 2) «Actualizar» sin respuesta persistente: el seguidor no se queda en espera para siempre', async () => {
+  // Una sola autoridad (22/10/2026): la consulta de «Actualizar» la hace el MISMO seguidor; sin pollRadar paralelo.
+  it('Importante 2) «Actualizar» sin respuesta persistente: un solo camino — ningún ?poll=1; el seguidor reintenta a 90, 180… s', async () => {
     fakeAll();
     try {
       await load({ radar: k => (k === 0 ? reading(0) : null) });
       mark();
       await to(20);
-      await refreshNow();
-      const own = () => radarCalls().slice(2).filter(u => new URL(u).searchParams.get('poll') === null);
-      await to(20 + 175);
-      expect(own()).toHaveLength(0); // en espera (el sondeo de «Actualizar» manda)
-      await to(20 + 285); // tope de 3 min + espera de fallo de 90 s
-      expect(own().length).toBeGreaterThanOrEqual(1);
+      await refreshNow(); // t ≈ 20 s: la consulta de «Actualizar» (sin respuesta)
+      const at = (performance.now() - t0) / 1000;
+      await to(at + 89);
+      expect(radarCalls()).toHaveLength(2);
+      await to(at + 92);
+      expect(radarCalls()).toHaveLength(3); // espera de fallo de 90 s
+      await to(at + 90 + 179);
+      expect(radarCalls()).toHaveLength(3);
+      await to(at + 90 + 182);
+      expect(radarCalls()).toHaveLength(4); // 180 s
+      expect(radarCalls().filter(u => new URL(u).searchParams.get('poll') !== null)).toEqual([]); // ningún sondeo paralelo
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('una sola autoridad (reproducción exacta): «Actualizar» y el radar sin responder más de 3 min (timeouts de 20 s) → al recuperarse, un solo ciclo y una sola secuencia', async () => {
+    fakeAll();
+    try {
+      const { L, log } = liveLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
+      let k = 0, open = 0, maxOpen = 0, down = false;
+      const log2 = []; // [segundos desde t0, ?poll]
+      await openApp(vi.fn((url, o) => {
+        const u = String(url);
+        if (u.startsWith(`${LIVE_BASE}/radar/`)) {
+          calls.push(u);
+          log2.push([Math.round((performance.now() - t0) / 1000), new URL(u).searchParams.get('poll')]);
+          const n = k++;
+          open++; maxOpen = Math.max(maxOpen, open);
+          const done = r => { open--; return r ? json(r) : notFound; };
+          // Sin conexión: cada petición agota el timeout de 20 s del navegador (fetchRadar → null).
+          if (down) return new Promise(r => setTimeout(() => r(done(null)), 20000));
+          return Promise.resolve(done(reading(n)));
+        }
+        if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(json(track())); }
+        return base(url, o);
+      }));
+      t0 = performance.now();
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1 && planeOnScreen(log), 'ficha con el avión');
+      await networkIdle();
+      mark();
+      // 1) vuelo FR24 en seguimiento
+      await to(46);
+      expect(radarCalls()).toHaveLength(2);
+      // 2) «Actualizar» (t ≈ 60 s); 3) su petición no responde durante más de 3 minutos
+      // 2) «Actualizar» (t ≈ 60 s); 3) el radar no responde durante más de 3 minutos (hasta t ≈ 400 s)
+      await to(60);
+      down = true;
+      $('#refresh').click();
+      await until(() => radarCalls().length === 3, 'consulta de «Actualizar»');
+      await to(400);
+      // Solo el seguidor reintenta, con su espera creciente (90, 180 s…): la de «Actualizar» a ~60 s (→ null a ~80),
+      // ~170 (→ ~190) y ~370. Ningún sondeo de «Actualizar» en paralelo.
+      expect(radarCalls().length).toBeLessThanOrEqual(5);
+      // 4) se recupera la conexión
+      down = false;
+      const before = radarCalls().length;
+      await to(800);
+      // 5) un solo ciclo de consulta y una sola secuencia de peticiones.
+      expect(maxOpen).toBe(1); // nunca dos peticiones a la vez
+      expect(log2.every(([, poll]) => poll === null)).toBe(true); // ni un ?poll=1: ningún pollRadar paralelo
+      const gaps = log2.slice(1).map(([s1], i) => s1 - log2[i][0]);
+      expect(gaps.filter((g, i) => i !== 1 && g < 44)).toEqual([]); // nunca menos de 45 s entre dos (salvo «Actualizar», manual)
+      expect(radarCalls().length).toBeGreaterThan(before); // tras recuperarse, sigue la misma secuencia…
+      const tail = log2.slice(-3).map(([t]) => t);
+      expect(tail[2] - tail[1]).toBeGreaterThanOrEqual(44); // …a 45 s
+      expect(tail[2] - tail[1]).toBeLessThanOrEqual(46);
+      expect(planeOnScreen(log)).toBe(true);
+      expect(log.maps).toBe(1);
+      expect(trackCalls()).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('una sola autoridad: «Actualizar» con la petición del radar colgada 5 min (> 3) y luego recuperada → un solo ciclo y una sola secuencia', async () => {
+    fakeAll();
+    try {
+      const { L, log } = liveLeaflet();
+      vi.stubGlobal('L', L);
+      const { d, leg } = flyingLeg();
+      const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
+      let k = 0, open = 0, maxOpen = 0, release = null;
+      const log2 = []; // [segundos desde t0, ?poll]
+      await openApp(vi.fn((url, o) => {
+        const u = String(url);
+        if (u.startsWith(`${LIVE_BASE}/radar/`)) {
+          calls.push(u);
+          log2.push([Math.round((performance.now() - t0) / 1000), new URL(u).searchParams.get('poll')]);
+          const n = k++;
+          open++; maxOpen = Math.max(maxOpen, open);
+          const done = r => { open--; return r ? json(r) : notFound; };
+          // 3.ª petición (la de «Actualizar»): se cuelga hasta release() (conexión recuperada).
+          if (n === 2) return new Promise(r => { release = () => r(done(reading(n))); });
+          return Promise.resolve(done(reading(n)));
+        }
+        if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(json(track())); }
+        return base(url, o);
+      }));
+      t0 = performance.now();
+      await search('IB715', d);
+      await until(() => $('.telemetry') && log.maps === 1 && planeOnScreen(log), 'ficha con el avión');
+      await networkIdle();
+      mark();
+      // 1) vuelo FR24 en seguimiento
+      await to(46);
+      expect(radarCalls()).toHaveLength(2);
+      // 2) «Actualizar» (t ≈ 60 s); 3) su petición no responde durante más de 3 minutos
+      await to(60);
+      $('#refresh').click();
+      await until(() => radarCalls().length === 3, 'consulta de «Actualizar»');
+      // 5 min colgada: más que el tope de espera (3 min) + la espera de fallo (90 s), que antes abría un segundo camino.
+      await to(60 + 300);
+      expect(radarCalls()).toHaveLength(3); // nada nuevo mientras está colgada: ni ciclo, ni sondeo, ni tope de espera
+      expect(open).toBe(1);
+      // 4) se recupera la conexión
+      release();
+      await networkIdle();
+      const back = (performance.now() - t0) / 1000;
+      expect(log.markers[0].ll).not.toBeNull();
+      // 5) un solo ciclo: la siguiente a los +45 s, después cada 45 s; nunca dos a la vez ni ?poll=1
+      await to(back + 44);
+      expect(radarCalls()).toHaveLength(3);
+      await to(back + 46);
+      expect(radarCalls()).toHaveLength(4);
+      await to(back + 91);
+      expect(radarCalls()).toHaveLength(5);
+      await to(back + 134);
+      expect(radarCalls()).toHaveLength(5);
+      await to(back + 136);
+      expect(radarCalls()).toHaveLength(6);
+      expect(maxOpen).toBe(1);
+      expect(log2.every(([, poll]) => poll === null)).toBe(true);
+      // Una sola secuencia: entre dos peticiones seguidas, nunca menos de 45 s (salvo la de «Actualizar», manual).
+      const gaps = log2.slice(1).map(([s1], i) => s1 - log2[i][0]);
+      expect(gaps.filter((g, i) => i !== 1 && g < 44)).toEqual([]);
+      expect(log.maps).toBe(1);
+      expect(trackCalls()).toHaveLength(1);
     } finally { vi.useRealTimers(); }
   }, 30000);
 

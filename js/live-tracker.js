@@ -11,6 +11,8 @@
 //     de Retry-After (y nunca antes de 45 s); 401/403 → se para (sin bucles).
 //   - Se para con un final definitivo (aterrizado, no-aplica, una respuesta que ya no es de FR24) o cuando isOver() /
 //     isActive() lo dicen (Aena final, cancelado, desviado, otra búsqueda, ficha cerrada…).
+//   - UNA sola autoridad por vuelo físico: «Actualizar» no abre otro camino; la consulta la hace este seguidor (refresh),
+//     reutilizando la petición en curso si la hay; nunca hay dos peticiones a la vez (inflight) ni dos temporizadores.
 //   - Pestaña oculta (visibilityState distinto de 'visible'): cero peticiones; al volver, si ya tocaba, pide en el acto.
 //   - onTime: el seguidor va al día (activo, visible, sin fallos ni espera): la app no atenúa el avión entre lecturas.
 //     onChange() avisa cuando eso puede haber cambiado (fallo, espera, pausa, parada, lectura nueva).
@@ -41,55 +43,85 @@ export function liveDecision(radar, failures = 0) {
 // isOver(): el vuelo ya no está en curso (final de Aena, cancelado, desviado, aterrizado); visible(): pestaña visible.
 // now: reloj monotónico. La primera lectura ya está pintada: el primer ciclo, a los firstDelayMs.
 // → { key, hold(), feed(radar), onVisibility(), stop(), stopped, pending, onTime }.
-export function startLiveTracker({ key, fetchOnce, onReading, isActive = () => true, isOver = () => false, onChange = () => {},
-  visible = () => globalThis.document?.visibilityState === 'visible', now = () => globalThis.performance?.now?.() ?? Date.now(),
-  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), firstDelayMs = LIVE_INTERVAL_MS,
-  holdMaxMs = LIVE_HOLD_MAX_MS }) {
-  let timer = null, stopped = false, held = false, inflight = false, failures = 0, dueAt = null;
+export function startLiveTracker({ key, fetchOnce, onReading, onFailure = () => {}, isActive = () => true, isOver = () => false,
+  onChange = () => {}, visible = () => globalThis.document?.visibilityState === 'visible',
+  now = () => globalThis.performance?.now?.() ?? Date.now(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id),
+  firstDelayMs = LIVE_INTERVAL_MS, holdMaxMs = LIVE_HOLD_MAX_MS }) {
+  const NONE = Symbol('sin respuesta guardada');
+  // inflight: hay UNA petición en curso (nunca dos); parked: respuesta que llegó en espera (hold), para refresh;
+  // refreshing: la respuesta siguiente es la de «Actualizar» (también un fallo se entrega, a onFailure).
+  let timer = null, stopped = false, held = false, inflight = false, failures = 0, dueAt = null, parked = NONE, refreshing = false;
   const clear = () => { if (timer !== null) clearTimer(timer); timer = null; };
   const changed = () => { try { onChange(); } catch { /* solo presentación */ } };
-  const stop = () => { if (stopped) return; stopped = true; held = false; clear(); changed(); };
+  const stop = () => { if (stopped) return; stopped = true; held = false; parked = NONE; clear(); changed(); };
   // Programa el siguiente ciclo para dentro de ms; con la pestaña oculta solo apunta cuándo tocaría (pausa).
   const schedule = ms => {
     clear();
     dueAt = now() + ms;
     if (visible()) timer = setTimer(cycle, ms);
   };
-  const handle = (radar, paint) => {
+  const handle = (radar, paint, failToo = false) => {
     const d = liveDecision(radar, failures);
     failures = d.failures;
-    if (d.paint && paint) onReading(radar);
+    if (paint && d.paint) onReading(radar);
+    else if (paint && failToo) onFailure(radar);
     if (d.stop || isOver()) { stop(); return; }
     schedule(d.delayMs);
     changed();
   };
   async function cycle() {
     timer = null;
-    if (stopped || held) return;
+    if (stopped || held || inflight) return;
     if (!isActive() || isOver()) { stop(); return; }
     if (!visible()) { changed(); return; } // pausa: onVisibility la reanuda
     inflight = true;
     let radar = null;
     try { radar = await fetchOnce(); } catch { radar = null; }
     inflight = false;
-    if (stopped || held) return; // «Actualizar» trae su propia lectura
+    if (stopped) return;
+    if (held) { parked = radar; return; } // «Actualizar» en marcha: esta respuesta será la suya (refresh)
     if (!isActive()) { stop(); return; }
-    handle(radar, true);
+    const failToo = refreshing;
+    refreshing = false;
+    handle(radar, true, failToo);
   }
+  // Sale de la espera: con una respuesta guardada, la usa; con una petición en curso, la espera; si no, pide ya.
+  const release = asRefresh => {
+    held = false;
+    clear();
+    if (asRefresh) refreshing = true;
+    if (parked !== NONE) {
+      const r = parked;
+      parked = NONE;
+      if (!isActive()) { stop(); return; }
+      const failToo = refreshing;
+      refreshing = false;
+      handle(r, true, failToo);
+      return;
+    }
+    if (inflight) { changed(); return; }
+    if (asRefresh) cycle();
+    else handle(null, false); // tope de la espera sin nada: como tras un fallo
+  };
   schedule(firstDelayMs);
   return {
     key,
-    // En espera (p. ej. «Actualizar» del mismo vuelo en curso): sin ciclo hasta feed() o, como mucho, holdMaxMs; pasado
-    // el tope, sale como tras un fallo (espera creciente).
+    // En espera (run() de «Actualizar» mientras rehace la ficha): ningún ciclo nuevo; una petición en curso sigue y su
+    // respuesta se guarda para refresh. Tope holdMaxMs: sale sola (con la respuesta guardada, la en curso o, si no hay
+    // nada, como tras un fallo). Nunca abre una segunda petición.
     hold() {
       if (stopped) return;
       held = true;
       clear();
-      timer = setTimer(() => { timer = null; if (stopped || !held) return; held = false; handle(null, false); }, holdMaxMs);
+      timer = setTimer(() => { timer = null; if (!stopped && held) release(false); }, holdMaxMs);
       changed();
     },
-    // Lectura que ya pintó otro camino (la primera de «Actualizar»): decide el siguiente ciclo sin volver a pintarla.
-    feed(radar) { if (stopped) return; held = false; handle(radar, false); },
+    // «Actualizar» (showRadar de la consulta nueva): la consulta la hace ESTE seguidor, nunca un sondeo aparte. Con una
+    // petición en curso, se usa esa; con una respuesta guardada, esa; si no, una petición en el acto. La respuesta se
+    // pinta (onReading) y, si falla, se entrega a onFailure.
+    refresh() { if (!stopped) release(true); },
+    // Lectura que ya pintó otro camino: decide el siguiente ciclo sin volver a pintarla.
+    feed(radar) { if (stopped || inflight) return; held = false; parked = NONE; handle(radar, false); },
     onVisibility() {
       if (stopped || held || inflight) return;
       if (!visible()) { clear(); changed(); return; }
@@ -103,6 +135,7 @@ export function startLiveTracker({ key, fetchOnce, onReading, isActive = () => t
     get stopped() { return stopped; },
     get pending() { return timer !== null && !held; },
     get held() { return held && !stopped; },
+    get inflight() { return inflight; },
     get onTime() { return !stopped && !held && failures === 0 && visible() && (timer !== null || inflight); },
   };
 }
