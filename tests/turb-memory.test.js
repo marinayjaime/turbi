@@ -33,15 +33,17 @@ describe('resumen de turbulencias por vuelo físico (js/turb-memory.js)', () => 
     expect(recallTurb('mal', NOW, s)).toBeNull();
   });
 
-  it('Resumen del vuelo: «Turbulencias estimadas» con el titular y el máximo previsto; nunca como turbulencia observada', () => {
+  it('Resumen del vuelo: «Turbulencias estimadas» con el titular y el máximo estimado, en pasado; nunca como turbulencia observada', () => {
     const card = { number: 'IB 1668', title: 'IB 1668', route: 'Palma a Madrid', tabs: [], status: { text: 'Ha llegado', tone: 'ok' },
       o: 'PMI', a: 'MAD', cities: { o: 'Palma', a: 'Madrid' }, phase: 'terminado', source: 'aena', depFinal: true, arrFinal: true,
       dep: { date: '2026-10-22', time: '10:00' }, arr: { date: '2026-10-22', time: '11:03' }, depMs: NOW, arrMs: NOW + 63 * 60000, km: 546 };
     const html = flightCardHtml({ ...card, turbEstimate: { headline: 'Turbulento', maxLevel: 3, maxDurationMin: 9, queriedAt: NOW } }, { nowMs: NOW, monoMs: NOW });
     const sum = html.slice(html.indexOf('data-card="flight-summary"'));
     expect(sum).toContain('data-fs="turbulence"');
-    expect(sum).toMatch(/Turbulencias estimadas<\/span><span class="v"><span class="lvl-ink3">Turbulento<\/span><span class="fs-sub">Máximo previsto: Fuerte · ≈ 10 min<\/span>/);
-    expect(sum).not.toMatch(/fueron|tuvo turbulencia|reales/i);
+    expect(sum).toMatch(/Turbulencias estimadas<\/span><span class="v"><span class="lvl-ink3">Turbulento<\/span><span class="fs-sub">Máximo estimado: Fuerte · ≈ 10 min<\/span>/);
+    expect(sum).not.toMatch(/fueron|tuvo turbulencia|reales|previst/i); // en pasado y como estimación
+    const calm = flightCardHtml({ ...card, turbEstimate: { headline: 'Tranquilo', maxLevel: 0, maxDurationMin: 0, queriedAt: NOW } }, { nowMs: NOW, monoMs: NOW });
+    expect(calm).toContain('<span class="fs-sub">No se estimó turbulencia relevante</span>');
     expect(flightCardHtml(card, { nowMs: NOW, monoMs: NOW })).not.toContain('Turbulencias estimadas'); // sin resumen, nada
   });
 });

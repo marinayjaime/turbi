@@ -330,10 +330,11 @@ function flightSummaryHtml(c) {
         </div>
       </section>`;
 }
-// Titular y, debajo, el máximo previsto con la duración aproximada de ese nivel (el mismo redondeo que la tarjeta).
+// Titular y, debajo, el máximo estimado con la duración aproximada de ese nivel (el mismo redondeo que la tarjeta). En
+// pasado: es lo que Turbi estimó para un vuelo ya terminado, no lo que el avión midió.
 function turbEstimateHtml(t) {
   const mins = Number.isFinite(t.maxDurationMin) && t.maxDurationMin > 0 ? ` · ≈ ${Math.max(5, Math.round(t.maxDurationMin / 5) * 5)} min` : '';
-  const line = t.maxLevel > 0 ? `Máximo previsto: ${TURB_LEVELS[t.maxLevel]}${mins}` : 'Sin turbulencia relevante prevista';
+  const line = t.maxLevel > 0 ? `Máximo estimado: ${TURB_LEVELS[t.maxLevel]}${mins}` : 'No se estimó turbulencia relevante';
   return `<span class="lvl-ink${t.maxLevel}">${esc(t.headline)}</span><span class="fs-sub">${esc(line)}</span>`;
 }
 

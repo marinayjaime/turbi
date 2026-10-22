@@ -1920,7 +1920,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         await until(() => ($('#result .status')?.textContent ?? '').includes('En tierra'), 'En tierra');
         turbGone();
         expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
-        expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo Sin turbulencia relevante prevista');
+        expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo No se estimó turbulencia relevante');
         expect([...$('#result').children].map(c => c.id || c.dataset.card || c.className)).toEqual(['summary', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
         expect(meteoCalls()).toHaveLength(meteo);
         expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
@@ -1979,7 +1979,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         await aena(render, { st: 'LND', sta: 'LND' });
         await until(() => ($('#result .status')?.textContent ?? '').includes('En tierra'), 'En tierra');
         turbGone();
-        expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo Sin turbulencia relevante prevista');
+        expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo No se estimó turbulencia relevante');
         expect(meteoCalls()).toHaveLength(meteo);
       } finally { vi.useRealTimers(); }
     });
@@ -2030,7 +2030,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       await search('UX6031', d);
       await until(() => turbEstimate(), 'Turbulencias estimadas');
       await networkIdle();
-      expect(turbEstimate()).toBe('Turbulencias estimadas Mayormente tranquilo Máximo previsto: Ligera · ≈ 10 min');
+      expect(turbEstimate()).toBe('Turbulencias estimadas Mayormente tranquilo Máximo estimado: Ligera · ≈ 10 min');
       turbGone();
       expect(meteoCalls()).toHaveLength(0);
     });
