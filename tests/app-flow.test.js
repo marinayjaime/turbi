@@ -170,6 +170,21 @@ const SHELL_OK = { flight: true, turbulencias: true, area: true, error: false };
 const radarCalls = () => calls.filter(u => u.includes('/radar/'));
 // Avanza el reloj simulado; entre temporizador y temporizador se resuelven las promesas (cada sondeo programa el siguiente).
 async function advance(ms) { await vi.advanceTimersByTimeAsync(ms); await networkIdle(); }
+
+// Reloj virtual completamente controlado (sin shouldAdvanceTime): solo avanza con vi.advanceTimersByTimeAsync, nunca
+// con el tiempo real que tarde la máquina. Para esperar se ceden vueltas del bucle de eventos real (setImmediate no se
+// simula): se resuelven promesas, fetch simulado e import sin mover el reloj virtual ni un milisegundo.
+const FROZEN_FAKES = ['setTimeout', 'clearTimeout', 'Date', 'performance'];
+const frozenClock = now => vi.useFakeTimers({ toFake: FROZEN_FAKES, ...(now === undefined ? {} : { now }) });
+const realTurn = () => new Promise(r => setImmediate(r));
+async function untilFrozen(check, what, turns = 2000) {
+  for (let i = 0; i < turns; i++) { if (check()) return; await realTurn(); }
+  throw new Error(`No llegó (reloj virtual parado en ${new Date(Date.now()).toISOString()}): ${what}`);
+}
+// Red en reposo con el reloj parado: 50 vueltas seguidas sin peticiones nuevas.
+async function networkIdleFrozen() {
+  for (let n = calls.length, quiet = 0; quiet < 50; quiet = calls.length === n ? quiet + 1 : 0, n = calls.length) await realTurn();
+}
 const ryanairLeg = (minAgo = 45) => {
   const dep = Date.now() - minAgo * 60000;
   const d = dayOf(dep), sd = formatLocal(dep, MAD);
@@ -1412,16 +1427,20 @@ describe('refresco de Aena para vuelos programados y datos stale', () => {
     } finally { vi.useRealTimers(); }
   });
   it('programado a 8 h con datos al día → sin refresco continuo (ni una consulta más en 1 h)', async () => {
-    fake();
+    frozenClock(T);
     try {
       const render = { fail: false, updated: iso(T - 5 * 60000), legs: [leg('22:00')] };
       await openApp(app({ pagesLeg: leg('22:00'), pagesUpdated: iso(T - 5 * 60000), render }));
       await search('IB1668', D);
-      await until(() => $('#result .flight'), 'ficha');
-      await networkIdle();
+      await untilFrozen(() => $('#result .flight'), 'ficha');
+      await networkIdleFrozen();
+      expect(Date.now()).toBe(T); // nada del montaje ha movido el reloj virtual
       const before = renderCalls().length;
-      await advance(3600000);
+      await vi.advanceTimersByTimeAsync(3600000); // 1 h virtual: cada temporizador corre en su instante, sin esperar
+      await networkIdleFrozen();
+      expect(Date.now()).toBe(T + 3600000);
       expect(renderCalls()).toHaveLength(before);
+      expect(vi.getTimerCount()).toBe(0); // ningún sondeo programado queda vivo
     } finally { vi.useRealTimers(); }
   });
   it('programado a 8 h con datos de hace 4 h → un solo intento de traer datos nuevos, y nada más', async () => {
@@ -1681,27 +1700,33 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
   });
 
   it('seenS 1 y posAgeS 50: el avión se atenúa a los ~10 s y desaparece a los ~130 s (manda la posición); cero peticiones', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
+    frozenClock();
     try {
       const { L, log } = fakeLeaflet();
       vi.stubGlobal('L', L);
       const { d, leg } = flyingLeg();
+      const t0 = Date.now();
       await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 1, posAgeS: 50, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
       await search('IB715', d);
-      await until(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
-      await networkIdle();
+      await untilFrozen(() => $('.telemetry') && log.maps === 1, 'panel ADS-B y mapa');
+      await networkIdleFrozen();
+      expect(Date.now()).toBe(t0); // la lectura llegó con el reloj parado: posición de 50 s exactos
       expect(planeOnScreen(log)).toBe(true);
       const before = calls.length;
-      await vi.advanceTimersByTimeAsync(9000);
-      expect(planeOnScreen(log)).toBe(true); // ~59 s de posición
+      await vi.advanceTimersByTimeAsync(9999); // posición de 59,999 s
+      expect(planeOnScreen(log)).toBe(true);
       expect(planeDimmed(log)).toBe(false);
-      await vi.advanceTimersByTimeAsync(2000); // ~61 s: la posición pasa de 60 s con el último mensaje de hace ~12 s
+      await vi.advanceTimersByTimeAsync(2); // 60,001 s: la posición pasa de 60 s con el último mensaje de hace ~11 s
       expect(planeDimmed(log)).toBe(true);
       expect($('[data-signal-level="live"]')).not.toBeNull();
-      await vi.advanceTimersByTimeAsync(118000); // ~179 s
+      await vi.advanceTimersByTimeAsync(119998); // 179,999 s
       expect(planeOnScreen(log)).toBe(true);
-      await vi.advanceTimersByTimeAsync(2000); // ~181 s
+      expect(planeDimmed(log)).toBe(true);
+      await vi.advanceTimersByTimeAsync(2); // 180,001 s
       expect(planeOnScreen(log)).toBe(false);
+      // Pendientes solo los propios de «volando»: refresco de Aena y los contadores de 1 s (señal y distancia); el del
+      // avión ya no, porque no queda nada que mostrar.
+      expect(vi.getTimerCount()).toBe(3);
       expect(calls.slice(before).filter(u => !u.includes('/flights/'))).toEqual([]);
     } finally { vi.useRealTimers(); }
   });
