@@ -173,6 +173,7 @@ describe('renderForecast', () => {
   });
 });
 
+import { turbNowHtml } from '../js/ui-forecast.js';
 import { flightShellHtml, forecastSectionHtml, forecastUnavailableHtml, FORECAST_UNAVAILABLE, forecastLoadingHtml, forecastNoteHtml, weatherAlertsHtml,
   segmentListHtml, explainHtml } from '../js/ui-forecast.js';
 describe('la ficha primero; el pronóstico en su propia sección', () => {
@@ -354,5 +355,17 @@ describe('tarjeta de Turbulencias', () => {
       expect(html).not.toMatch(/\p{Extended_Pictographic}/u);
     }
     expect(dom(forecastNoteHtml('a < b')).querySelector('.note').textContent).toBe('a < b');
+  });
+});
+
+describe('«Ahora» en la tarjeta de Turbulencias', () => {
+  it('la turbulencia del punto se dice ESTIMADA (la posición es real, la turbulencia no se observa) y el próximo cambio, aproximado', () => {
+    const text = now => [...new JSDOM(`<div>${turbNowHtml(now)}</div>`).window.document.querySelectorAll('.kv > span, .turb-now-next')]
+      .map(e => e.textContent.replace(/\s+/g, ' ').trim()).join(' ');
+    expect(text({ level: 0, next: { level: 1, inMin: 17 } })).toBe('Ahora Tranquilo Próximo cambio: Ligera estimada en ≈ 15 min');
+    expect(text({ level: 2, next: { level: 0, inMin: 72 } })).toBe('Ahora Turbulencia moderada estimada Próximo cambio: Tranquilo en ≈ 1 h 10 min');
+    expect(text({ level: 3, next: null })).toBe('Ahora Turbulencia fuerte estimada Resto del vuelo: Sin cambios relevantes previstos');
+    expect(text({ level: null, next: null })).toContain('Sin datos en este tramo');
+    expect(turbNowHtml({ level: 1, next: null })).not.toMatch(/está teniendo|tiene turbulencia|observad|real/i);
   });
 });

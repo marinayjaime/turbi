@@ -163,6 +163,8 @@ describe('Actualizar con un pronóstico válido en caché', () => {
 
     expect(openMeteoCalls()).toHaveLength(first); // ni pronóstico ni meta.json: todo de la caché
     expect($('#result .flight').textContent).toContain('IB 1668');
+    expect($('#turb-now').hidden).toBe(true); // antes del despegue: solo la previsión, sin «Ahora»
+    expect($('#timeline .tnow')).toBeNull();
     expect(area()).not.toContain(FORECAST_UNAVAILABLE);
   });
 });
@@ -177,7 +179,7 @@ const TURB_GONE = { flight: true, turbulencias: false, area: true, error: false 
 function turbGone() {
   expect(shell()).toEqual(TURB_GONE);
   expect($('#forecast-area').hidden).toBe(true);
-  expect($('#forecast-area').innerHTML).toBe('');
+  expect($('#forecast-area').innerHTML).toBe(''); // y sin «Ahora» (#turb-now vive en la tarjeta)
   expect($('#map-card')).not.toBeNull();
   expect($('details[data-card="advanced"]')).not.toBeNull();
 }
@@ -2653,11 +2655,11 @@ describe('seguimiento en vivo con Flightradar24', () => {
       lastAt: new Date((s - 60) * 1000).toISOString() };
   };
   // radar(k): la respuesta a la k-ésima petición a /radar (null = 404, sin respuesta). render: refresco de Aena opcional.
-  async function load({ radar = k => reading(k), render = null, extraFlights = {} } = {}) {
+  async function load({ radar = k => reading(k), render = null, extraFlights = {}, openMeteo = () => tooMany } = {}) {
     const { L, log } = liveLeaflet();
     vi.stubGlobal('L', L);
     const { d, leg } = flyingLeg();
-    const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] }, ...extraFlights }, openMeteo: () => tooMany });
+    const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] }, ...extraFlights }, openMeteo });
     let k = 0;
     await openApp(vi.fn((url, o) => {
       const u = String(url);
@@ -2698,6 +2700,41 @@ describe('seguimiento en vivo con Flightradar24', () => {
       expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo); // sin meteorología en el seguimiento
       expect(log.maps).toBe(1);
       expect(log.mapsRemoved).toBe(0);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('«Ahora» en Turbulencias: aparece con la posición real, la sigue con cada lectura de 45 s sin pedir nada y se quita cuando la posición caduca', async () => {
+    fakeAll();
+    try {
+      // Lecturas 0 y 1 con posición; desde la 2, «volando» sin posición ni distancia (FR24 la pierde).
+      const { log } = await load({ openMeteo: openMeteoOk, radar: k => (k < 2 ? reading(k) : reading(k, { lat: undefined, lon: undefined, posAgeS: undefined, remainingKm: undefined })) });
+      mark();
+      await until(() => $('#turb-now') && !$('#turb-now').hidden, '«Ahora»');
+      await networkIdle();
+      const now = () => [...document.querySelectorAll('#turb-now .k, #turb-now .v, #turb-now .turb-now-next')].map(e => e.textContent).join(' | ');
+      const x = () => parseFloat($('#timeline').style.getPropertyValue('--now-x'));
+      expect(now()).toContain('Ahora | Tranquilo'); // pronóstico en calma: nivel 0 del tramo, y en texto
+      expect(now()).toContain('Resto del vuelo: Sin cambios relevantes previstos');
+      expect($('#timeline .tchart .tnow').getAttribute('aria-hidden')).toBe('true'); // el marcador es decorativo
+      const mark0 = $('#timeline .tnow'), x0 = x();
+      expect(x0).toBeGreaterThan(50); // (51, −1): casi en Londres, en la segunda mitad del vuelo
+      expect(x0).toBeLessThan(100);
+      const meteo = calls.filter(u => u.includes('open-meteo')).length, radar = radarCalls().length;
+      await to(46); // la lectura del ciclo siguiente (B), sin ninguna petición más
+      await until(() => x() > x0, 'el marcador avanza');
+      expect($('#timeline .tnow')).toBe(mark0); // el mismo nodo: se desplaza (transición CSS), no se recrea
+      expect(radarCalls()).toHaveLength(radar + 1); // solo la lectura de siempre de los 45 s
+      expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo);
+      const x1 = x();
+      await to(46 + 120); // lecturas sin posición: se queda la última real (≤ 180 s), quieta
+      expect($('#turb-now').hidden).toBe(false);
+      expect(x()).toBe(x1);
+      await to(46 + 185); // la posición de B ya no vale: fuera «Ahora» (la tarjeta sigue igual)
+      expect($('#turb-now').hidden).toBe(true);
+      expect($('#timeline .tnow')).toBeNull();
+      expect($('#forecast-area [data-card="turbulence"] .tchart')).not.toBeNull();
+      expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo);
+      expect(log.maps).toBe(1);
     } finally { vi.useRealTimers(); }
   }, 30000);
 

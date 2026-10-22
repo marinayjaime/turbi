@@ -19,11 +19,11 @@ import { forecastView, aviationView } from './forecast.js';
 import { fetchModelRuns } from './models.js';
 import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviationHtml, offlineBanner,
   flightShellHtml, flightNoteHtml, forecastSectionHtml, forecastUnavailableHtml, forecastLoadingHtml, forecastNoteHtml, segmentListHtml,
-  weatherAlertsHtml } from './ui-forecast.js';
+  weatherAlertsHtml, turbNowHtml, turbNowMarkHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
-import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S } from './card-model.js';
+import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow } from './card-model.js';
 import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
@@ -1116,6 +1116,38 @@ function paintForecastSection(view) {
   area.innerHTML = forecastSectionHtml(view, Date.now(), { open: openCards() });
   reopenCards();
   wireSpeak(view);
+  paintNow();
+}
+
+// «Ahora» en la tarjeta de Turbulencias (vuelo en curso con pronóstico v2; turbNow de js/card-model.js). Posición: la
+// del avión que se ve en el mapa (planeFor: las mismas reglas de 60/180 s y de la última posición real conocida,
+// lastFix); sin ella, la distancia restante de esa misma lectura mientras siga vigente (≤ PLANE_LAST_KNOWN_S). Sin nada
+// de eso, ni marcador ni texto. Cero peticiones y ningún temporizador propio: lo llaman el pintado del pronóstico, cada
+// repintado de la ficha (cada lectura real) y el contador de señal de 1 s que ya existe (así se quita a tiempo).
+function nowOnForecast(card = shownCard, view = currentView) {
+  if (!card || !view?.route || flightPhase(card) !== 'en-curso') return null;
+  const seen = planeFor(card);
+  const from = seen?.from ?? card;
+  if (from.radar?.state !== 'volando') return null;
+  const ageS = signalState(from.radar, from.radarReceivedMono, monoNow())?.ageS;
+  const remainingKm = Number.isFinite(ageS) && ageS <= PLANE_LAST_KNOWN_S ? from.radar.remainingKm : null;
+  return turbNow(view, { pos: seen?.pos ?? null, remainingKm });
+}
+function paintNow() {
+  const timeline = $in('timeline'), slot = $in('turb-now');
+  if (!timeline || !slot) return;
+  const now = nowOnForecast();
+  if (!now) {
+    for (const el of timeline.querySelectorAll('.tnow, .tnow-past')) el.remove();
+    if (!slot.hidden) { slot.hidden = true; slot.innerHTML = ''; }
+    return;
+  }
+  // El marcador solo se desplaza (transición CSS) cuando ya estaba: recién puesto, aparece en su sitio.
+  timeline.style.setProperty('--now-x', `${(Math.min(1, Math.max(0, now.frac)) * 100).toFixed(2)}%`);
+  if (!timeline.querySelector('.tnow')) timeline.querySelector('.tchart')?.insertAdjacentHTML('beforeend', turbNowMarkHtml());
+  const html = turbNowHtml(now);
+  if (slot.dataset.html !== html) { slot.innerHTML = html; slot.dataset.html = html; }
+  slot.hidden = false;
 }
 
 // Mapa de la ficha (Ruta prevista / Radar / Ruta realizada): se crea en cuanto se pinta el armazón, con la ruta en
@@ -1277,6 +1309,7 @@ function repaintFlight(card, stale) {
   if (title) title.textContent = mapTitle(flightPhase(card));
   paintMapFacts(card);
   showPlane(routeMap, card);
+  paintNow();
   if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
   if (els.result.scrollTop !== resultTop) els.result.scrollTop = resultTop;
   startSignal(card, stale);
@@ -1309,6 +1342,7 @@ function startSignal(card, stale) {
     if (aged) fresh = false;
     if (key !== painted) { painted = key; paintSignal(flight, sig); }
     if (sig.level !== level || aged) { level = sig.level; paintAdvancedFlight(card); } else paintAdvancedAge(sig, positionAgeS(card.radar, card.radarReceivedMono, now));
+    paintNow(); // «Ahora» se quita en cuanto su posición deja de valer (sin temporizador propio)
     signalTimer = setTimeout(tick, TICK_MS);
   };
   signalTimer = setTimeout(tick, TICK_MS);
@@ -1377,6 +1411,7 @@ async function forecastExtras(view, q, stale) {
       await nameSegments(view.segments, view.originIata);
       if (stale()) return;
       $in('timeline').innerHTML = timelineHtml(view);
+      paintNow(); // el marcador vive dentro de #timeline
       $in('segments').innerHTML = segmentListHtml(view); // la lista de tramos, con los lugares
     }),
     safely(async () => {

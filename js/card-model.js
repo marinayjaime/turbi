@@ -7,6 +7,7 @@
 import { STALE_MIN } from './eta.js';
 import { MAX_EXTRAPOLATION_S } from './radar-distance.js';
 import { formatLocal } from './time.js';
+import { distanceKm } from './route.js';
 
 const MIN = 60000;
 // Avión en el mapa (§10 bis y decisión del controlador de 21/10/2026): con una posición de PLANE_MAX_AGE_S o menos es
@@ -194,6 +195,61 @@ export function turbulenceBars(view, maxBars = 56) {
     bars.push({ level, seg });
   }
   return bars;
+}
+
+// «Ahora» en la gráfica de Turbulencias (vuelo en curso): en qué punto del pronóstico está el avión. Solo con datos
+// que Turbi ya tiene, sin pedir nada ni extrapolar. Misma correspondencia punto ↔ minuto que turbulenceBars (route[i]
+// en el minuto i · durationMin / (n − 1)), así el marcador cae sobre la barra que lo representa:
+//   1) pos (la posición real en pantalla, planeOnMap): se proyecta sobre la polilínea de view.route; a más de
+//      NOW_MAX_OFF_ROUTE_KM de ella no se sitúa (otra trayectoria, otro avión o un dato raro);
+//   2) si no, remainingKm (distancia restante del radar): la fracción recorrida a lo largo de la misma ruta.
+// level: el del tramo (view.segments) que contiene ese minuto, como la barra; null si allí no hay datos. next: el primer
+// tramo posterior con OTRO nivel (con datos): { level, inMin } en minutos del pronóstico; null si no cambia. Sin ruta
+// con coordenadas ni datos de posición válidos, null: no se inventa un «Ahora».
+export const NOW_MAX_OFF_ROUTE_KM = 150;
+export function turbNow(view, { pos = null, remainingKm = null } = {}) {
+  const route = view?.route ?? [];
+  const n = route.length;
+  const D = view?.durationMin;
+  if (n < 2 || !(D > 0) || !route.every(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))) return null;
+  const t = (Number.isFinite(pos?.lat) && Number.isFinite(pos?.lon) ? projectOnRoute(route, pos) : null)
+    ?? (Number.isFinite(remainingKm) && remainingKm >= 0 ? alongRoute(route, remainingKm) : null);
+  if (t === null) return null;
+  const min = (t * D) / (n - 1);
+  const segs = view.segments ?? [];
+  let k = -1;
+  segs.forEach((s, i) => { if (s.startMin <= min) k = i; });
+  const cur = segs[k];
+  const level = cur && !cur.missing && Number.isFinite(cur.level) ? cur.level : null;
+  const after = segs.slice(k + 1).find(s => !s.missing && Number.isFinite(s.level) && s.level !== level && s.startMin > min);
+  return { min, frac: min / D, level, next: after ? { level: after.level, inMin: after.startMin - min } : null };
+}
+// Índice fraccionario (0 … n − 1) del punto de la ruta más cercano a pos, o null si queda lejos de toda la ruta.
+// Proyección local plana por tramo: a esta escala (≈ 50 km entre puntos) el error es despreciable.
+function projectOnRoute(route, pos) {
+  const kx = 111.32 * Math.cos((pos.lat * Math.PI) / 180), ky = 110.57;
+  const xy = p => [(p.lon - pos.lon) * kx, (p.lat - pos.lat) * ky];
+  let best = null;
+  for (let i = 0; i < route.length - 1; i++) {
+    const [ax, ay] = xy(route[i]), [bx, by] = xy(route[i + 1]);
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    const u = len2 ? Math.min(1, Math.max(0, -(ax * dx + ay * dy) / len2)) : 0;
+    const d = Math.hypot(ax + u * dx, ay + u * dy);
+    if (!best || d < best.d) best = { d, t: i + u };
+  }
+  return best && best.d <= NOW_MAX_OFF_ROUTE_KM ? best.t : null;
+}
+// Índice fraccionario a lo largo de la ruta con remainingKm hasta el destino (la ruta entera es la referencia).
+function alongRoute(route, remainingKm) {
+  const cum = [0];
+  for (let i = 1; i < route.length; i++) cum.push(cum[i - 1] + distanceKm(route[i - 1], route[i]));
+  const total = cum.at(-1);
+  if (!(total > 0) || remainingKm > total) return null; // más lejos que el propio origen: no es de esta ruta
+  const done = total - remainingKm;
+  let i = 1;
+  while (i < cum.length - 1 && cum[i] < done) i++;
+  const span = cum[i] - cum[i - 1];
+  return i - 1 + (span ? (done - cum[i - 1]) / span : 0);
 }
 
 // «Tramo más movido» (summary.moments[0]): horas locales si origen y destino comparten zona; si no, minutos desde el

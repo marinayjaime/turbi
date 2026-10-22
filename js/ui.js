@@ -47,7 +47,7 @@ export const thousands = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 // card. Regla general: un dato que no existe no se muestra (ni «—» ni valor por defecto); la única excepción son los
 // hitos del Horario, que dicen «--:--» y «Pendiente».
 const chevron = () => icon('chevron', { size: 18 });
-const kv = (k, v, attrs = '') => `<div class="kv"><span class="k">${k}</span><span class="v"${attrs}>${v}</span></div>`;
+export const kv = (k, v, attrs = '') => `<div class="kv"><span class="k">${k}</span><span class="v"${attrs}>${v}</span></div>`;
 // Cabecera de un desplegable: título a la izquierda y chevron a la derecha (gira con CSS al abrirlo).
 const head = (title, aside = '') => `<span class="card-head"><span class="card-title">${title}</span>${aside}${chevron()}</span>`;
 const details = (key, cls, open, summary, body) => `

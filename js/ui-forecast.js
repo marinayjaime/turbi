@@ -1,9 +1,9 @@
 // Pintado del pronóstico v2: la tarjeta de Turbulencias (resumen, gráfica de barras, avisos, confianza, tramos y
 // altitudes), Aviation Weather y frescura.
-import { esc, flightCardHtml, formatDuration, TURB_LEVELS, DISCLAIMER, turbCardHtml, turbPlainCardHtml, turbGeneralHtml,
+import { esc, kv, flightCardHtml, formatDuration, TURB_LEVELS, DISCLAIMER, turbCardHtml, turbPlainCardHtml, turbGeneralHtml,
   turbTimelineHtml, segListHtml } from './ui.js';
 import { icon } from './icons.js';
-import { roughestSpan, weatherAlerts, flightPhase } from './card-model.js';
+import { roughestSpan, weatherAlerts, flightPhase, formatCountdown } from './card-model.js';
 import { mapCardHtml } from './map.js';
 import { advancedShellHtml } from './ui-advanced.js';
 import { CAUSE_LABELS } from './turbi-index.js';
@@ -70,6 +70,25 @@ function coverageHtml(view) {
 
 // Contenido de #timeline (gráfica, eje y #seg-detail): app.js lo repinta tras nameSegments.
 export const timelineHtml = view => turbTimelineHtml(view);
+
+// «Ahora» (vuelo en curso; turbNow de js/card-model.js): la línea bajo la gráfica, con texto de verdad (no depende del
+// color ni de la posición del marcador). La posición del avión es real; la turbulencia de ese punto, ESTIMADA: nunca se
+// dice que el avión la esté teniendo. A la derecha, el siguiente cambio de nivel del pronóstico o que no hay ninguno.
+const nowLevelText = l => (l === null ? 'Sin datos en este tramo' : l === 0 ? 'Tranquilo' : `Turbulencia ${TURB_LEVELS[l].toLowerCase()} estimada`);
+const aboutMin = min => `≈ ${formatCountdown(Math.max(5, Math.round(min / 5) * 5) * 60000)}`;
+export function turbNowHtml(now) {
+  const next = now.next
+    ? ['Próximo cambio', `${now.next.level === 0 ? 'Tranquilo' : `${TURB_LEVELS[now.next.level]} estimada`} en ${aboutMin(now.next.inMin)}`]
+    : ['Resto del vuelo', 'Sin cambios relevantes previstos'];
+  return `
+          <span class="now-dot" aria-hidden="true"></span>
+          <div class="turb-now-body${now.level === null ? '' : ` lvl-ink${now.level}`}">${kv('Ahora', esc(nowLevelText(now.level)))}
+            <p class="turb-now-next"><span class="k">${next[0]}:</span> ${esc(next[1])}</p>
+          </div>`;
+}
+// El marcador dentro de .tchart (decorativo: el significado va en #turb-now): lo ya volado, velado, y la línea con el
+// avión. Su posición, --now-x en #timeline.
+export const turbNowMarkHtml = () => `<span class="tnow-past" aria-hidden="true"></span><span class="tnow" aria-hidden="true">${icon('plane', { size: 14 })}</span>`;
 
 // Tramos con turbulencia, con causa, altura y lugar (#segments, en el cuerpo): app.js lo repinta tras nameSegments.
 export function segmentListHtml(view) {
@@ -274,7 +293,8 @@ export function forecastSectionHtml(view, nowMs, { open = new Set() } = {}) {
   const s = view.summary;
   const span = roughestSpan(view);
   const summary = `${turbGeneralHtml({ level: s.maxLevel, headline: s.headline, span: span?.text ?? null })}
-        <section id="timeline">${timelineHtml(view)}</section>${coverageHtml(view)}
+        <section id="timeline">${timelineHtml(view)}</section>
+        <div id="turb-now" class="turb-now" hidden></div>${coverageHtml(view)}
         <div id="wx-alerts">${weatherAlertsHtml(view.aviation)}</div>`;
   const head = HEAD[s.headline] ?? HEAD['Algo de movimiento'];
   const body = `

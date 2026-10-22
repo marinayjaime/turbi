@@ -458,6 +458,28 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
   white-space: nowrap; }
 .ticks span:first-child { transform: none; }
 .ticks span:last-child { transform: translateX(-100%); }
+/* «Ahora» (vuelo en curso): dónde está el avión dentro del pronóstico. Dentro de la propia gráfica (.tchart): una
+   línea fina azul Turbi con el avión encima y lo ya volado velado; debajo, la lectura en texto en una franja suave.
+   Decorativo y sin capturar toques (las barras siguen respondiendo). --now-x (en #timeline): la fracción del vuelo.
+   Con una lectura nueva se desplaza con la misma duración que el avión del mapa (2,5 s); recién puesto aparece en su
+   sitio y nunca se mueve solo. */
+.tchart { position: relative; }
+.tnow, .tnow-past { position: absolute; pointer-events: none; transition: left 2.5s cubic-bezier(.4, 0, .2, 1), width 2.5s cubic-bezier(.4, 0, .2, 1); }
+.tnow-past { top: 0; bottom: 1px; left: 0; width: var(--now-x); background: var(--card); opacity: 0.55; }
+.tnow { top: -12px; bottom: 0; left: var(--now-x); width: 2px; margin-left: -1px; border-radius: 1px;
+  background: linear-gradient(var(--accent), rgba(26, 111, 224, 0.3)); }
+.tnow > .icon { position: absolute; top: -5px; left: 50%; transform: translateX(-50%); box-sizing: content-box; padding: 2px;
+  border-radius: 50%; background: var(--card); color: var(--accent); }
+.turb-now { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 14px;
+  background: var(--field); }
+.turb-now-body { min-width: 0; }
+.turb-now-body > .kv .k { font-size: 11px; }
+.turb-now-body > .kv .v { font-size: 15px; color: var(--ink, var(--text)); }
+.turb-now-next { margin: 3px 0 0; font-size: 13px; color: var(--text); }
+.turb-now-next .k { color: var(--muted); }
+.now-dot { flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(26, 111, 224, 0.16); }
+@media (prefers-reduced-motion: reduce) { .tnow, .tnow-past { transition: none; } }
 /* «Calculando…»: esqueleto suave de la gráfica. */
 .forecast-loading { margin: 0; color: var(--muted); font-size: 15px; }
 .tchart.skeleton { height: 40px; margin-top: 14px; border-radius: 8px;

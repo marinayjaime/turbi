@@ -2,7 +2,7 @@
 // legPhase, presentStatus, withRadar, withLanding, currentPunctuality y el pronóstico. Los `card` son literales.
 import { describe, it, expect } from 'vitest';
 import { flightPhase, mainTime, formatCountdown, sourceLabel, confidenceInfo, punctualityTile, summaryTiles, milestones,
-  signalState, planeOnMap, positionAgeS, turbulenceBars, roughestSpan, weatherAlerts } from '../js/card-model.js';
+  signalState, planeOnMap, positionAgeS, turbulenceBars, roughestSpan, weatherAlerts, turbNow } from '../js/card-model.js';
 import { adbPhase } from '../js/adb.js';
 import { distanceReference, receivedRadar } from '../js/radar-distance.js';
 
@@ -314,6 +314,30 @@ describe('planeOnMap', () => {
   });
   it('estado «reciente» → null', () => {
     expect(planeOnMap(volando({ state: 'reciente' }), M, M)).toBeNull();
+  });
+});
+
+describe('turbNow («Ahora» en la gráfica de Turbulencias)', () => {
+  // Ruta de 11 puntos hacia el este por el paralelo 40 (≈ 85 km entre puntos), 100 min: el punto i es el minuto 10·i.
+  const route = Array.from({ length: 11 }, (_, i) => ({ lat: 40, lon: i, level: 0 }));
+  const view = { route, durationMin: 100, segments: [
+    { level: 0, startMin: 0, endMin: 40 }, { level: 2, startMin: 40, endMin: 60 }, { level: 0, startMin: 60, endMin: 100 }] };
+  it('posición real proyectada sobre la ruta: el tramo (y la barra) que la contiene y el siguiente cambio; sin ella, la distancia restante; nada inventado', () => {
+    expect(turbNow(view, { pos: { lat: 40.2, lon: 3 } })).toEqual({ min: 30, frac: 0.3, level: 0, next: { level: 2, inMin: 10 } });
+    const inside = turbNow(view, { pos: { lat: 39.9, lon: 4.5 } });
+    expect(inside.min).toBeCloseTo(45, 0);
+    expect(inside.level).toBe(2); // el moderado del tramo 40–60, como su barra
+    expect(inside.next.level).toBe(0);
+    expect(turbNow(view, { pos: { lat: 40, lon: 7 } }).next).toBeNull(); // sin más cambios: «Resto del vuelo»
+    // Sin posición, la distancia restante a lo largo de la MISMA ruta (≈ 852 km en total).
+    expect(turbNow(view, { remainingKm: 0 }).frac).toBe(1);
+    expect(turbNow(view, { remainingKm: 426 }).frac).toBeCloseTo(0.5, 2);
+    // Una posición lejos de la ruta no se sitúa; sin datos válidos, null (ni la ruta ni el pronóstico cambian).
+    expect(turbNow(view, { pos: { lat: 45, lon: 3 } })).toBeNull();
+    expect(turbNow(view, { pos: { lat: 45, lon: 3 }, remainingKm: 426 }).frac).toBeCloseTo(0.5, 2);
+    expect(turbNow(view, {})).toBeNull();
+    expect(turbNow(view, { remainingKm: 5000 })).toBeNull();
+    expect(turbNow({ ...view, route: route.map(p => ({ level: p.level })) }, { pos: { lat: 40, lon: 3 } })).toBeNull(); // v1 sin coordenadas
   });
 });
 
