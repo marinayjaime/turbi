@@ -127,6 +127,7 @@ describe('Open-Meteo falla (429) y el radar ADS-B responde', () => {
     expect($('#result .flight .status').textContent).toContain('En vuelo'); // «Volando» lo dice el chip del estado
     expect(area()).toContain('Puedes reintentar en unos 30 s');
     expect($('#forecast-retry')).not.toBeNull();
+    expect($('.calm')).toBeNull(); // sin pronóstico, ningún Calm Score
     expect($('#error').hidden).toBe(true); // ningún error general sustituye la ficha
     expect($('#result-view').hidden).toBe(false);
     expect(calls.some(u => u.startsWith(`${LIVE_BASE}/radar/IB/715.json`))).toBe(true);
@@ -2735,6 +2736,29 @@ describe('seguimiento en vivo con Flightradar24', () => {
       expect($('#forecast-area [data-card="turbulence"] .tchart')).not.toBeNull();
       expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo);
       expect(log.maps).toBe(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+
+  it('Calm Score: aparece con el pronóstico, sigue igual (y abierto) con cada lectura del radar y no pide nada', async () => {
+    fakeAll();
+    try {
+      await load({ openMeteo: openMeteoOk });
+      mark();
+      await until(() => $('.hero-status .calm'), 'Calm Score');
+      await networkIdle();
+      const calm = () => [...document.querySelectorAll('.hero-status .calm-num, .hero-status .calm-label')].map(e => e.textContent).join(' ');
+      expect(calm()).toBe('100 Calm Score'); // pronóstico en calma (titular «Tranquilo»)
+      expect($('.hero-status .calm .sr-only').textContent).toContain('de 100');
+      expect($('.hero-status .calm-info').textContent).toContain('No es una probabilidad');
+      $('.hero-status details.calm').open = true;
+      const meteo = calls.filter(u => u.includes('open-meteo')).length, radar = radarCalls().length, before = $('.flight');
+      await to(46); // lectura nueva: la ficha se repinta entera
+      await until(() => $('.flight') !== before, 'ficha repintada');
+      expect(calm()).toBe('100 Calm Score');
+      expect($('.hero-status details.calm').open).toBe(true); // el desplegable sigue como estaba
+      expect(radarCalls()).toHaveLength(radar + 1);
+      expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo); // ni el número ni el repintado piden nada
+      expect($('#turb-now').hidden).toBe(false); // «Ahora» sigue ahí
     } finally { vi.useRealTimers(); }
   }, 30000);
 

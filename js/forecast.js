@@ -35,7 +35,9 @@ export async function forecastView({ q, profile, flight, times, nowMs, fetchFn =
     agreement: fc.agreement,
     queriedAt: nowMs,
     runs: {},
-    route: profile.points.map((p, i) => ({ lat: p.lat, lon: p.lon, level: fc.points[i].valid ? fc.points[i].level : null })),
+    // score: el Turbi Index combinado del punto (0–100), para el Calm Score (js/calm-score.js) dentro de cada nivel.
+    route: profile.points.map((p, i) => ({ lat: p.lat, lon: p.lon, level: fc.points[i].valid ? fc.points[i].level : null,
+      score: fc.points[i].valid ? fc.points[i].score : null })),
     depMs: profile.departureMs,
     arrMs: profile.arrivalMs,
   };

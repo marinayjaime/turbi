@@ -535,6 +535,17 @@ describe('aterrizado estimado (estimated-landed)', () => {
 });
 
 describe('fases', () => {
+  it('Calm Score bajo el estado solo programado o en curso, con pronóstico; nunca terminado, cancelado ni sin nota', () => {
+    const calm = { score: 88, level: 1 };
+    const hero = h => h.slice(h.indexOf('hero-status'), h.indexOf('</header>'));
+    expect(hero(html(card({ calm })))).toMatch(/<span class="calm-num">88<\/span><span class="calm-label">Calm Score<\/span>/);
+    expect(hero(html(card({ calm, phase: 'en-curso', status: { text: 'En vuelo', tone: 'info', flying: true } })))).toContain('calm-num');
+    expect(html(card({ calm, phase: 'terminado', status: { text: 'Ha llegado', tone: 'ok' } }))).not.toContain('calm');
+    expect(html(card({ calm, phase: 'cancelado', status: { text: 'Cancelado', tone: 'bad' } }))).not.toContain('calm');
+    expect(html(card({ calm, status: { text: 'Desviado a Valencia', tone: 'warn' } }))).not.toContain('calm');
+    expect(html(card())).not.toContain('calm'); // sin pronóstico, nada inventado
+    expect(html(card({ calm }), { open: new Set(['calm']) })).toContain('<details class="calm" data-card="calm" open>');
+  });
   it('finalizado: sin «Ahora», con «Resumen del vuelo» (distancia directa y duración real)', () => {
     const h = html(card({ phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' }, depMs: NOW, arrMs: NOW + 85 * MIN }));
     expect(h).not.toContain('data-card="now"');

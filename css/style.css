@@ -231,6 +231,20 @@ button { font: inherit; cursor: pointer; }
 .hero-status .chip.flying.tone-info { background: var(--accent); color: #fff; }
 
 .status-note { margin: 0; font-size: 12px; line-height: 1.3; color: var(--muted); }
+/* Calm Score (js/calm-score.js), bajo el estado: el número con el color del titular del pronóstico y «CALM SCORE»
+   pequeño debajo. Al tocarlo, qué significa, en una capa a lo ancho de la cabecera, dentro de la tarjeta (no empuja
+   nada). */
+.hero-head { position: relative; }
+.calm { margin-top: 2px; }
+.calm-sum { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; list-style: none; cursor: pointer; border-radius: 8px;
+  -webkit-tap-highlight-color: transparent; }
+.calm-sum::-webkit-details-marker { display: none; }
+.calm-num { font-size: 24px; font-weight: 700; line-height: 1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--ink, var(--text)); }
+.calm-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.calm[open] .calm-label { color: var(--accent); }
+.calm-info { position: absolute; left: var(--pad); right: var(--pad); top: calc(100% + 6px); z-index: 5; margin: 0; padding: 10px 12px;
+  border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow);
+  font-size: 13px; line-height: 1.4; color: var(--text); text-align: left; }
 .stale { display: flex; align-items: center; gap: 6px; margin: 12px var(--pad) 0; padding: 8px 12px; border-radius: 10px;
   background: rgba(179, 106, 0, 0.10); color: var(--warn); font-size: 13px; font-weight: 500; }
 /* En vuelo: un avión cruza en bucle junto al texto del chip (decorativo; no indica la posición real). */

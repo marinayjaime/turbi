@@ -11,7 +11,8 @@ import { physicalFlightKey } from './physical-flight.js';
 import { forecastDigest, legacyDigest, rememberTurb, recallTurb } from './turb-memory.js';
 import { loadAirports, findAirport, searchAirports, timezoneOf } from './airports.js';
 import { nameSegments } from './places.js';
-import { renderResult, esc, flightCardHtml, missingDateText, thousands, signalHtml, tmOldHtml } from './ui.js';
+import { renderResult, esc, flightCardHtml, missingDateText, thousands, signalHtml, tmOldHtml, calmHtml } from './ui.js';
+import { calmScore } from './calm-score.js';
 import { distanceReference, receivedRadar, startRemainingTicker, TICK_MS } from './radar-distance.js';
 import { buildProfile } from './altitude.js';
 import { forecastWindow } from './airtime.js';
@@ -906,8 +907,10 @@ async function loadForecastSection(ctx) {
   // Aterrizado mientras se calculaba: un pronóstico que llega después no se pinta ni se guarda como el del vuelo.
   if (turbOver(shownCard)) { syncTurbArea(); return; }
   Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
+  view.calm = calmOf(view); // una vez por pronóstico: ni la posición ni el estado del vuelo lo cambian
   currentView = view;
   paintForecastSection(view);
+  paintCalm();
   rememberForecast(q, forecastDigest(view));
   await safely(() => forecastExtras(view, q, stale));
 }
@@ -1099,6 +1102,21 @@ function withTurbEstimate(card) {
 // Se guarda el pronóstico mostrado solo mientras el vuelo no ha terminado, con la clave de su vuelo físico.
 function rememberForecast(q, digest) {
   if (!turbOver(shownCard)) rememberTurb(physicalOf(q), digest);
+}
+// Calm Score del pronóstico v2 en pantalla (js/calm-score.js), con el color de su titular (como «General»). El cálculo
+// simplificado (v1) no lo lleva: sin el Turbi Index por punto no es comparable. Va en la cabecera de la ficha: lo lleva
+// cada repintado (withCalm) y, al llegar el pronóstico, paintCalm lo pone sin repintar el resto.
+function calmOf(view) {
+  const k = calmScore(view);
+  return k && { ...k, level: view.summary.maxLevel };
+}
+const withCalm = card => (card && currentView?.calm ? { ...card, calm: currentView.calm } : card);
+function paintCalm() {
+  const status = els.result.querySelector('.flight .hero-status');
+  if (!status || !shownCard) return;
+  const open = openCards().has('calm');
+  status.querySelector('.calm')?.remove();
+  status.insertAdjacentHTML('beforeend', calmHtml(withCalm(shownCard), open));
 }
 // La tarjeta del cálculo simplificado (renderResult con sectionOnly) en #forecast-area, conservando sus desplegables.
 function paintLegacySection(legacy) {
@@ -1298,7 +1316,7 @@ function repaintFlight(card, stale) {
   const top = scroller?.scrollTop ?? 0, resultTop = els.result.scrollTop;
   const punct = el.querySelector('#punctuality');
   punct?.remove();
-  el.outerHTML = flightCardHtml(withTurbEstimate(card), { open, nowMs: Date.now(), monoMs: monoNow() });
+  el.outerHTML = flightCardHtml(withCalm(withTurbEstimate(card)), { open, nowMs: Date.now(), monoMs: monoNow() });
   const slot = els.result.querySelector('.flight #punctuality');
   if (punct && slot) slot.replaceWith(punct);
   shownCard = card;

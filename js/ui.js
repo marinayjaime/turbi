@@ -84,9 +84,22 @@ function statusHtml(c) {
     c.status.note ? `\n          <p class="status-note">${esc(c.status.note)}</p>` : ''}`;
 }
 
+// Calm Score (js/calm-score.js) bajo el estado, discreto: el número y «CALM SCORE»; al tocarlo, qué significa. Solo
+// con pronóstico (c.calm, que pone app.js) y mientras el vuelo no ha terminado: tras aterrizar, cancelar o desviarse la
+// ficha ya no muestra el pronóstico. Color: el del titular del pronóstico (lvl-ink, como «General»), nunca el único dato.
+export function calmHtml(c, open = false) {
+  const k = c.calm;
+  if (!k || !Number.isFinite(k.score) || !['programado', 'en-curso'].includes(flightPhase(c))) return '';
+  return `
+          <details class="calm" data-card="calm"${open ? ' open' : ''}>
+            <summary class="calm-sum lvl-ink${k.level ?? 0}"><span class="calm-num">${k.score}</span><span class="calm-label">Calm Score</span><span class="sr-only"> de 100, ver qué significa</span></summary>
+            <p class="calm-info">Pronóstico de lo tranquilo que será el vuelo completo, de 0 a 100 (100 = lo más tranquilo). Resume la intensidad y la duración de la turbulencia prevista. No es una probabilidad ni una medición; la fiabilidad va aparte, en «Confianza».</p>
+          </details>`;
+}
+
 // Hero: foto (si la hay), número grande, «Aerolínea · Modelo» y el chip del estado. El logotipo solo se ve sin foto
 // (CSS :has), así también aparece si la foto no carga y su figura se elimina.
-function heroHtml(c) {
+function heroHtml(c, open = new Set()) {
   const sub = [c.airline, c.aircraft, c.operator && `Operado por ${c.operator}`].filter(Boolean).map(esc).join(' · ');
   return `
       <header class="hero">${photoHtml(c)}
@@ -100,7 +113,7 @@ function heroHtml(c) {
             ${sub ? `<p class="hero-sub">${sub}</p>` : ''}
           </div>
           <div class="hero-status">
-          ${statusHtml(c)}
+          ${statusHtml(c)}${calmHtml(c, open.has('calm'))}
           </div>
         </div>${c.stale ? `
         <p class="stale">${icon('alert', { size: 16 })}<span>Datos de Aena de ${esc(c.updatedAgo)}</span></p>` : ''}
@@ -345,7 +358,7 @@ export function flightCardHtml(c, { nowMs = Date.now(), monoMs = monoNow(), open
   const mt = mainTime(c, nowMs);
   return `
     <section class="flight" data-phase="${phase}">
-      <div class="card flight-main">${heroHtml(c)}${routeHtml(c)}${mainTimeHtml(c, mt)}${tilesHtml(c)}
+      <div class="card flight-main">${heroHtml(c, open)}${routeHtml(c)}${mainTimeHtml(c, mt)}${tilesHtml(c)}
       </div>${nowHtml(c, phase, monoMs, open)}${scheduleHtml(c, mt, open, punctualityBody)}${
   phase === 'programado' ? aircraftHtml(c, open) : ''}${phase === 'finalizado' ? flightSummaryHtml(c) : ''}
     </section>`;
