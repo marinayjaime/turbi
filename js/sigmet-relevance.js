@@ -75,17 +75,15 @@ export function sigmetLevelsFromText(raw = '') {
 // Alcance vertical del aviso, separando lo que AFIRMA de lo que PODRÍA abarcar porque un límite es desconocido:
 //   sure     — [lo, hi] pies que el aviso cubre según sus límites conocidos (o null si no afirma ninguno);
 //   possible — [lo, hi] hasta donde podría llegar (límite desconocido → superficie o sin techo).
-// Tormentas y ciclones con solo «TOP FLxxx»: el formato OACI describe así nubes de desarrollo vertical que nacen en capas
-// bajas, por eso su columna cuenta como afirmada desde la superficie hasta el techo (y «TOP ABV» hasta ese techo como
-// mínimo). Turbulencia u ondas con un límite ausente: ese límite es desconocido. Sin ningún nivel: nada afirmado.
+// Solo cuenta como afirmado un rango con sus DOS límites dados por el aviso; un límite ausente es desconocido para
+// cualquier fenómeno (también tormentas y ciclones con solo «TOP FLxxx»). Sin ningún nivel: nada afirmado.
 export function sigmetVertical(s) {
   const p = sigmetLevelsFromText(s?.raw) ?? (s?.base != null && s?.top != null ? { kind: 'layer', base: s.base, top: s.top }
     : s?.top != null ? { kind: 'top', base: null, top: s.top } : s?.base != null ? { kind: 'above', base: s.base, top: null } : null);
-  const convective = ['TS', 'TC'].includes(s?.hazard);
   if (!p) return { sure: null, possible: [0, Infinity], kind: 'unknown' };
   if (p.kind === 'layer') return { sure: [p.base, p.top], possible: [p.base, p.top], kind: 'layer' };
-  if (p.kind === 'top') return { sure: convective ? [0, p.top] : null, possible: [0, p.top], kind: convective ? 'convective-top' : 'top' };
-  if (p.kind === 'top-above') return { sure: convective ? [0, p.top] : null, possible: [0, Infinity], kind: convective ? 'convective-top' : 'top-above' };
+  if (p.kind === 'top') return { sure: null, possible: [0, p.top], kind: 'top' };
+  if (p.kind === 'top-above') return { sure: null, possible: [0, Infinity], kind: 'top-above' };
   if (p.kind === 'above') return { sure: null, possible: [p.base, Infinity], kind: 'above' };
   return { sure: null, possible: [0, p.top], kind: 'below' };
 }

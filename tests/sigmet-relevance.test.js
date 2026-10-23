@@ -89,9 +89,10 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     expect(sigmetLevelsFromText('EMBD TS FCST TOP FL400 MOV E 10KT NC')).toEqual({ kind: 'top', base: null, top: 40000 });
     expect(sigmetLevelsFromText('SEV TURB FCST ABV FL300 STNR')).toEqual({ kind: 'above', base: 30000, top: null });
     expect(sigmetLevelsFromText('SEV MTW FCST SFC/5000FT STNR')).toEqual({ kind: 'layer', base: 0, top: 5000 });
-    // Lo que el aviso AFIRMA (sure) frente a lo que podría abarcar (possible): solo tormentas/ciclones con «TOP» afirman
-    // su columna desde capas bajas (formato OACI de las nubes de desarrollo vertical).
-    expect(sigmetVertical({ hazard: 'TS', raw: 'EMBD TS FCST TOP FL400' })).toMatchObject({ sure: [0, 40000], possible: [0, 40000] });
+    // Lo que el aviso AFIRMA (sure) frente a lo que podría abarcar (possible): solo un rango con sus dos límites; también
+    // para tormentas, cuyo «TOP» no dice la base.
+    expect(sigmetVertical({ hazard: 'TS', raw: 'EMBD TS FCST TOP FL400' })).toMatchObject({ sure: null, possible: [0, 40000] });
+    expect(sigmetVertical({ hazard: 'TS', raw: 'EMBD TS FCST SFC/FL400' })).toMatchObject({ sure: [0, 40000] });
     expect(sigmetVertical({ hazard: 'TURB', raw: 'SEV TURB FCST TOP FL400' })).toMatchObject({ sure: null, possible: [0, 40000] });
     expect(sigmetVertical({ hazard: 'TURB', raw: 'SEV TURB FCST ABV FL300' })).toMatchObject({ sure: null, possible: [30000, Infinity] });
     expect(sigmetVertical({ hazard: 'TURB', raw: 'SEV TURB FCST', base: null, top: null })).toMatchObject({ sure: null, possible: [0, Infinity] });
@@ -106,11 +107,11 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     expect(sigmetMessage(sig({}), high, { to: 'Bilbao' })).toBe('Posible aviso SIGMET de turbulencia fuerte en la trayectoria prevista');
     expect(rel(sig({ coords, base: null, top: null, raw: 'SEV TURB FCST SFC/FL060 STNR NC' }), v).tier).toBe('none'); // crucero, muy por encima
     // Un límite desconocido no descarta, pero tampoco se convierte en certeza: incierto, «altitud incompleta». Por encima
-    // del techo conocido o por debajo de la base conocida, sí se descarta. Tormentas con «TOP»: columna afirmada.
+    // del techo conocido o por debajo de la base conocida, sí se descarta. Tormentas con solo «TOP»: igual (incierto).
     expect(rel(sig({ coords, base: 30000, top: null }), v)).toMatchObject({ tier: 'near', reasons: ['altitud-incompleta'] });
     expect(rel(sig({ coords, base: null, top: 40000 }), v)).toMatchObject({ tier: 'near', reasons: ['altitud-incompleta'] });
     expect(rel(sig({ coords, base: 42000, top: null }), v).tier).toBe('none'); // todo por encima del avión
-    expect(rel(sig({ coords, hazard: 'TS', qualifier: 'EMBD', base: null, top: 40000, raw: 'EMBD TS FCST TOP FL400 STNR' }), v).tier).toBe('affects');
+    expect(rel(sig({ coords, hazard: 'TS', qualifier: 'EMBD', base: null, top: 40000, raw: 'EMBD TS FCST TOP FL400 STNR' }), v)).toMatchObject({ tier: 'near', reasons: ['altitud-incompleta'] });
     // Sin polígono: incierto si es de la región OACI del origen o del destino; de otra región, no se relaciona.
     const items = [{ hazard: 'TS', qualifier: 'EMBD', fir: 'LECM MADRID', coords: [], raw: 'LECM TS', validFrom: 1792738800, validTo: 1792760400 },
       { hazard: 'TURB', qualifier: 'SEV', fir: 'UHMM MAGADAN', coords: [], raw: 'UHMM TURB', validFrom: 1792738800, validTo: 1792760400 }];
