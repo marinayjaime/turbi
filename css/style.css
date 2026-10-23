@@ -229,6 +229,18 @@ button { font: inherit; cursor: pointer; }
 .hero-status .chip { padding: 6px 12px; font-size: 14px; white-space: normal; text-align: right; text-wrap: balance; }
 /* En vuelo, el chip es pleno (como «En vuelo» en la referencia): es el estado que más importa de un vistazo. */
 .hero-status .chip.flying.tone-info { background: var(--accent); color: #fff; }
+/* Calm Score: una cifra compacta bajo el estado, sin crear tarjeta ni desplazar el numero del vuelo. */
+.calm-score { display: inline-flex; flex-direction: column; align-items: center; gap: 0; padding: 5px 9px 6px;
+  background: var(--field); color: var(--accent); border-radius: 10px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.calm-score strong { font-size: 24px; letter-spacing: -0.03em; }
+.calm-score small { font-size: 9px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+@media (max-width: 360px) {
+  .hero-head { gap: 7px; }
+  .hero-num { gap: 5px; flex-wrap: wrap; }
+  .hero-num .logo { max-width: 65px; height: 21px; }
+  .calm-score { padding: 5px 7px; }
+  .calm-score strong { font-size: 22px; }
+}
 
 .status-note { margin: 0; font-size: 12px; line-height: 1.3; color: var(--muted); }
 .stale { display: flex; align-items: center; gap: 6px; margin: 12px var(--pad) 0; padding: 8px 12px; border-radius: 10px;
