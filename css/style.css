@@ -219,7 +219,8 @@ button { font: inherit; cursor: pointer; }
 .hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px var(--pad) 0; }
 .hero:not(:has(.plane-photo)) .hero-head { padding-top: 18px; }
 .hero-id { min-width: 0; }
-.hero-num { display: flex; align-items: center; gap: 10px; }
+/* Sin sitio junto al número (móvil estrecho, estado largo), el logotipo baja de línea: nunca pisa el chip del estado. */
+.hero-num { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
 .hero-num h2 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .hero-num .logo { height: 26px; width: auto; max-width: 96px; object-fit: contain; }
 .hero:has(.plane-photo) .logo { display: none; } /* con foto, el logotipo sobra; si la foto falla, su figura se va y vuelve */

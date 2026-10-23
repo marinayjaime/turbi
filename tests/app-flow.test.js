@@ -2759,6 +2759,18 @@ describe('seguimiento en vivo con Flightradar24', () => {
       expect(radarCalls()).toHaveLength(radar + 1);
       expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo); // ni el número ni el repintado piden nada
       expect($('#turb-now').hidden).toBe(false); // «Ahora» sigue ahí
+      // «Actualizar» del mismo vuelo: el número no desaparece ni un instante mientras llega el pronóstico nuevo.
+      let missing = 0;
+      const mo = new MutationObserver(() => { if ($('.flight .hero-status') && !$('.flight .hero-status .calm')) missing++; });
+      mo.observe($('#result'), { childList: true, subtree: true });
+      const oldArea = $('#forecast-area');
+      $('#refresh').click();
+      await until(() => $('#forecast-area') !== oldArea && $('#forecast-area [data-card="turbulence"]'), 'pronóstico repintado');
+      await networkIdle();
+      mo.disconnect();
+      expect(missing).toBe(0);
+      expect(calm()).toBe('100 Calm Score');
+      expect($('.hero-status details.calm').open).toBe(true); // y abierto, como estaba
     } finally { vi.useRealTimers(); }
   }, 30000);
 

@@ -4,55 +4,63 @@
 //
 // Datos: view.route[i].score, el Turbi Index combinado (0–100) del punto i, con los puntos equiespaciados en el tiempo en
 // el aire (view.durationMin). Cada punto vale su tramo de tiempo (regla del trapecio: los extremos, medio paso).
-// Umbrales de nivel de Turbi: 25 ligera, 50 moderada, 75 fuerte (scoreToLevel).
 //
-// Exposición, separada por nivel y con la intensidad DENTRO de cada nivel (una ligera casi moderada pesa el triple que
-// una ligera apenas perceptible):
-//   ligera   e = 0,5 + (s − 25) / 25    ∈ [0,5, 1,5)   → L: FRACCIÓN del vuelo (como el titular: «10 % del vuelo»)
-//   moderada e = 0,75 + 0,5 (s − 50)/25 ∈ [0,75, 1,25) → M: MINUTOS equivalentes (como el titular: «más de 15 min»)
-//   fuerte   e = 1 + (s − 75) / 25      ∈ [1, 2]       → S: MINUTOS equivalentes (el titular: «cualquier minuto»)
-// La ligera se mide en proporción porque en un vuelo largo se diluye; la moderada y la fuerte, en minutos absolutos,
-// porque un cuarto de hora moderado pesa igual en un vuelo de una hora que en uno de diez.
+// 1) Severidad por minuto w(s), CONTINUA y creciente en el Turbi Index, con los umbrales de nivel de Turbi como anclas
+//    (25 ligera, 50 moderada, 75 fuerte) y cada nivel bastante más pesado que el anterior:
+//      s ≤ 25 → 0 · 50 → 0,4 · 75 → 4,6 · 100 → 20   (lineal entre anclas)
+//    Así una ligera apenas perceptible casi no pesa, una ligera casi moderada pesa como el inicio de la moderada, y un
+//    pronóstico que cruza un umbral por décimas cambia la nota por décimas (sin saltos).
+// 2) Exposición E = Σ w·Δt (minutos de severidad), escalada a todo el vuelo si faltan puntos (sin datos no es calma).
+// 3) Duración del vuelo: E se reparte entre √(D / 60 min). Ni proporción pura (diluiría un cuarto de hora moderado en un
+//    vuelo largo) ni minutos puros (no distinguiría una hora ligera en un vuelo de una hora de la misma en uno de diez).
+// 4) Calm Score = round(100 · e^(−K·(√(E' + 2) − √2))), con E' = E / √(D/60). La raíz da rendimientos decrecientes: un
+//    episodio breve resta poco y no hunde la nota; la duración sigue contando. El desplazamiento (+2) deja la pendiente
+//    finita al empezar: un rastro mínimo de turbulencia resta décimas, no varios puntos de golpe. K sale del ancla:
+//    15 min de moderada media en un vuelo de 2 h → 50 (el corte de «Turbulento» del titular de Turbi).
+// El número y el titular («Tranquilo», «Algo de movimiento»…) miden cosas distintas: el titular es una categoría con
+// umbrales; el número, una escala continua. Cerca de un umbral pueden no coincidir del todo, y es lo esperado.
 //
-//   X = 0,51·√L + 0,154·√M + 0,36·√S      Calm Score = round(100 · e^(−X))
-//
-// Raíces: rendimientos decrecientes, así un episodio breve y aislado resta poco y no hunde la nota, y la duración sigue
-// contando. Calibración con los cortes del propio titular de Turbi (js/turbulence.js, verdict): ligera media en el 10 %
-// del vuelo ≈ 85; ligera media todo el vuelo ≈ 60; 15 min de moderada media ≈ 55; un punto fuerte (≈ 4 min) ≈ 49.
-// Coherencia: el número nunca contradice el titular que se ve en la misma ficha; se ajusta a su banda:
-//   Tranquilo 100 · Mayormente tranquilo 80–99 · Algo de movimiento 50–79 · Turbulento 0–49.
-//
-// Sin datos no es calma: los puntos sin pronóstico no cuentan como tranquilos (la ligera se mide sobre el tiempo CON
-// datos y los minutos moderados/fuertes se escalan a todo el vuelo); con cobertura < 80 %, ninguna nota (null).
+// Fiabilidad: sin nota (null) si falta pronóstico en más del 20 % del vuelo o si un hueco seguido supera 15 min (lo que
+// dura el episodio moderado más corto que cambia el titular: un hueco así podría esconderlo entero).
 export const CALM_MIN_COVERAGE = 0.8;
-const K = { light: 0.51, moderate: 0.154, strong: 0.36 };
-const BANDS = { Tranquilo: [100, 100], 'Mayormente tranquilo': [80, 99], 'Algo de movimiento': [50, 79], Turbulento: [0, 49] };
+export const CALM_MAX_GAP_MIN = 15;
+const SEVERITY = [[25, 0], [50, 0.4], [75, 4.6], [100, 20]];
+const E0 = 2;
 // Pronósticos guardados antes de existir route[i].score: el centro del nivel (sin distinguir dentro del nivel).
 const LEVEL_MID = [12.5, 37.5, 62.5, 87.5];
 
 const pointScore = p => (Number.isFinite(p?.score) ? p.score : Number.isInteger(p?.level) ? LEVEL_MID[p.level] ?? null : null);
+export function severity(s) {
+  if (s <= SEVERITY[0][0]) return 0;
+  for (let i = 1; i < SEVERITY.length; i++) {
+    const [x1, y1] = SEVERITY[i];
+    if (s <= x1) { const [x0, y0] = SEVERITY[i - 1]; return y0 + ((s - x0) / (x1 - x0)) * (y1 - y0); }
+  }
+  return SEVERITY.at(-1)[1];
+}
+
+// K: el ancla (15 min a 62,5 en 2 h → 50), calculada una vez.
+const ANCHOR = (severity(62.5) * 15) / Math.sqrt(2);
+const K = Math.log(2) / (Math.sqrt(ANCHOR + E0) - Math.sqrt(E0));
 
 export function calmScore(view) {
   const route = view?.route ?? [];
   const n = route.length;
   const D = view?.durationMin;
-  const band = BANDS[view?.summary?.headline];
-  if (n < 2 || !(D > 0) || !band) return null;
+  if (n < 2 || !(D > 0)) return null;
   const step = D / (n - 1);
-  let valid = 0, light = 0, moderate = 0, strong = 0;
+  let valid = 0, exposure = 0, gap = 0, maxGap = 0;
   route.forEach((p, i) => {
     const s = pointScore(p);
-    if (s === null) return;
     const dt = i === 0 || i === n - 1 ? step / 2 : step;
+    if (s === null) { gap += dt; maxGap = Math.max(maxGap, gap); return; }
+    gap = 0;
     valid += dt;
-    if (s >= 75) strong += (1 + Math.min(25, s - 75) / 25) * dt;
-    else if (s >= 50) moderate += (0.75 + (0.5 * (s - 50)) / 25) * dt;
-    else if (s >= 25) light += (0.5 + (s - 25) / 25) * dt;
+    exposure += severity(s) * dt;
   });
   const coverage = valid / D;
-  if (coverage < CALM_MIN_COVERAGE) return null;
-  const L = light / valid, M = (moderate * D) / valid, S = (strong * D) / valid;
-  const raw = Math.round(100 * Math.exp(-(K.light * Math.sqrt(L) + K.moderate * Math.sqrt(M) + K.strong * Math.sqrt(S))));
-  return { score: Math.min(band[1], Math.max(band[0], raw)), raw, coverage,
-    lightShare: L, moderateMin: M, strongMin: S };
+  if (coverage < CALM_MIN_COVERAGE || maxGap > CALM_MAX_GAP_MIN) return null;
+  const E = (exposure * D) / valid;
+  const score = Math.round(100 * Math.exp(-K * (Math.sqrt(E / Math.sqrt(D / 60) + E0) - Math.sqrt(E0))));
+  return { score, coverage, exposure: E };
 }

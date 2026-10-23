@@ -775,8 +775,11 @@ async function run(q, handoff = null) {
   // hasta la primera respuesta de esta consulta: nunca dos a la vez).
   const keptLive = same && live?.key === liveKey(q) && !live.tracker.stopped ? live : null;
   const keptFix = same ? lastFix : null;
+  // El Calm Score del último pronóstico válido del MISMO vuelo físico se queda hasta que llegue el nuevo (sin parpadeo).
+  const keptCalmScore = same ? currentView?.calm ?? keptCalm : null;
   if (keptLive) live = null;
   clearFicha(); // y su mapa
+  keptCalm = keptCalmScore;
   keptMap = kept;
   lastFix = keptFix;
   if (keptLive) { live = keptLive; live.tracker.hold(); }
@@ -805,6 +808,7 @@ async function run(q, handoff = null) {
     if (note) {
       if (!flight) throw new Error(note);
       currentView = null;
+      keptCalm = null; // sin pronóstico que calcular: tampoco el número del anterior
       els.result.innerHTML = legSwitchHtml(q) + flightNoteHtml({ flight: withTurbEstimate(flight), punctuality: punct, note }); // Turbulencias con el motivo (terminado: initFicha la quita)
       show('result');
       initFicha(q, flight, stale);
@@ -818,7 +822,7 @@ async function run(q, handoff = null) {
     // de turbulencias se carga aparte en su sección. Un fallo meteorológico nunca sustituye la ficha.
     if (flight) {
       currentView = null;
-      els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight: withTurbEstimate(flight), punctuality: punct });
+      els.result.innerHTML = legSwitchHtml(q) + flightShellHtml({ flight: withCalm(withTurbEstimate(flight)), punctuality: punct });
       show('result');
       initFicha(q, flight, stale);
       if (same) restoreScroll(same.scrollY);
@@ -871,12 +875,15 @@ async function loadForecastSection(ctx) {
   // Vuelo ya terminado (o cancelado/desviado): ni tarjeta ni pronóstico calculado a posteriori (ninguna consulta).
   if (turbOver(shownCard)) { syncTurbArea(); return; }
   area().innerHTML = forecastLoadingHtml();
+  // Sin pronóstico nuevo válido (error, cálculo simplificado o aterrizaje entre medias), el número del anterior se va.
+  const dropKeptCalm = () => { if (keptCalm && !stale()) { keptCalm = null; paintCalm(); } };
   const times = `${formatLocal(profile.departureMs, oTz)}–${formatLocal(profile.arrivalMs, dTz)}`; // horas de bloque
   let view;
   try {
     view = await forecastView({ q, profile: forecastProfile, flight, times, nowMs: Date.now() });
   } catch (err) {
     if (stale() || !area()) return;
+    dropKeptCalm();
     if (turbOver(shownCard)) { syncTurbArea(); return; } // aterrizó mientras se calculaba
     if (!isWeatherUnavailable(err)) {
       // Los modelos ECMWF/GFS no dan datos: cálculo simplificado (v1), también dentro de la sección (su tarjeta ya
@@ -905,10 +912,11 @@ async function loadForecastSection(ctx) {
   }
   if (stale() || !area()) return;
   // Aterrizado mientras se calculaba: un pronóstico que llega después no se pinta ni se guarda como el del vuelo.
-  if (turbOver(shownCard)) { syncTurbArea(); return; }
+  if (turbOver(shownCard)) { dropKeptCalm(); syncTurbArea(); return; }
   Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
   view.calm = calmOf(view); // una vez por pronóstico: ni la posición ni el estado del vuelo lo cambian
   currentView = view;
+  keptCalm = null;
   paintForecastSection(view);
   paintCalm();
   rememberForecast(q, forecastDigest(view));
@@ -1110,7 +1118,12 @@ function calmOf(view) {
   const k = calmScore(view);
   return k && { ...k, level: view.summary.maxLevel };
 }
-const withCalm = card => (card && currentView?.calm ? { ...card, calm: currentView.calm } : card);
+// keptCalm: el del pronóstico anterior del mismo vuelo durante «Actualizar», hasta que el nuevo llega (o falla).
+let keptCalm = null;
+const withCalm = card => {
+  const calm = currentView?.calm ?? keptCalm;
+  return card && calm ? { ...card, calm } : card;
+};
 function paintCalm() {
   const status = els.result.querySelector('.flight .hero-status');
   if (!status || !shownCard) return;
