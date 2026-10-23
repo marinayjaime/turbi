@@ -29,6 +29,7 @@ describe('forecastView', () => {
     expect(v.summary.headline).toBe('Tranquilo');
     expect(v.confidence.level).toBe('alta');
     expect(v.altitudes).toHaveLength(6);
+    expect(v.calmScore).toBe(100);
     expect(v.route).toHaveLength(profile.points.length);
     expect(JSON.parse(JSON.stringify(v))).toEqual(v);
   });
