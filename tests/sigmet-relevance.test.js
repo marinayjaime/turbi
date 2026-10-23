@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildProfile } from '../js/altitude.js';
 import { sigmetsNearRoute } from '../js/aviation-weather.js';
-import { flightPath, sigmetRelevance, sigmetMessage, sigmetMotion, sigmetsWithoutArea, sigmetLevelsFromText, MARGINS } from '../js/sigmet-relevance.js';
+import { flightPath, sigmetRelevance, sigmetMessage, sigmetMotion, sigmetsWithoutArea, sigmetLevelsFromText, sigmetVertical, sigmetGeometryTime, MARGINS } from '../js/sigmet-relevance.js';
 import { aviationView } from '../js/forecast.js';
 
 const TFN = { lat: 28.4827, lon: -16.3415 }, BIO = { lat: 43.3011, lon: -2.9106 };
@@ -32,13 +32,14 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     const r = rel(near, VY3261);
     expect(r.tier).toBe('near');
     expect(r.reasons).toContain('caduca-antes');
-    expect(sigmetMessage(near, r, { from: 'Tenerife', to: 'Bilbao' })).toBe('Aviso SIGMET de turbulencia fuerte cerca de la ruta: vigente hasta las 09:00 UTC, antes de la hora prevista de paso; podría renovarse; se desplaza sin velocidad indicada');
-    const renewed = { ...near, validFrom: iso('2026-10-23T09:00:00Z'), validTo: iso('2026-10-23T11:00:00Z') };
+    expect(sigmetMessage(near, r, { from: 'Tenerife', to: 'Bilbao' })).toBe('Aviso SIGMET de turbulencia fuerte cerca de la ruta: vigente hasta las 09:00 UTC, antes de la hora prevista de paso; podría renovarse; se desplaza y no indica a qué hora corresponde su zona');
+    // Renovado: un aviso nuevo con su propia hora de zona («FCST AT 0900Z»), que sigue moviéndose sin velocidad indicada.
+    const renewed = { ...near, validFrom: iso('2026-10-23T09:00:00Z'), validTo: iso('2026-10-23T11:00:00Z'), raw: near.raw.replace('SEV TURB FCST', 'SEV TURB FCST AT 0900Z') };
     const r2 = rel(renewed, VY3261);
     expect(r2.tier).toBe('affects');
     expect(r2.where).toBe('descent');
     expect(sigmetMessage(renewed, r2, { from: 'Tenerife', to: 'Bilbao' })).toBe('Posible aviso SIGMET de turbulencia fuerte durante el descenso a Bilbao');
-    expect(new Date(r2.passage.from).toISOString().slice(11, 16)).toBe('09:55'); // por debajo de FL050 con el ritmo de Turbi… y antes con la banda
+    expect(new Date(r2.passage.from).toISOString().slice(11, 16)).toBe('09:57'); // dentro de la zona (sin el margen por movimiento) y por debajo de FL050
   });
 
   it('coincidencia en las tres dimensiones (crucero, FL300–400, vigente al paso) → posible afectación «durante el crucero»', () => {
@@ -82,11 +83,18 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     expect(rel(sig({ coords, validFrom: null, validTo: null }), v)).toMatchObject({ tier: 'near', reasons: ['hora-desconocida'] });
     expect(rel(sig({ coords: [] }), v)).toMatchObject({ tier: 'near', reasons: ['sin-zona'] });
     // Sin base/top en los campos pero sí en el texto del aviso (pasa en algunos FIR): se usan los del texto.
-    expect(sigmetLevelsFromText('WSDL31 EDZE 230930 EDUU SIGMET 3 VALID 231000/231200 EDZF- EDUU RHEIN UIR SEV TURB FCST AT 1100Z WI N5028 E01309 - N4911 E01248 FL320/400 WKN=')).toEqual({ base: 32000, top: 40000 });
-    expect(sigmetLevelsFromText('EDGG LANGEN FIR SEV TURB FCST WI N4907 E00612 - N5010 E00811 SFC/FL060 INTSF=')).toEqual({ base: 0, top: 6000 });
-    expect(sigmetLevelsFromText('EMBD TS FCST TOP FL400 MOV E 10KT NC')).toEqual({ base: 0, top: 40000 });
-    expect(sigmetLevelsFromText('SEV TURB FCST ABV FL300 STNR')).toEqual({ base: 30000, top: Infinity });
-    expect(sigmetLevelsFromText('SEV MTW FCST SFC/5000FT STNR')).toEqual({ base: 0, top: 5000 });
+    expect(sigmetLevelsFromText('WSDL31 EDZE 230930 EDUU SIGMET 3 VALID 231000/231200 EDZF- EDUU RHEIN UIR SEV TURB FCST AT 1100Z WI N5028 E01309 - N4911 E01248 FL320/400 WKN=')).toEqual({ kind: 'layer', base: 32000, top: 40000 });
+    expect(sigmetLevelsFromText('EDGG LANGEN FIR SEV TURB FCST WI N4907 E00612 - N5010 E00811 SFC/FL060 INTSF=')).toEqual({ kind: 'layer', base: 0, top: 6000 });
+    // Un límite que el aviso no da queda desconocido (null), nunca superficie ni infinito.
+    expect(sigmetLevelsFromText('EMBD TS FCST TOP FL400 MOV E 10KT NC')).toEqual({ kind: 'top', base: null, top: 40000 });
+    expect(sigmetLevelsFromText('SEV TURB FCST ABV FL300 STNR')).toEqual({ kind: 'above', base: 30000, top: null });
+    expect(sigmetLevelsFromText('SEV MTW FCST SFC/5000FT STNR')).toEqual({ kind: 'layer', base: 0, top: 5000 });
+    // Lo que el aviso AFIRMA (sure) frente a lo que podría abarcar (possible): solo tormentas/ciclones con «TOP» afirman
+    // su columna desde capas bajas (formato OACI de las nubes de desarrollo vertical).
+    expect(sigmetVertical({ hazard: 'TS', raw: 'EMBD TS FCST TOP FL400' })).toMatchObject({ sure: [0, 40000], possible: [0, 40000] });
+    expect(sigmetVertical({ hazard: 'TURB', raw: 'SEV TURB FCST TOP FL400' })).toMatchObject({ sure: null, possible: [0, 40000] });
+    expect(sigmetVertical({ hazard: 'TURB', raw: 'SEV TURB FCST ABV FL300' })).toMatchObject({ sure: null, possible: [30000, Infinity] });
+    expect(sigmetVertical({ hazard: 'TURB', raw: 'SEV TURB FCST', base: null, top: null })).toMatchObject({ sure: null, possible: [0, Infinity] });
     expect(sigmetLevelsFromText('VALID 230700/230900 LEVA- LECM MADRID FIR EMBD TS OBS MOV E')).toBeNull(); // la validez no son niveles
     expect(rel(sig({ coords, base: null, top: null, raw: 'SEV TURB FCST FL300/400 STNR NC' }), v).tier).toBe('affects');
     // Coincidencia que depende del margen (un aviso alto cerca del destino: solo si el avión descendiera tarde): posible
@@ -97,9 +105,12 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     expect(high.where).toBeNull();
     expect(sigmetMessage(sig({}), high, { to: 'Bilbao' })).toBe('Posible aviso SIGMET de turbulencia fuerte en la trayectoria prevista');
     expect(rel(sig({ coords, base: null, top: null, raw: 'SEV TURB FCST SFC/FL060 STNR NC' }), v).tier).toBe('none'); // crucero, muy por encima
-    // Sin techo pero con base («ABV FL300»): por encima; sin base pero con techo («TOP FL400»): desde la superficie.
-    expect(rel(sig({ coords, base: 30000, top: null }), v).tier).toBe('affects');
-    expect(rel(sig({ coords, base: null, top: 40000 }), v).tier).toBe('affects');
+    // Un límite desconocido no descarta, pero tampoco se convierte en certeza: incierto, «altitud incompleta». Por encima
+    // del techo conocido o por debajo de la base conocida, sí se descarta. Tormentas con «TOP»: columna afirmada.
+    expect(rel(sig({ coords, base: 30000, top: null }), v)).toMatchObject({ tier: 'near', reasons: ['altitud-incompleta'] });
+    expect(rel(sig({ coords, base: null, top: 40000 }), v)).toMatchObject({ tier: 'near', reasons: ['altitud-incompleta'] });
+    expect(rel(sig({ coords, base: 42000, top: null }), v).tier).toBe('none'); // todo por encima del avión
+    expect(rel(sig({ coords, hazard: 'TS', qualifier: 'EMBD', base: null, top: 40000, raw: 'EMBD TS FCST TOP FL400 STNR' }), v).tier).toBe('affects');
     // Sin polígono: incierto si es de la región OACI del origen o del destino; de otra región, no se relaciona.
     const items = [{ hazard: 'TS', qualifier: 'EMBD', fir: 'LECM MADRID', coords: [], raw: 'LECM TS', validFrom: 1792738800, validTo: 1792760400 },
       { hazard: 'TURB', qualifier: 'SEV', fir: 'UHMM MAGADAN', coords: [], raw: 'UHMM TURB', validFrom: 1792738800, validTo: 1792760400 }];
@@ -108,9 +119,12 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     expect(sigmetMessage(noArea[0], noArea[0].relevance)).toBe('Aviso SIGMET de tormentas cerca de la ruta: sin zona delimitada');
     // Movimiento sin velocidad: el margen lateral crece con el tiempo hasta el paso (aquí ≈ 3 h → +75 km).
     const offFar = box(mid.lat, mid.lon + 1.8, 0.2, 0.2); // ≈ 120 km: fuera de «cerca»…
-    const moving = sig({ coords: offFar, raw: 'SEV TURB FCST MOV E NC', validFrom: iso('2026-10-23T06:00:00Z') });
+    const moving = sig({ coords: offFar, raw: 'SEV TURB FCST AT 0600Z MOV E NC', validFrom: iso('2026-10-23T06:00:00Z') });
     expect(rel({ ...moving, raw: 'SEV TURB FCST STNR NC' }, v).tier).toBe('none');
     expect(rel(moving, v)).toMatchObject({ tier: 'near', reasons: ['lejos', 'movimiento-sin-velocidad'] }); // …pero se mueve
+    // El margen por movimiento incierto acerca a «cerca», nunca da «posible afectación» por sí solo.
+    const close = sig({ coords: box(mid.lat, mid.lon + 1.1, 0.2, 0.2), raw: 'SEV TURB FCST AT 0600Z MOV W NC' }); // ≈ 60 km
+    expect(rel(close, v).tier).toBe('near');
   });
 
   it('movimiento con velocidad: el polígono se desplaza hasta la hora de paso (entra en la ruta o sale de ella)', () => {
@@ -119,11 +133,20 @@ describe('relevancia de los SIGMET para el vuelo', () => {
     expect(sigmetMotion('SEV TURB FCST')).toMatchObject({ kind: 'unknown' });
     const v = view(MAD, LHR, iso('2026-10-23T08:00:00Z'), 120);
     const mid = v._p.points[Math.floor(v._p.points.length / 2)]; // paso ≈ 09:00Z, 3 h después de su emisión (06:00Z)
-    const west = box(mid.lat, mid.lon - 2.2, 0.3, 0.3); // ≈ 180 km al oeste al emitirse
-    expect(rel(sig({ coords: west, raw: 'SEV TURB FCST STNR NC' }), v).tier).toBe('none');
-    expect(rel(sig({ coords: west, raw: 'SEV TURB FCST MOV E 30KT NC' }), v).tier).toBe('affects'); // 3 h × 55 km/h ≈ 165 km al este
+    const west = box(mid.lat, mid.lon - 2.2, 0.3, 0.3); // ≈ 180 km al oeste a las 06:00Z
+    expect(rel(sig({ coords: west, raw: 'SEV TURB FCST AT 0600Z STNR NC' }), v).tier).toBe('none');
+    expect(rel(sig({ coords: west, raw: 'SEV TURB FCST AT 0600Z MOV E 30KT NC' }), v).tier).toBe('affects'); // 3 h × 55 km/h ≈ 165 km al este
+    // La hora de partida es la de la ZONA (OBS/FCST AT), no validFrom: la misma zona a las 08:30Z apenas se ha movido al paso.
+    expect(rel(sig({ coords: west, raw: 'SEV TURB FCST AT 0830Z MOV E 30KT NC' }), v).tier).toBe('none');
     const onRoute = box(mid.lat, mid.lon, 0.3, 0.3);
-    expect(rel(sig({ coords: onRoute, raw: 'SEV TURB FCST MOV W 40KT NC' }), v).tier).not.toBe('affects'); // ya se ha ido
+    expect(rel(sig({ coords: onRoute, raw: 'SEV TURB OBS AT 0600Z MOV W 40KT NC' }), v).tier).not.toBe('affects'); // ya se ha ido
+    // Se mueve y no dice a qué hora corresponde su zona: no se desplaza desde una hora inventada; queda incierto.
+    expect(rel(sig({ coords: onRoute, raw: 'SEV TURB FCST MOV W 40KT NC' }), v)).toMatchObject({ tier: 'near', reasons: ['movimiento-sin-hora'] });
+    expect(rel(sig({ coords: west, raw: 'SEV TURB FCST MOV E 30KT NC' }), v).tier).not.toBe('affects');
+    // Hora de la zona: «OBS AT 0601Z» el mismo día; «FCST AT 2350Z» con validez desde las 00:00Z → el día anterior.
+    expect(sigmetGeometryTime({ raw: 'TS OBS AT 0601Z E OF LINE', validFrom: iso('2026-10-23T06:00:00Z') })).toBe(iso('2026-10-23T06:01:00Z'));
+    expect(sigmetGeometryTime({ raw: 'SEV TURB FCST AT 2350Z WI', validFrom: iso('2026-10-24T00:00:00Z') })).toBe(iso('2026-10-23T23:50:00Z'));
+    expect(sigmetGeometryTime({ raw: 'SEV TURB FCST WI N4000', validFrom: iso('2026-10-24T00:00:00Z') })).toBeNull();
   });
 
   it('cruce entre dos puntos de muestreo de la ruta: un polígono estrecho que cae entre dos puntos de view.route se detecta', () => {

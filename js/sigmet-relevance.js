@@ -41,9 +41,21 @@ export function sigmetMotion(raw = '') {
   return { kind: kmh === null ? 'moving-unknown-speed' : 'moving', bearing: DIRS[m[1]], kmh, trend };
 }
 
-// Niveles escritos en el texto del aviso, para cuando Aviation Weather no rellena base/top (pasa en algunos FIR): formatos
-// OACI «SFC/FL060», «FL320/400», «FL250/FL350», «TOP FL400», «TOP ABV FL400», «ABV FL300», «BLW FL100» y en pies
-// («SFC/5000FT», «3000/9000FT»). En pies; Infinity = sin techo. null si no se reconoce (la altitud sigue desconocida).
+// Hora a la que corresponde la ZONA descrita por el aviso: la primera «OBS AT hhmmZ» o «FCST AT hhmmZ» del texto (la
+// posición observada o prevista de partida; una segunda «FCST AT» describe la posición final). El texto solo da hora y
+// minutos: el día es el más cercano a la validez del aviso. Sin esa hora, null: no se inventa (ni validFrom ni otra).
+export function sigmetGeometryTime(s) {
+  const m = (s?.raw ?? '').match(/\b(?:OBS|FCST) AT (\d{2})(\d{2})Z\b/);
+  const ref = Number.isFinite(s?.validFrom) ? s.validFrom : Number.isFinite(s?.validTo) ? s.validTo : null;
+  if (!m || ref === null || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+  const d = new Date(ref);
+  const same = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), Number(m[1]), Number(m[2]));
+  return [same - 86400000, same, same + 86400000].reduce((a, b) => (Math.abs(b - ref) < Math.abs(a - ref) ? b : a));
+}
+
+// Niveles escritos en el texto del aviso (formatos OACI): «SFC/FL060», «FL320/400», «FL250/FL350», «SFC/5000FT»,
+// «3000/9000FT» (capa con sus dos límites), «TOP FL400», «TOP ABV FL400», «ABV FL300», «BLW FL100». En pies. kind dice
+// qué límite da el aviso; el que no da queda DESCONOCIDO (null), nunca superficie ni infinito. null si no se reconoce.
 const FT = (n, unit) => (unit === 'FL' ? Number(n) * 100 : unit === 'M' ? Math.round(Number(n) * 3.2808) : Number(n));
 export function sigmetLevelsFromText(raw = '') {
   const text = raw.replace(/\s+/g, ' ');
@@ -51,13 +63,31 @@ export function sigmetLevelsFromText(raw = '') {
   if (m) {
     const base = m[1] === 'SFC' ? 0 : m[1].startsWith('FL') ? FT(m[1].slice(2), 'FL') : FT(m[1].replace(/FT|M/, ''), m[1].endsWith('M') ? 'M' : 'FT');
     const unit = m[2] ? 'FL' : m[4] ? m[4] : /^\d{3}$/.test(m[3]) ? 'FL' : 'FT';
-    return { base, top: FT(m[3], unit) };
+    return { kind: 'layer', base, top: FT(m[3], unit) };
   }
-  if ((m = text.match(/\bTOP ABV FL(\d{3})\b/))) return { base: 0, top: Infinity };
-  if ((m = text.match(/\bTOP (?:BLW )?FL(\d{3})\b/))) return { base: 0, top: FT(m[1], 'FL') };
-  if ((m = text.match(/\bABV FL(\d{3})\b/))) return { base: FT(m[1], 'FL'), top: Infinity };
-  if ((m = text.match(/\bBLW FL(\d{3})\b/))) return { base: 0, top: FT(m[1], 'FL') };
+  if ((m = text.match(/\bTOP ABV FL(\d{3})\b/))) return { kind: 'top-above', base: null, top: FT(m[1], 'FL') };
+  if ((m = text.match(/\bTOP (?:BLW )?FL(\d{3})\b/))) return { kind: 'top', base: null, top: FT(m[1], 'FL') };
+  if ((m = text.match(/\bABV FL(\d{3})\b/))) return { kind: 'above', base: FT(m[1], 'FL'), top: null };
+  if ((m = text.match(/\bBLW FL(\d{3})\b/))) return { kind: 'below', base: null, top: FT(m[1], 'FL') };
   return null;
+}
+
+// Alcance vertical del aviso, separando lo que AFIRMA de lo que PODRÍA abarcar porque un límite es desconocido:
+//   sure     — [lo, hi] pies que el aviso cubre según sus límites conocidos (o null si no afirma ninguno);
+//   possible — [lo, hi] hasta donde podría llegar (límite desconocido → superficie o sin techo).
+// Tormentas y ciclones con solo «TOP FLxxx»: el formato OACI describe así nubes de desarrollo vertical que nacen en capas
+// bajas, por eso su columna cuenta como afirmada desde la superficie hasta el techo (y «TOP ABV» hasta ese techo como
+// mínimo). Turbulencia u ondas con un límite ausente: ese límite es desconocido. Sin ningún nivel: nada afirmado.
+export function sigmetVertical(s) {
+  const p = sigmetLevelsFromText(s?.raw) ?? (s?.base != null && s?.top != null ? { kind: 'layer', base: s.base, top: s.top }
+    : s?.top != null ? { kind: 'top', base: null, top: s.top } : s?.base != null ? { kind: 'above', base: s.base, top: null } : null);
+  const convective = ['TS', 'TC'].includes(s?.hazard);
+  if (!p) return { sure: null, possible: [0, Infinity], kind: 'unknown' };
+  if (p.kind === 'layer') return { sure: [p.base, p.top], possible: [p.base, p.top], kind: 'layer' };
+  if (p.kind === 'top') return { sure: convective ? [0, p.top] : null, possible: [0, p.top], kind: convective ? 'convective-top' : 'top' };
+  if (p.kind === 'top-above') return { sure: convective ? [0, p.top] : null, possible: [0, Infinity], kind: convective ? 'convective-top' : 'top-above' };
+  if (p.kind === 'above') return { sure: null, possible: [p.base, Infinity], kind: 'above' };
+  return { sure: null, possible: [0, p.top], kind: 'below' };
 }
 
 // La trayectoria estimada del pronóstico (la misma de buildProfile): posición proporcional al tiempo sobre el círculo
@@ -89,11 +119,14 @@ export function sigmetRelevance(s, path, { margins = MARGINS } = {}) {
   const motion = sigmetMotion(s.raw);
   // Niveles: sin base pero con techo → desde la superficie (convenio OACI, p. ej. «TOP FL400»); con base y sin techo →
   // por encima de la base («ABV FL300»); sin ninguno → altitud desconocida.
-  const text = s.base === null && s.top === null ? sigmetLevelsFromText(s.raw) : null;
-  const vertKnown = s.base !== null || s.top !== null || Boolean(text);
-  const base = s.base ?? text?.base ?? 0, top = s.top ?? text?.top ?? Infinity;
+  const vert = sigmetVertical(s);
+  const overlaps = (r, lo, hi) => Boolean(r) && hi >= r[0] && lo <= r[1];
   const timeKnown = Number.isFinite(s.validFrom) && Number.isFinite(s.validTo);
-  const ref = Number.isFinite(s.validFrom) ? s.validFrom : path.depMs; // el polígono describe la zona al emitirse
+  // Movimiento: el polígono se proyecta desde la hora de SU geometría (OBS/FCST AT). Si el aviso se mueve y no hay esa
+  // hora, su posición al paso es desconocida: no se desplaza y ese aviso no puede pasar de incierto.
+  const anchor = sigmetGeometryTime(s);
+  const moving = motion.kind === 'moving' || motion.kind === 'moving-unknown-speed';
+  const positionKnown = !moving || anchor !== null;
   // Tramos cortos (≤ 5 km y ≤ 1/120 del vuelo): cruces exactos tramo-polígono e interpolación de hora y altitud dentro.
   const N = Math.max(120, Math.ceil(path.km / 5));
   let best = { rank: 0 };
@@ -104,16 +137,18 @@ export function sigmetRelevance(s, path, { margins = MARGINS } = {}) {
     const t0 = path.depMs + m0 * 60000, t1 = path.depMs + m1 * 60000, tm = path.depMs + mid * 60000;
     // Lugar: el polígono desplazado hasta la hora de paso si el aviso dice hacia dónde y a qué velocidad se mueve.
     let coords = s.coords, drift = 0;
-    const dtH = (tm - ref) / 3600000;
-    if (motion.kind === 'moving') coords = shift(s.coords, motion.kmh * dtH, motion.bearing, s.coords[0].lat);
-    else if (motion.kind === 'moving-unknown-speed') drift = Math.min(margins.driftMaxKm, Math.abs(dtH) * margins.driftKmh);
+    if (motion.kind === 'moving' && anchor !== null) coords = shift(s.coords, (motion.kmh * (tm - anchor)) / 3600000, motion.bearing, s.coords[0].lat);
+    else if (motion.kind === 'moving-unknown-speed' && anchor !== null) drift = Math.min(margins.driftMaxKm, (Math.abs(tm - anchor) / 3600000) * margins.driftKmh);
+    else if (moving) drift = margins.driftMaxKm; // se mueve y no se sabe desde cuándo: todo el margen, solo para «cerca»
     const dist = segmentToPolygon(path.at(f0), path.at(f1), coords);
-    const lateral = dist <= margins.lateralKm + drift ? 'in' : dist <= margins.nearKm + drift ? 'near' : 'out';
+    // «Dentro» (posible afectación) solo con la geometría del aviso: el margen por movimiento incierto solo acerca a «cerca».
+    const lateral = dist <= margins.lateralKm ? 'in' : dist <= margins.nearKm + drift ? 'near' : 'out';
     if (lateral === 'out') continue;
     // Altitud: la banda de niveles posibles del avión en el tramo (pies) frente a los niveles del aviso.
     const b0 = path.band(m0), b1 = path.band(m1);
     const lo = Math.min(b0.lo, b1.lo) * 100, hi = Math.max(b0.hi, b1.hi) * 100;
-    const vertical = !vertKnown ? 'unknown' : hi >= base && lo <= top ? 'match' : 'no';
+    // match: la banda toca lo que el aviso AFIRMA; unknown: solo lo que podría abarcar (un límite desconocido); no: nada.
+    const vertical = overlaps(vert.sure, lo, hi) ? 'match' : overlaps(vert.possible, lo, hi) ? 'unknown' : 'no';
     // Hora: el paso por el tramo, con su margen, frente a la validez.
     const T = (margins.timeMin + margins.timeShare * mid) * 60000;
     let time = 'unknown';
@@ -124,18 +159,19 @@ export function sigmetRelevance(s, path, { margins = MARGINS } = {}) {
     }
     let rank = 0;
     const why = [];
-    if (lateral === 'in' && vertical === 'match' && time === 'match') rank = 2;
+    if (lateral === 'in' && vertical === 'match' && time === 'match' && positionKnown) rank = 2;
     else if (vertical !== 'no' && time !== 'no') {
       rank = 1;
       if (lateral === 'near') why.push('lejos');
-      if (vertical === 'unknown') why.push('altitud-desconocida');
+      if (vertical === 'unknown') why.push(vert.kind === 'unknown' ? 'altitud-desconocida' : 'altitud-incompleta');
       if (time === 'unknown') why.push('hora-desconocida');
       if (time === 'after-expiry') why.push('caduca-antes');
-      if (drift) why.push('movimiento-sin-velocidad');
+      if (moving && anchor === null) why.push('movimiento-sin-hora');
+      else if (drift) why.push('movimiento-sin-velocidad');
     }
     // nominal: el nivel previsto por Turbi (sin margen) ya está dentro de los niveles del aviso; solo entonces se puede
     // nombrar la fase con confianza (si la coincidencia depende del margen, no se afirma ni la fase ni la altitud).
-    if (rank === 2) hits.push({ mid, phase: path.phase(mid), t0, t1, nominal: path.fl(mid) * 100 >= base && path.fl(mid) * 100 <= top });
+    if (rank === 2) hits.push({ mid, phase: path.phase(mid), t0, t1, nominal: overlaps(vert.sure, path.fl(mid) * 100, path.fl(mid) * 100) });
     // El tramo más relevante (y, a igualdad, el más cercano) da la distancia, la hora y los motivos.
     if (rank > best.rank || (rank === best.rank && rank > 0 && dist < best.dist)) best = { rank, dist, mid, t0, t1, why };
   }
@@ -193,8 +229,10 @@ export function sigmetMessage(s, rel, cities = {}) {
   if (rel.reasons?.includes('caduca-antes') && Number.isFinite(s.validTo)) why.push(`vigente hasta las ${hhmm(s.validTo)} UTC, antes de la hora prevista de paso; podría renovarse`);
   if (rel.reasons?.includes('lejos') && Number.isFinite(rel.distanceKm)) why.push(`a unos ${rel.distanceKm} km de la trayectoria estimada`);
   if (rel.reasons?.includes('altitud-desconocida')) why.push('el aviso no indica su altitud');
+  if (rel.reasons?.includes('altitud-incompleta')) why.push('el aviso no indica todos sus límites de altitud');
   if (rel.reasons?.includes('hora-desconocida')) why.push('el aviso no indica su validez');
   if (rel.reasons?.includes('movimiento-sin-velocidad')) why.push('se desplaza sin velocidad indicada');
+  if (rel.reasons?.includes('movimiento-sin-hora')) why.push('se desplaza y no indica a qué hora corresponde su zona');
   if (rel.reasons?.includes('sin-zona')) why.push('sin zona delimitada');
   return `Aviso SIGMET de ${what} cerca de la ruta${why.length ? `: ${why.join('; ')}` : ''}`;
 }

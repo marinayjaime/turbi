@@ -71,7 +71,7 @@ function classifiedSigmets(av, view) {
     const relevance = sigmetRelevance(s, path);
     // Sin niveles en los campos pero sí en el texto del aviso: también en el detalle («hasta 1,8 km de altura»).
     const text = !s.levels ? sigmetLevelsFromText(s.raw) : null;
-    const levels = text ? sigmetLevels({ base: text.base || null, top: Number.isFinite(text.top) ? text.top : null }) : s.levels;
+    const levels = text ? sigmetLevels({ base: text.base || null, top: text.top }) : s.levels;
     return { ...s, levels, relevance, message: sigmetMessage(s, relevance, cities) };
   });
   const sigmetsNoArea = sigmetsWithoutArea(av.sigmet.items, { originIcao: av.icao?.[view.originIata] ?? null,
