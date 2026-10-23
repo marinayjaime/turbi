@@ -232,16 +232,22 @@ button { font: inherit; cursor: pointer; }
 .hero-status .chip.flying.tone-info { background: var(--accent); color: #fff; }
 
 .status-note { margin: 0; font-size: 12px; line-height: 1.3; color: var(--muted); }
-/* Calm Score (js/calm-score.js), bajo el estado: el número con el color del titular del pronóstico y «CALM SCORE»
-   pequeño debajo. Al tocarlo, qué significa, en una capa a lo ancho de la cabecera, dentro de la tarjeta (no empuja
-   nada). */
+/* Calm Score (js/calm-score.js), bajo el estado: «87/100» con el número grande y en color según la nota (verde alta,
+   ámbar intermedia, rojo suave baja: los tonos de estado de Turbi), «/100» pequeño y gris, y «CALM SCORE» discreto
+   debajo, todo alineado a la derecha con el chip. Al tocarlo, qué significa, en una capa a lo ancho de la cabecera,
+   dentro de la tarjeta (no empuja nada). */
 .hero-head { position: relative; }
-.calm { margin-top: 2px; }
-.calm-sum { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; list-style: none; cursor: pointer; border-radius: 8px;
+.calm { margin-top: 4px; }
+.calm-sum { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; list-style: none; cursor: pointer; border-radius: 8px;
   -webkit-tap-highlight-color: transparent; }
 .calm-sum::-webkit-details-marker { display: none; }
-.calm-num { font-size: 24px; font-weight: 700; line-height: 1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--ink, var(--text)); }
-.calm-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.calm-num { display: flex; align-items: baseline; line-height: 1; font-variant-numeric: tabular-nums; }
+.calm-val { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; color: var(--calm-ink); }
+.calm-max { margin-left: 2px; font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--faint); }
+.calm-high { --calm-ink: var(--ok); }
+.calm-mid { --calm-ink: var(--warn); }
+.calm-low { --calm-ink: #D9473D; } /* rojo suave: el --bad de Turbi un punto más claro (contraste ≥ 4:1 a este tamaño) */
+.calm-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .calm[open] .calm-label { color: var(--accent); }
 .calm-info { position: absolute; left: var(--pad); right: var(--pad); top: calc(100% + 6px); z-index: 5; margin: 0; padding: 10px 12px;
   border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow);

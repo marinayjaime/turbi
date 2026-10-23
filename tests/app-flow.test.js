@@ -2746,15 +2746,15 @@ describe('seguimiento en vivo con Flightradar24', () => {
       mark();
       await until(() => $('.hero-status .calm'), 'Calm Score');
       await networkIdle();
-      const calm = () => [...document.querySelectorAll('.hero-status .calm-num, .hero-status .calm-label')].map(e => e.textContent).join(' ');
-      expect(calm()).toBe('100 Calm Score'); // pronóstico en calma (titular «Tranquilo»)
+      const calm = () => [...document.querySelectorAll('.hero-status .calm-val, .hero-status .calm-max, .hero-status .calm-label')].map(e => e.textContent).join(' ');
+      expect(calm()).toBe('100 /100 Calm Score'); // pronóstico en calma (titular «Tranquilo»)
       expect($('.hero-status .calm .sr-only').textContent).toContain('de 100');
       expect($('.hero-status .calm-info').textContent).toContain('No es una probabilidad');
       $('.hero-status details.calm').open = true;
       const meteo = calls.filter(u => u.includes('open-meteo')).length, radar = radarCalls().length, before = $('.flight');
       await to(46); // lectura nueva: la ficha se repinta entera
       await until(() => $('.flight') !== before, 'ficha repintada');
-      expect(calm()).toBe('100 Calm Score');
+      expect(calm()).toBe('100 /100 Calm Score');
       expect($('.hero-status details.calm').open).toBe(true); // el desplegable sigue como estaba
       expect(radarCalls()).toHaveLength(radar + 1);
       expect(calls.filter(u => u.includes('open-meteo'))).toHaveLength(meteo); // ni el número ni el repintado piden nada
@@ -2769,7 +2769,7 @@ describe('seguimiento en vivo con Flightradar24', () => {
       await networkIdle();
       mo.disconnect();
       expect(missing).toBe(0);
-      expect(calm()).toBe('100 Calm Score');
+      expect(calm()).toBe('100 /100 Calm Score');
       expect($('.hero-status details.calm').open).toBe(true); // y abierto, como estaba
     } finally { vi.useRealTimers(); }
   }, 30000);

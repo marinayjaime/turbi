@@ -538,7 +538,10 @@ describe('fases', () => {
   it('Calm Score bajo el estado solo programado o en curso, con pronóstico; nunca terminado, cancelado ni sin nota', () => {
     const calm = { score: 88, level: 1 };
     const hero = h => h.slice(h.indexOf('hero-status'), h.indexOf('</header>'));
-    expect(hero(html(card({ calm })))).toMatch(/<span class="calm-num">88<\/span><span class="calm-label">Calm Score<\/span>/);
+    expect(hero(html(card({ calm })))).toMatch(/<span class="calm-num"><span class="calm-val">88<\/span><span class="calm-max" aria-hidden="true">\/100<\/span><span class="sr-only"> de 100<\/span><\/span><span class="calm-label">Calm Score<\/span>/);
+    // Color por la propia nota: alta (≥ 80) verde, intermedia (50–79) ámbar, baja (< 50) rojo suave; 100 siempre verde.
+    const tone = score => hero(html(card({ calm: { score } }))).match(/calm-sum calm-(\w+)/)[1];
+    expect([100, 87, 80, 79, 57, 50, 49, 24, 0].map(tone)).toEqual(['high', 'high', 'high', 'mid', 'mid', 'mid', 'low', 'low', 'low']);
     expect(hero(html(card({ calm, phase: 'en-curso', status: { text: 'En vuelo', tone: 'info', flying: true } })))).toContain('calm-num');
     expect(html(card({ calm, phase: 'terminado', status: { text: 'Ha llegado', tone: 'ok' } }))).not.toContain('calm');
     expect(html(card({ calm, phase: 'cancelado', status: { text: 'Cancelado', tone: 'bad' } }))).not.toContain('calm');

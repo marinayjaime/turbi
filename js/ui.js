@@ -84,15 +84,18 @@ function statusHtml(c) {
     c.status.note ? `\n          <p class="status-note">${esc(c.status.note)}</p>` : ''}`;
 }
 
-// Calm Score (js/calm-score.js) bajo el estado, discreto: el número y «CALM SCORE»; al tocarlo, qué significa. Solo
+// Calm Score (js/calm-score.js) bajo el estado, discreto: «87/100» (el número grande, «/100» pequeño y gris) y «CALM
+// SCORE» debajo; al tocarlo, qué significa. Color del número según la propia nota: alta (≥ 80) verde, intermedia (50–79)
+// ámbar, baja (< 50) rojo suave; el valor va siempre en texto, el color solo lo refuerza. Solo
 // con pronóstico (c.calm, que pone app.js) y mientras el vuelo no ha terminado: tras aterrizar, cancelar o desviarse la
 // ficha ya no muestra el pronóstico. Color: el del titular del pronóstico (lvl-ink, como «General»), nunca el único dato.
+const calmTone = s => (s >= 80 ? 'high' : s >= 50 ? 'mid' : 'low');
 export function calmHtml(c, open = false) {
   const k = c.calm;
   if (!k || !Number.isFinite(k.score) || !['programado', 'en-curso'].includes(flightPhase(c))) return '';
   return `
           <details class="calm" data-card="calm"${open ? ' open' : ''}>
-            <summary class="calm-sum lvl-ink${k.level ?? 0}"><span class="calm-num">${k.score}</span><span class="calm-label">Calm Score</span><span class="sr-only"> de 100, ver qué significa</span></summary>
+            <summary class="calm-sum calm-${calmTone(k.score)}"><span class="calm-num"><span class="calm-val">${k.score}</span><span class="calm-max" aria-hidden="true">/100</span><span class="sr-only"> de 100</span></span><span class="calm-label">Calm Score</span><span class="sr-only">, ver qué significa</span></summary>
             <p class="calm-info">Pronóstico de lo tranquilo que será el vuelo completo, de 0 a 100 (100 = lo más tranquilo). Resume la intensidad y la duración de la turbulencia prevista. No es una probabilidad ni una medición; la fiabilidad va aparte, en «Confianza».</p>
           </details>`;
 }
