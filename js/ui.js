@@ -86,6 +86,11 @@ function statusHtml(c) {
 
 // Hero: foto (si la hay), número grande, «Aerolínea · Modelo» y el chip del estado. El logotipo solo se ve sin foto
 // (CSS :has), así también aparece si la foto no carga y su figura se elimina.
+function calmScoreHtml(score) {
+  if (!Number.isInteger(score) || score < 0 || score > 100) return '';
+  return `<span class="calm-score" aria-label="Calm Score: ${score} de 100, tranquilidad prevista del vuelo completo" title="Índice orientativo de tranquilidad prevista para todo el vuelo. No es una probabilidad ni una medición real de turbulencias."><strong>${score}</strong><small>CALM SCORE</small></span>`;
+}
+
 function heroHtml(c) {
   const sub = [c.airline, c.aircraft, c.operator && `Operado por ${c.operator}`].filter(Boolean).map(esc).join(' · ');
   return `
@@ -101,6 +106,7 @@ function heroHtml(c) {
           </div>
           <div class="hero-status">
           ${statusHtml(c)}
+          ${calmScoreHtml(c.calmScore ?? c.turbEstimate?.calmScore)}
           </div>
         </div>${c.stale ? `
         <p class="stale">${icon('alert', { size: 16 })}<span>Datos de Aena de ${esc(c.updatedAgo)}</span></p>` : ''}
