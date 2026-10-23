@@ -241,7 +241,7 @@ function headHtml(view, nowMs) {
   // El título «Turbulencias» ya no va aquí: lo lleva la propia tarjeta, dentro de #forecast-area.
   const punctualityBody = view.punctuality ? punctualityHtml(view.punctuality) : '';
   const head = view.flight
-    ? flightCardHtml(view.flight, { nowMs, punctualityBody })
+    ? flightCardHtml({ ...view.flight, calmScore: view.calmScore }, { nowMs, punctualityBody })
     : `<div class="card query-head"><p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>${view.sourceInfo ? `<p class="note-small source-info">${esc(view.sourceInfo)}</p>` : ''}</div>`;
   return `
     <div class="summary">
