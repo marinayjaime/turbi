@@ -24,7 +24,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
-import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow } from './card-model.js';
+import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
 import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
@@ -1120,9 +1120,10 @@ function calmOf(view) {
 }
 // keptCalm: el del pronóstico anterior del mismo vuelo durante «Actualizar», hasta que el nuevo llega (o falla).
 let keptCalm = null;
+// calmSigmet: aclaración en la explicación si un SIGMET podría afectar al vuelo (el número no cambia).
 const withCalm = card => {
   const calm = currentView?.calm ?? keptCalm;
-  return card && calm ? { ...card, calm } : card;
+  return card && calm ? { ...card, calm, calmSigmet: sigmetAffectsFlight(currentView?.aviation) } : card;
 };
 function paintCalm() {
   const status = els.result.querySelector('.flight .hero-status');
@@ -1455,6 +1456,7 @@ async function forecastExtras(view, q, stale) {
       const wx = $in('wx-alerts'); // no está si el vuelo aterrizó entre medias (sin tarjeta Turbulencias)
       if (wx) wx.innerHTML = weatherAlertsHtml(view.aviation); // línea compacta de avisos en la tarjeta (§10 bis.1)
       paintAviation(view); // el detalle, en Detalles avanzados
+      if (view === currentView) paintCalm(); // la aclaración del Calm Score si algún SIGMET podría afectar al vuelo
     }),
   ]);
   if (stale()) return;

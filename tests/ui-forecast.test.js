@@ -134,11 +134,20 @@ describe('Aviation Weather', () => {
       updated: '2026-09-24T10:00:00Z',
       origin: { iata: 'PMI', icao: 'LEPA', metarText: 'Viento de 230° a 8 kt', metarRaw: 'METAR LEPA …', tafText: ['Sin fenómenos significativos previstos'], tafRaw: 'TAF LEPA …' },
       destination: { iata: 'MAD', icao: 'LEMD', metarText: null, tafText: null },
-      sigmets: [{ label: 'Turbulencia fuerte', levels: 'FL300–FL400', crosses: true, distanceKm: 0, raw: 'SIGMET …' }],
+      sigmets: [
+        { label: 'Turbulencia fuerte', levels: 'entre 9,1 y 12,2 km de altura', raw: 'SIGMET A', validTo: Date.parse('2026-09-24T13:00:00Z'),
+          relevance: { tier: 'affects' }, message: 'Posible aviso SIGMET de turbulencia fuerte durante el crucero' },
+        { label: 'Tormentas', raw: 'SIGMET B', relevance: { tier: 'near' }, message: 'Aviso SIGMET de tormentas cerca de la ruta: a unos 60 km de la trayectoria estimada' },
+        { label: 'Tormentas', raw: 'SIGMET C', relevance: { tier: 'none' } },
+      ],
       pireps: [],
     };
     const h = aviationHtml(av, NOW);
-    for (const t of ['LEPA', 'Viento de 230° a 8 kt', 'METAR LEPA …', 'TAF LEPA …', 'Turbulencia fuerte', 'FL300–FL400', 'cruza la ruta', 'No hay informes recientes disponibles en esta zona.', 'Sin parte meteorológico disponible']) expect(h).toContain(t);
+    for (const t of ['LEPA', 'Viento de 230° a 8 kt', 'METAR LEPA …', 'TAF LEPA …', 'Avisos oficiales (SIGMET)', 'Podrían afectar al vuelo', 'Posible aviso SIGMET de turbulencia fuerte durante el crucero',
+      'entre 9,1 y 12,2 km de altura · vigente hasta las 13:00 UTC', 'Cercanos, de relevancia incierta', 'a unos 60 km de la trayectoria estimada',
+      '1 aviso cercano descartado: su altitud u hora no coinciden', 'La trayectoria de Turbi es aproximada', 'No hay informes recientes disponibles en esta zona.', 'Sin parte meteorológico disponible']) expect(h).toContain(t);
+    expect(h).not.toContain('SIGMET C'); // el descartado no se lista como aviso
+    expect(h).not.toContain('en la ruta</p>'); // ya no «Avisos oficiales en la ruta» para avisos que solo están cerca
     expect(h).not.toContain('no hay turbulencia');
   });
   it('sin datos → nada', () => {
@@ -292,19 +301,19 @@ describe('tarjeta de Turbulencias', () => {
     expect(card(calm).querySelector('.turb-span')).toBeNull();
     expect(card(calm).querySelector('.turb-general').classList.contains('lvl-ink0')).toBe(true);
   });
-  it('avisos: 1 SIGMET que cruza la ruta → línea ámbar «1 aviso oficial (SIGMET)» con su etiqueta y «Ver detalles»', () => {
-    const aviation = { sigmets: [{ label: 'Turbulencia fuerte', crosses: true, distanceKm: 0, raw: 'x' }], pireps: [] };
+  it('avisos: 1 SIGMET con posible afectación → línea ámbar con su texto concreto y «Ver detalles»', () => {
+    const aviation = { sigmets: [{ label: 'Turbulencia fuerte', raw: 'x', relevance: { tier: 'affects' }, message: 'Posible aviso SIGMET de turbulencia fuerte durante el descenso a Bilbao' }], pireps: [] };
     const s = card({ ...full, aviation }).querySelector(':scope > summary');
     const warn = s.querySelector('.wx-alerts .tone-warn');
-    expect(warn.textContent).toContain('1 aviso oficial (SIGMET)');
-    expect(warn.textContent).toContain('Turbulencia fuerte');
+    expect(warn.textContent).toContain('Posible aviso SIGMET de turbulencia fuerte durante el descenso a Bilbao');
     expect(warn.querySelector('svg.icon')).not.toBeNull();
     expect(s.querySelector('.wx-alerts [data-open="adv-weather"]').textContent).toBe('Ver detalles');
   });
-  it('avisos: SIGMET que no cruza y PIREP → sin ámbar; null o vacíos → ninguna .wx-alerts', () => {
-    const aviation = { sigmets: [{ label: 'Tormentas', crosses: false }], pireps: [{ label: 'Turbulencia ligera' }, { label: 'x' }] };
+  it('avisos: SIGMET cercano (aunque cruce) y PIREP → sin ámbar, «relevancia incierta»; null o vacíos → ninguna .wx-alerts', () => {
+    const aviation = { sigmets: [{ label: 'Tormentas', crosses: true, relevance: { tier: 'near' } }], pireps: [{ label: 'Turbulencia ligera' }, { label: 'x' }] };
     const box = card({ ...full, aviation }).querySelector('.wx-alerts');
     expect(box.querySelector('.tone-warn')).toBeNull();
+    expect(box.textContent).toContain('Aviso SIGMET cercano · relevancia incierta');
     expect(box.textContent).toContain('2 informes de pilotos cerca de la ruta');
     expect(card({ ...full, aviation: null }).querySelector('.wx-alerts')).toBeNull();
     expect(card({ ...full, aviation: { sigmets: null, pireps: null } }).querySelector('.wx-alerts')).toBeNull();

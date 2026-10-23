@@ -388,20 +388,26 @@ describe('weatherAlerts', () => {
     expect(weatherAlerts(null)).toEqual([]);
     expect(weatherAlerts({ sigmets: null, pireps: [] })).toEqual([]);
   });
-  it('2 SIGMET, uno cruza la ruta → «2 avisos oficiales (SIGMET)» con crosses; PIREP aparte', () => {
+  // SIGMET según su relevancia para el vuelo (js/sigmet-relevance.js): ámbar solo con posible afectación, con su texto.
+  const msg = 'Posible aviso SIGMET de turbulencia fuerte durante el descenso a Bilbao';
+  it('posible afectación → su texto concreto, en ámbar; con varias, cuántas; PIREP aparte', () => {
     const out = weatherAlerts({
-      sigmets: [{ label: 'Turbulencia fuerte', crosses: false }, { label: 'Tormentas', crosses: true }],
+      sigmets: [{ label: 'Turbulencia fuerte', relevance: { tier: 'affects' }, message: msg }, { label: 'Tormentas', relevance: { tier: 'near' } }],
       pireps: [{ label: 'moderada' }],
     });
     expect(out).toEqual([
-      { kind: 'sigmet', text: '2 avisos oficiales (SIGMET)', label: 'Turbulencia fuerte', crosses: true },
-      { kind: 'pirep', text: '1 informe de pilotos cerca de la ruta', label: 'moderada', crosses: false },
+      { kind: 'sigmet', text: msg, label: null, warn: true, crosses: true },
+      { kind: 'pirep', text: '1 informe de pilotos cerca de la ruta', label: 'moderada', warn: false, crosses: false },
     ]);
+    const two = weatherAlerts({ sigmets: [1, 2].map(() => ({ relevance: { tier: 'affects' }, message: msg })), pireps: [] });
+    expect(two[0].text).toBe('2 posibles avisos SIGMET en la trayectoria prevista');
   });
-  it('un solo SIGMET, en singular; varios PIREP en plural', () => {
-    const out = weatherAlerts({ sigmets: [{ label: 'Engelamiento', crosses: false }], pireps: [{ label: 'ligera' }, { label: 'moderada' }] });
-    expect(out[0]).toMatchObject({ text: '1 aviso oficial (SIGMET)', crosses: false });
-    expect(out[1].text).toBe('2 informes de pilotos cerca de la ruta');
+  it('solo cercanos o inciertos (también sin zona o sin clasificar) → línea neutra; descartados → nada', () => {
+    const near = weatherAlerts({ sigmets: [{ label: 'Tormentas', relevance: { tier: 'near' } }], sigmetsNoArea: [{ relevance: { tier: 'near' } }], pireps: [{ label: 'ligera' }, { label: 'moderada' }] });
+    expect(near[0]).toMatchObject({ text: '2 avisos SIGMET cercanos', label: 'relevancia incierta', warn: false });
+    expect(near[1].text).toBe('2 informes de pilotos cerca de la ruta');
+    expect(weatherAlerts({ sigmets: [{ label: 'Turbulencia fuerte', crosses: true }], pireps: [] })[0]).toMatchObject({ text: 'Aviso SIGMET cercano', warn: false }); // guardado antes de clasificar
+    expect(weatherAlerts({ sigmets: [{ relevance: { tier: 'none' } }], pireps: [] })).toEqual([]);
   });
 });
 

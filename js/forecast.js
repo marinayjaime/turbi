@@ -3,7 +3,8 @@
 import { forecastRoute } from './models.js';
 import { buildSegmentsV2, summarize, altitudeTable } from './summary.js';
 import { computeConfidence } from './confidence.js';
-import { summarizeMetar, summarizeTaf, sigmetsNearRoute, pirepsNearRoute } from './aviation-weather.js';
+import { summarizeMetar, summarizeTaf, sigmetsNearRoute, pirepsNearRoute, sigmetLabel, sigmetLevels } from './aviation-weather.js';
+import { flightPath, sigmetRelevance, sigmetMessage, sigmetsWithoutArea, sigmetLevelsFromText } from './sigmet-relevance.js';
 import { agoText } from './storage.js';
 import { sourceNote } from './adb.js';
 
@@ -59,6 +60,26 @@ function airport(av, iata, nowMs, timeZone) {
   };
 }
 
+// Los SIGMET que ya se mostraban (≤ 100 km de la ruta y vigentes durante el vuelo: sigmetsNearRoute, también los que
+// dibuja el mapa), cada uno con su relevancia para ESTE vuelo (lugar + altitud + hora de paso: js/sigmet-relevance.js)
+// y su texto. Aparte, los que no traen zona y son de la región del origen o del destino.
+function classifiedSigmets(av, view) {
+  if (!av.sigmet) return { sigmets: null, sigmetsNoArea: null };
+  const path = flightPath(view);
+  const cities = { from: view.fromCity ?? null, to: view.toCity ?? null };
+  const sigmets = sigmetsNearRoute(av.sigmet.items, view.route, view.depMs, view.arrMs).map(s => {
+    const relevance = sigmetRelevance(s, path);
+    // Sin niveles en los campos pero sí en el texto del aviso: también en el detalle («hasta 1,8 km de altura»).
+    const text = !s.levels ? sigmetLevelsFromText(s.raw) : null;
+    const levels = text ? sigmetLevels({ base: text.base || null, top: Number.isFinite(text.top) ? text.top : null }) : s.levels;
+    return { ...s, levels, relevance, message: sigmetMessage(s, relevance, cities) };
+  });
+  const sigmetsNoArea = sigmetsWithoutArea(av.sigmet.items, { originIcao: av.icao?.[view.originIata] ?? null,
+    destinationIcao: av.icao?.[view.destinationIata] ?? null, depMs: view.depMs, arrMs: view.arrMs })
+    .map(s => ({ ...s, label: sigmetLabel(s), levels: sigmetLevels(s), message: sigmetMessage(s, s.relevance, cities) }));
+  return { sigmets, sigmetsNoArea };
+}
+
 export function aviationView(av, view, nowMs) {
   if (!av.metar && !av.taf && !av.sigmet && !av.pirep) return null;
   return {
@@ -66,7 +87,7 @@ export function aviationView(av, view, nowMs) {
     origin: airport(av, view.originIata, nowMs, view.originTz ?? 'UTC'),
     destination: airport(av, view.destinationIata, nowMs, view.destinationTz ?? 'UTC'),
     // null = archivo no disponible (distinto de «ninguno cerca»)
-    sigmets: av.sigmet ? sigmetsNearRoute(av.sigmet.items, view.route, view.depMs, view.arrMs) : null,
+    ...classifiedSigmets(av, view),
     pireps: av.pirep ? pirepsNearRoute(av.pirep.items, view.route, nowMs) : null,
   };
 }

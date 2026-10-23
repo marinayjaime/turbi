@@ -134,6 +134,34 @@ describe('Open-Meteo falla (429) y el radar ADS-B responde', () => {
   });
 });
 
+describe('SIGMET según su relevancia para el vuelo (lugar + altitud + hora de paso)', () => {
+  it('posible afectación → línea ámbar concreta y aclaración en el Calm Score (sin cambiar el número); el de baja altura del mismo sitio, descartado', async () => {
+    const tomorrow = dayOf(Date.now() + 24 * 3600000);
+    const leg = { d: tomorrow, o: 'PMI', a: 'MAD', sd: '17:55', ed: `${tomorrow}T17:55`, sa: '19:25', ea: `${tomorrow}T19:25`, td: 'N', ta: 'T4', st: 'SCH', ac: 'A21N' };
+    // Un recuadro en mitad de la ruta PMI → MAD (≈ 39,9° N 1,1° E… 2,2° W), vigente todo el día.
+    const day0 = Date.parse(`${tomorrow}T00:00:00Z`) / 1000;
+    const coords = [{ lat: 39.4, lon: -0.8 }, { lat: 39.4, lon: 0.4 }, { lat: 40.4, lon: 0.4 }, { lat: 40.4, lon: -0.8 }, { lat: 39.4, lon: -0.8 }];
+    const sigmet = { updated: new Date().toISOString(), items: [
+      { hazard: 'TURB', qualifier: 'SEV', base: 25000, top: 40000, validFrom: day0, validTo: day0 + 86400, coords, raw: 'SIGMET CRUCERO SEV TURB FL250/400 STNR NC', fir: 'LECM MADRID' },
+      { hazard: 'TURB', qualifier: 'SEV', base: 0, top: 4000, validFrom: day0, validTo: day0 + 86400, coords, raw: 'SIGMET BAJO SEV TURB SFC/FL040 STNR NC', fir: 'LECM MADRID' },
+    ] };
+    const base = network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: openMeteoOk });
+    await openApp(vi.fn((url, o) => (String(url) === 'data/aviation/sigmet.json' ? Promise.resolve(json(sigmet)) : base(url, o))));
+    await search('IB1668', tomorrow);
+    await until(() => $('#wx-alerts .wx-alert') && $('.calm-sigmet'), 'aviso y aclaración');
+    await networkIdle();
+    // En un PMI–MAD corto la zona cae entre el final del ascenso y el crucero: no se afirma una fase concreta.
+    expect($('#wx-alerts .tone-warn').textContent).toContain('Posible aviso SIGMET de turbulencia fuerte en la trayectoria prevista');
+    expect($('.hero-status .calm-val').textContent).toBe('100'); // el Calm Score no cambia por el aviso
+    expect($('.hero-status .calm-sum').className).toBe('calm-sum calm-high');
+    expect($('.calm-sigmet').textContent).toContain('no incorpora ese aviso');
+    const adv = $('#adv-weather, [data-card="adv-weather"]')?.textContent.replace(/\s+/g, ' ') ?? document.body.textContent;
+    expect(adv).toContain('Podrían afectar al vuelo');
+    expect(adv).toContain('1 aviso cercano descartado'); // el de baja altura: el avión está en crucero sobre esa zona
+    expect(adv).not.toContain('SIGMET BAJO');
+  });
+});
+
 describe('Actualizar con un pronóstico válido en caché', () => {
   it('reutiliza el pronóstico: ninguna consulta nueva a Open-Meteo', async () => {
     const tomorrow = dayOf(Date.now() + 24 * 3600000);

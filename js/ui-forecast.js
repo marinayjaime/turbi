@@ -98,8 +98,8 @@ export function segmentListHtml(view) {
   })));
 }
 
-// Avisos meteorológicos en una línea compacta (§10 bis.1): solo lo que ya devuelven sigmetsNearRoute y
-// pirepsNearRoute (weatherAlerts). Ámbar si algún SIGMET cruza la ruta. «Ver detalles» abre «El tiempo en los
+// Avisos meteorológicos en una línea compacta (§10 bis.1): weatherAlerts (SIGMET según su relevancia para el vuelo y
+// PIREP). Ámbar solo con un SIGMET de posible afectación. «Ver detalles» abre «El tiempo en los
 // aeropuertos» de Detalles avanzados (data-open, Tarea 8). Sin avisos o sin datos (null), nada.
 export function weatherAlertsHtml(aviation) {
   const alerts = weatherAlerts(aviation);
@@ -169,18 +169,38 @@ function airportBlock(label, a) {
       </div>`;
 }
 
+// SIGMET agrupados por su relevancia para el vuelo (js/sigmet-relevance.js): los que podrían afectarle, los cercanos de
+// relevancia incierta (con el motivo) y, en una línea, cuántos se han descartado por altitud u hora. Cada uno con su
+// texto, niveles, validez en UTC y el aviso original.
+const utc = ms => `${new Date(ms).toISOString().slice(11, 16)} UTC`;
+function sigmetItemHtml(s) {
+  const facts = [s.levels, Number.isFinite(s.validTo) ? `vigente hasta las ${utc(s.validTo)}` : null].filter(Boolean).map(esc).join(' · ');
+  return `<li><strong>${esc(s.message ?? s.label)}</strong>${facts ? `<span class="sig-facts">${facts}</span>` : ''}
+        <details class="raw"><summary>Ver aviso oficial (SIGMET)</summary><code>${esc(s.raw)}</code></details></li>`;
+}
+function sigmetsHtml(av) {
+  if (av.sigmets === null) return '<p>Avisos oficiales no disponibles ahora.</p>';
+  const all = [...av.sigmets, ...(av.sigmetsNoArea ?? [])];
+  const tier = s => s.relevance?.tier ?? 'near';
+  const affects = all.filter(s => tier(s) === 'affects'), near = all.filter(s => tier(s) === 'near'), none = all.filter(s => tier(s) === 'none');
+  if (!all.length) return '<p>Ningún aviso oficial de turbulencia, tormentas o viento sobre montañas cerca de la ruta.</p>';
+  return `${affects.length ? `
+    <p class="sig-group">Podrían afectar al vuelo</p><ul>${affects.map(sigmetItemHtml).join('')}</ul>` : ''}${near.length ? `
+    <p class="sig-group">Cercanos, de relevancia incierta</p><ul>${near.map(sigmetItemHtml).join('')}</ul>` : ''}${none.length ? `
+    <p class="note-small">${none.length === 1 ? '1 aviso cercano descartado' : `${none.length} avisos cercanos descartados`}: su altitud u hora no coinciden con el paso previsto del avión.</p>` : ''}
+    <p class="note-small">La trayectoria de Turbi es aproximada: la coincidencia con cada aviso se estima con márgenes de lugar, altitud y hora.</p>`;
+}
+
 export function aviationHtml(av, nowMs = Date.now()) {
   if (!av) return '';
-  const sig = av.sigmets === null ? '<p>Avisos oficiales no disponibles ahora.</p>' : av.sigmets.length ? `<ul>${av.sigmets.map(s => `<li><strong>${esc(s.label)}</strong>${s.levels ? ` · ${esc(s.levels)}` : ''} · ${s.crosses ? 'cruza la ruta' : `a ${s.distanceKm} km de la ruta`}
-        <details class="raw"><summary>Ver aviso oficial (SIGMET)</summary><code>${esc(s.raw)}</code></details></li>`).join('')}</ul>`
-    : '<p>Ningún aviso oficial de turbulencia, tormentas o viento sobre montañas cerca de la ruta.</p>';
+  const sig = sigmetsHtml(av);
   const pir = av.pireps === null ? '<p>Informes de pilotos no disponibles ahora.</p>' : av.pireps.length ? `<ul>${av.pireps.map(p => `<li><strong>${esc(p.label)}</strong>${p.altitude ? ` · a ${esc(p.altitude)}` : ''}
         <details class="raw"><summary>Ver informe original</summary><code>${esc(p.raw)}</code></details></li>`).join('')}</ul>`
     : `<p>${NO_PIREPS}</p>`;
   return `
     <h3 class="section">El tiempo en los aeropuertos y avisos</h3>
     ${airportBlock('Salida', av.origin)}${airportBlock('Llegada', av.destination)}
-    <p class="apt-sub">Avisos oficiales en la ruta</p>${sig}
+    <p class="apt-sub">Avisos oficiales (SIGMET)</p>${sig}
     <p class="apt-sub">Informes de otros pilotos</p>${pir}
     <p class="note-small">Los pilotos informan de turbulencias sobre todo en EE. UU. y el Atlántico Norte: que no haya informes no significa que no haya turbulencia.
     Fuente: Aviation Weather Center (NOAA)${av.updated ? `, descargado ${agoText(nowMs - Date.parse(av.updated))}` : ''}.</p>`;

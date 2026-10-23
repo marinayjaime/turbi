@@ -249,6 +249,7 @@ button { font: inherit; cursor: pointer; }
 .calm-low { --calm-ink: #D9473D; } /* rojo suave: el --bad de Turbi un punto más claro (contraste ≥ 4:1 a este tamaño) */
 .calm-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .calm[open] .calm-label { color: var(--accent); }
+.calm-sigmet { display: block; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--warn); }
 .calm-info { position: absolute; left: var(--pad); right: var(--pad); top: calc(100% + 6px); z-index: 5; margin: 0; padding: 10px 12px;
   border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow);
   font-size: 13px; line-height: 1.4; color: var(--text); text-align: left; }
@@ -572,6 +573,9 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 .apt-title { font-weight: 600; }
 /* Subtítulo dentro de una sección (Avisos oficiales en la ruta, Informes de otros pilotos): un escalón por debajo del título. */
 .apt-sub { font-size: 13px; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: 0.04em; margin: 18px 0 6px; }
+/* SIGMET agrupados por relevancia (aviationHtml): rótulo de cada grupo y, bajo cada aviso, niveles y validez. */
+.sig-group { margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.sig-facts { display: block; margin-top: 2px; font-size: 12.5px; color: var(--muted); }
 /* Etiqueta dentro de un aeropuerto (Ahora, Previsión en el aeropuerto): discreta, por debajo del subtítulo. */
 .apt-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 10px 0 2px; }
 #aviation ul { font-size: 14px; }

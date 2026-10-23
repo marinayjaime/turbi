@@ -1,6 +1,6 @@
 import { kmh, compass, metres, localHour, altitudeText } from './plain.js';
 
-// METAR, TAF, SIGMET y PIREP de Aviation Weather (NOAA), descargados cada hora por GitHub Actions
+// METAR, TAF, SIGMET y PIREP de Aviation Weather (NOAA), descargados por GitHub Actions en cada publicación (≈ 15 min)
 // (la API no admite CORS). Todo es opcional: si falta, el pronóstico sigue funcionando.
 // Diseño: docs/superpowers/specs/2026-09-24-turbi-v2-pronostico-design.md §10
 
@@ -116,8 +116,8 @@ function segmentsCross(a, b, c, d) {
   return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
 }
 
-// Distancia (km) de un tramo de ruta a un polígono; 0 si lo toca o lo cruza.
-function segmentToPolygon(p1, p2, coords) {
+// Distancia (km) de un tramo de ruta a un polígono; 0 si lo toca o lo cruza. (También para js/sigmet-relevance.js.)
+export function segmentToPolygon(p1, p2, coords) {
   const poly = coords.map(c => toXY(c, p1));
   const a = { x: 0, y: 0 }, b = toXY(p2, p1);
   if (inside(a, poly) || inside(b, poly)) return 0;
@@ -147,6 +147,8 @@ const HAZARDS = {
   MTW: ['Viento sobre montañas', 'Viento fuerte sobre montañas'], TC: ['Ciclón tropical', 'Ciclón tropical'],
 };
 const km = ft => String(Math.round((ft * 0.3048) / 100) / 10).replace('.', ',');
+export const sigmetLabel = s => HAZARDS[s.hazard]?.[s.qualifier === 'SEV' ? 1 : 0] ?? s.hazard;
+export const sigmetLevels = s => (s.top ? (s.base ? `entre ${km(s.base)} y ${km(s.top)} km de altura` : `hasta ${km(s.top)} km de altura`) : s.base ? `por encima de ${km(s.base)} km de altura` : null);
 
 export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
   if (!Array.isArray(sigmets)) return [];
@@ -161,13 +163,16 @@ export function sigmetsNearRoute(sigmets, route, depMs, arrMs, maxKm = 100) {
     }))
     .filter(({ d }) => d <= maxKm)
     .map(({ s, d }) => ({
-      label: HAZARDS[s.hazard][s.qualifier === 'SEV' ? 1 : 0],
-      levels: s.top ? (s.base ? `entre ${km(s.base)} y ${km(s.top)} km de altura` : `hasta ${km(s.top)} km de altura`) : null,
+      label: sigmetLabel(s),
+      levels: sigmetLevels(s),
       crosses: d === 0,
       distanceKm: Math.round(d),
       validTo: s.validTo * 1000,
       raw: s.raw,
       coords: s.coords,
+      // Para clasificar su relevancia (js/sigmet-relevance.js): fenómeno, niveles y validez tal como vienen.
+      hazard: s.hazard, qualifier: s.qualifier ?? null, base: s.base ?? null, top: s.top ?? null,
+      validFrom: Number.isFinite(s.validFrom) ? s.validFrom * 1000 : null,
     }));
 }
 

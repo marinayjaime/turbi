@@ -264,19 +264,28 @@ export function roughestSpan(view) {
   return { text: `min ${m.startMin}–${m.endMin}` };
 }
 
-// Línea compacta de avisos en la tarjeta de Turbulencias (§10 bis): solo lo que ya devuelven sigmetsNearRoute y
-// pirepsNearRoute. label: la del primero. crosses: algún SIGMET cruza la ruta (ámbar). Nulos o vacíos: nada.
+// Línea compacta de avisos en la tarjeta de Turbulencias (§10 bis). SIGMET según su relevancia para el vuelo
+// (js/sigmet-relevance.js): «posible afectación» en ámbar, con su texto concreto; si solo los hay cercanos o inciertos,
+// una línea neutra; los descartados (altitud u hora que no coinciden), nada. Un aviso sin clasificar (pronóstico
+// guardado antes de existir la clasificación) cuenta como incierto: nunca se afirma que afecta sin haberlo comprobado.
+// PIREP: como siempre. warn (y crosses, su nombre anterior): la línea va en ámbar.
+const sigmetTier = s => s.relevance?.tier ?? 'near';
 export function weatherAlerts(aviation) {
   const out = [];
-  const sigmets = Array.isArray(aviation?.sigmets) ? aviation.sigmets : [];
+  const sigmets = [...(Array.isArray(aviation?.sigmets) ? aviation.sigmets : []), ...(Array.isArray(aviation?.sigmetsNoArea) ? aviation.sigmetsNoArea : [])];
   const pireps = Array.isArray(aviation?.pireps) ? aviation.pireps : [];
-  if (sigmets.length) {
-    out.push({ kind: 'sigmet', text: sigmets.length === 1 ? '1 aviso oficial (SIGMET)' : `${sigmets.length} avisos oficiales (SIGMET)`,
-      label: sigmets[0].label ?? null, crosses: sigmets.some(s => s.crosses) });
+  const affects = sigmets.filter(s => sigmetTier(s) === 'affects'), near = sigmets.filter(s => sigmetTier(s) === 'near');
+  if (affects.length) {
+    out.push({ kind: 'sigmet', text: affects.length === 1 ? affects[0].message ?? `Posible aviso SIGMET · ${affects[0].label}` : `${affects.length} posibles avisos SIGMET en la trayectoria prevista`,
+      label: null, warn: true, crosses: true });
+  } else if (near.length) {
+    out.push({ kind: 'sigmet', text: near.length === 1 ? 'Aviso SIGMET cercano' : `${near.length} avisos SIGMET cercanos`, label: 'relevancia incierta', warn: false, crosses: false });
   }
   if (pireps.length) {
     out.push({ kind: 'pirep', text: pireps.length === 1 ? '1 informe de pilotos cerca de la ruta' : `${pireps.length} informes de pilotos cerca de la ruta`,
-      label: pireps[0].label ?? null, crosses: false });
+      label: pireps[0].label ?? null, warn: false, crosses: false });
   }
   return out;
 }
+// ¿Algún SIGMET con posible afectación? (para la aclaración del Calm Score).
+export const sigmetAffectsFlight = aviation => [...(aviation?.sigmets ?? []), ...(aviation?.sigmetsNoArea ?? [])].some(s => sigmetTier(s) === 'affects');

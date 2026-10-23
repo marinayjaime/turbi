@@ -1,5 +1,5 @@
 // Descarga METAR, TAF, SIGMET y PIREP de Aviation Weather (NOAA) para publicarlos junto a la app.
-// La API no admite CORS, así que se hace aquí (GitHub Actions) una vez por hora, con pocas peticiones.
+// La API no admite CORS, así que se hace aquí (GitHub Actions) en cada publicación (cada 15 min y en cada push), con pocas peticiones.
 // Uso de la API: https://aviationweather.gov/data/api/ (sin clave, máx. 100 peticiones/min, User-Agent propio).
 import { mkdir, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';

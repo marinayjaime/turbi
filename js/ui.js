@@ -96,7 +96,8 @@ export function calmHtml(c, open = false) {
   return `
           <details class="calm" data-card="calm"${open ? ' open' : ''}>
             <summary class="calm-sum calm-${calmTone(k.score)}"><span class="calm-num"><span class="calm-val">${k.score}</span><span class="calm-max" aria-hidden="true">/100</span><span class="sr-only"> de 100</span></span><span class="calm-label">Calm Score</span><span class="sr-only">, ver qué significa</span></summary>
-            <p class="calm-info">Pronóstico de lo tranquilo que será el vuelo completo, de 0 a 100 (100 = lo más tranquilo). Resume la intensidad y la duración de la turbulencia prevista. No es una probabilidad ni una medición; la fiabilidad va aparte, en «Confianza».</p>
+            <p class="calm-info">Pronóstico de lo tranquilo que será el vuelo completo, de 0 a 100 (100 = lo más tranquilo). Resume la intensidad y la duración de la turbulencia prevista. No es una probabilidad ni una medición; la fiabilidad va aparte, en «Confianza».${c.calmSigmet ? `
+              <span class="calm-sigmet">Hay un aviso oficial SIGMET que podría afectar al vuelo: esta puntuación resume los modelos meteorológicos y no incorpora ese aviso.</span>` : ''}</p>
           </details>`;
 }
 

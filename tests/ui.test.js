@@ -548,6 +548,11 @@ describe('fases', () => {
     expect(html(card({ calm, status: { text: 'Desviado a Valencia', tone: 'warn' } }))).not.toContain('calm');
     expect(html(card())).not.toContain('calm'); // sin pronóstico, nada inventado
     expect(html(card({ calm }), { open: new Set(['calm']) })).toContain('<details class="calm" data-card="calm" open>');
+    // Con un SIGMET de posible afectación, una aclaración en la explicación; el número y su color, idénticos.
+    const withSigmet = hero(html(card({ calm, calmSigmet: true })));
+    expect(withSigmet).toContain('Hay un aviso oficial SIGMET que podría afectar al vuelo: esta puntuación resume los modelos meteorológicos y no incorpora ese aviso.');
+    expect(withSigmet.match(/<summary[\s\S]*<\/summary>/)[0]).toBe(hero(html(card({ calm }))).match(/<summary[\s\S]*<\/summary>/)[0]);
+    expect(hero(html(card({ calm })))).not.toContain('calm-sigmet');
   });
   it('finalizado: sin «Ahora», con «Resumen del vuelo» (distancia directa y duración real)', () => {
     const h = html(card({ phase: 'terminado', depFinal: true, arrFinal: true, status: { text: 'Ha llegado', tone: 'ok' }, depMs: NOW, arrMs: NOW + 85 * MIN }));
