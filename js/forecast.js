@@ -3,6 +3,7 @@
 import { forecastRoute } from './models.js';
 import { buildSegmentsV2, summarize, altitudeTable } from './summary.js';
 import { computeConfidence } from './confidence.js';
+import { computeCalmScore } from './calm-score.js';
 import { summarizeMetar, summarizeTaf, sigmetsNearRoute, pirepsNearRoute } from './aviation-weather.js';
 import { agoText } from './storage.js';
 import { sourceNote } from './adb.js';
@@ -25,6 +26,7 @@ export async function forecastView({ q, profile, flight, times, nowMs, fetchFn =
     destinationIata: q.destination.iata,
     durationMin: profile.durationMin,
     coverage: fc.coverage,
+    calmScore: computeCalmScore(fc.points, profile.durationMin),
     summary: summarize(segments, profile.durationMin),
     confidence: computeConfidence({
       departureMs: profile.departureMs, nowMs, models: fc.models, agreement: fc.agreement, coverage: fc.coverage, points: fc.points,
