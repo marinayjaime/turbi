@@ -22,6 +22,7 @@ export function forecastDigest(view) {
   if (!s) return null;
   const d = { headline: s.headline, verdict: s.verdict, maxLevel: s.maxLevel, maxDurationMin: s.maxDurationMin,
     percentages: s.percentages, confidence: view.confidence?.level ?? null, queriedAt: view.queriedAt };
+  if (Number.isInteger(view.calmScore) && view.calmScore >= 0 && view.calmScore <= 100) d.calmScore = view.calmScore;
   return valid(d) ? d : null;
 }
 
