@@ -48,3 +48,32 @@ describe('Calm Score (todo el vuelo, sin datos añadidos)', () => {
     expect(computeCalmScore(almost, 100)).toBe(100);
   });
 });
+
+import { flightCardHtml } from '../js/ui.js';
+
+describe('Calm Score integrado en la ficha', () => {
+  const flight = {
+    number: 'IB 1668', al: 'IB', o: 'PMI', a: 'MAD', cities: { o: 'Palma', a: 'Madrid' },
+    status: { text: 'Programado', tone: 'info' }, phase: 'programado',
+    dep: { date: '2026-10-23', time: '10:00' }, duration: 90, source: 'aena',
+  };
+
+  it('se muestra una sola vez, arriba y sin tarjeta adicional', () => {
+    const html = flightCardHtml({ ...flight, calmScore: 88 });
+    expect(html).toContain('class="calm-score"');
+    expect(html).toContain('<strong>88</strong><small>CALM SCORE</small>');
+    expect(html.indexOf('calm-score')).toBeLessThan(html.indexOf('route-codes'));
+    expect((html.match(/class="calm-score"/g) ?? []).length).toBe(1);
+    expect(html).toContain('No es una probabilidad');
+  });
+
+  it('no inventa una nota si el pronóstico falta', () => {
+    expect(flightCardHtml(flight)).not.toContain('class="calm-score"');
+    expect(flightCardHtml({ ...flight, calmScore: null })).not.toContain('class="calm-score"');
+  });
+
+  it('puede mostrar la nota conservada tras el aterrizaje', () => {
+    const html = flightCardHtml({ ...flight, calmScore: null, turbEstimate: { calmScore: 64 } });
+    expect(html).toContain('<strong>64</strong><small>CALM SCORE</small>');
+  });
+});
