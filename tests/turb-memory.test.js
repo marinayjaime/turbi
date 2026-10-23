@@ -17,6 +17,7 @@ describe('resumen de turbulencias por vuelo físico (js/turb-memory.js)', () => 
     const s = memoryStorage();
     expect(forecastDigest(view)).toEqual({ headline: 'Algo de movimiento', verdict: 'movimiento', maxLevel: 2, maxDurationMin: 14,
       percentages: [70, 20, 10, 0], confidence: 'media', queriedAt: NOW });
+    expect(forecastDigest({ ...view, calmScore: 82 })).toMatchObject({ calmScore: 82 });
     expect(legacyDigest({ verdict: 'turbulento', durationMin: 90, segments: [{ level: 0, startMin: 0, endMin: 60 }, { level: 3, startMin: 60, endMin: 70 }, { level: 1, startMin: 70, endMin: 90 }] }, NOW))
       .toEqual({ headline: 'Turbulento', verdict: 'turbulento', maxLevel: 3, maxDurationMin: 10, queriedAt: NOW });
     expect(legacyDigest({ verdict: 'tranquilo', durationMin: 90, segments: [] }, NOW)).toBeNull(); // sin tramos, nada
