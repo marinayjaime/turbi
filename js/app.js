@@ -907,6 +907,7 @@ async function loadForecastSection(ctx) {
   if (turbOver(shownCard)) { syncTurbArea(); return; }
   Object.assign(view, { punctuality: punct, originTz: oTz, destinationTz: dTz, etaCtx });
   currentView = view;
+  repaintFlight(shownCard, stale);
   paintForecastSection(view);
   rememberForecast(q, forecastDigest(view));
   await safely(() => forecastExtras(view, q, stale));
@@ -1298,7 +1299,7 @@ function repaintFlight(card, stale) {
   const top = scroller?.scrollTop ?? 0, resultTop = els.result.scrollTop;
   const punct = el.querySelector('#punctuality');
   punct?.remove();
-  el.outerHTML = flightCardHtml(withTurbEstimate(card), { open, nowMs: Date.now(), monoMs: monoNow() });
+  el.outerHTML = flightCardHtml({ ...withTurbEstimate(card), calmScore: currentView?.calmScore }, { open, nowMs: Date.now(), monoMs: monoNow() });
   const slot = els.result.querySelector('.flight #punctuality');
   if (punct && slot) slot.replaceWith(punct);
   shownCard = card;
