@@ -4,7 +4,7 @@ import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
 import { lookupFlightResult, canonicalRoute, icaoCallsign } from './flight.js';
 import { aliasOffer, adsbdbVetoes } from './aliases.js';
-import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate, adbPhase } from './adb.js';
+import { fetchAdb, adbTimes, adbInfo, adbPhysical, adbStatusText, sourceNote, adbPhysicalKey, adbRadarGate, adbPhase, historyDue, withFr24Landing } from './adb.js';
 import { fetchSchedule, loadAirlines, flightTitle, chooseLeg, legByKey, legDeparture, legArrival, flightStatus, isLate, legPhase, aenaFinal } from './schedule.js';
 import { startStatusRefresh, refreshMode } from './status-refresh.js';
 import { physicalFlightKey } from './physical-flight.js';
@@ -33,7 +33,7 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName, adbModel } from './airline-photos.js';
 import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack, fetchAdbHistory } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { LIVE_BASE } from './config.js';
 import { BUILD_ID } from './build.js';
@@ -306,14 +306,18 @@ async function adbQuery(number, date, adb) {
       when: `sale ${l.dep.sched.local.slice(11, 16)}`, status: adbStatusText(l.status) ?? '' }));
     return { kind: 'choose', number: input, date, options, legKey: null };
   }
-  const leg = picked ?? legs[0];
-  const origin = findAirport(db, leg.o), destination = findAirport(db, leg.a);
+  const adbLeg = picked ?? legs[0];
+  const origin = findAirport(db, adbLeg.o), destination = findAirport(db, adbLeg.a);
   if (!origin || !destination) {
-    setManual(true, `AeroDataBox da la ruta ${leg.o} → ${leg.a}, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.`);
+    setManual(true, `AeroDataBox da la ruta ${adbLeg.o} → ${adbLeg.a}, pero no tengo alguno de esos aeropuertos: introdúcelo a mano.`);
     return null;
   }
-  const { dep, durationMin } = adbTimes(leg);
   const meta = { number: adb.number ?? input, date: adb.date ?? date, fetchedAt: adb.fetchedAt, refreshedAt: adb.refreshedAt };
+  // Vuelo que ya debería haber terminado: Flightradar24 (Flight Summary) puede confirmar cómo terminó, con sus horas reales.
+  // Si no lo confirma (o falla), la ficha sigue con lo de AeroDataBox; nunca se da por aterrizado por la hora.
+  const leg = historyDue(adbLeg, Date.now())
+    ? withFr24Landing(adbLeg, await fetchAdbHistory(meta.number, meta.date, adbPhysicalKey(meta, adbLeg))) : adbLeg;
+  const { dep, durationMin } = adbTimes(leg);
   return {
     kind: 'adb', number: leg.number || input, airline: leg.airline ?? '', origin, destination,
     date: dep.local.slice(0, 10), time: dep.local.slice(11, 16), depUtcMs: dep.utc, durationMin,
@@ -420,12 +424,19 @@ function adbCard(q, durationMin, photos = null) {
     route: `${q.origin.city} a ${q.destination.city}`,
     status: { text: adbStatusText(leg.status) ?? 'Horario de AeroDataBox', tone: ADB_TONES[leg.status] ?? 'info' },
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: false,
-    dep: side(leg.dep.sched, dep), arr: side(leg.arr.sched, arr), aircraft: leg.aircraft ?? null,
-    gateChanged: false, stale: false, past: false, sourceNote: `Horario según AeroDataBox · consultado ${agoText(Date.now() - at)}`,
+    dep: side(leg.dep.sched, dep), arr: side(leg.arr.sched, arr), aircraft: fr24Model(leg) ?? leg.aircraft ?? null,
+    gateChanged: false, stale: false, past: false,
+    sourceNote: `Horario según AeroDataBox${leg.closedBy === 'fr24' ? ' · aterrizaje según Flightradar24' : ''} · consultado ${agoText(Date.now() - at)}`,
     // Fase: traducción directa del estado de AeroDataBox; final: hora de pista. Sin puntualidad ni confianza (no hay ETA).
     ...presentationFields({ phase: adbPhase(leg.status), depFinal: leg.dep.runway, arrFinal: leg.arr.runway, source: 'aerodatabox', q,
-      aircraftReg: leg.reg ?? null, aircraftHex: leg.modeS ?? null, physicalKey: q.adbKey }),
+      aircraftReg: leg.fr24?.reg ?? leg.reg ?? null, aircraftHex: leg.modeS ?? null, physicalKey: q.adbKey }),
   };
+}
+
+// Modelo que dio Flightradar24 al cerrar el vuelo (código OACI, p. ej. A339), solo si Turbi lo conoce; si no, el de AeroDataBox.
+function fr24Model(leg) {
+  const name = leg.closedBy === 'fr24' && leg.fr24?.type ? aircraftName(leg.fr24.type) : null;
+  return name && !name.startsWith('modelo ') ? name : null;
 }
 
 // Situación de hoy (inmediata) + histórico (se carga después). Solo vuelos con horario de Aena.
@@ -754,7 +765,9 @@ async function buildFlight(q) {
   const flight = q.kind === 'schedule'
     ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
       departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg, recallLandingSource(etaKey(q)))
-    : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin, await loadAirlinePhotos()), landedAt, {}, recallLandingSource(q.adbKey)) : null;
+    : q.kind === 'adb' ? (q.adbLeg.closedBy === 'fr24'
+      ? withLanding(adbCard(q, profile.durationMin, await loadAirlinePhotos()), q.adbLeg.arr.runway.utc, {}, 'fr24') // cerrado por FR24
+      : withLanding(adbCard(q, profile.durationMin, await loadAirlinePhotos()), landedAt, {}, recallLandingSource(q.adbKey))) : null;
   // Para js/card-model.js (cuentas «Sale en / Llega en / Duración»): la salida y la llegada visibles en UTC, sin calcular
   // nada nuevo. En AeroDataBox, la llegada visible es su mejor hora (adbTimes), la misma que muestra la ficha.
   const arrMs = q.kind === 'adb' ? adbTimes(q.adbLeg).arr?.utc ?? null : visibleArrivalMs;

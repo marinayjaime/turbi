@@ -1634,6 +1634,44 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     expect(calls.filter(u => u.includes('open-meteo'))).toEqual([]); // nada calculado a posteriori
   });
 
+  it('AeroDataBox histórico: Flightradar24 lo cierra (aterrizado, horas reales, Resumen del vuelo); sin confirmación, no se inventa', async () => {
+    const dep = Math.floor((Date.now() - 12 * 3600000) / 60000) * 60000, arr = dep + 550 * 60000; // salió hace 12 h; llegada prevista hace 2 h 50 min
+    const d = dayOf(dep);
+    const t = (ms, off) => ({ utc: `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`,
+      local: `${new Date(ms + off * 3600000).toISOString().slice(0, 10)} ${new Date(ms + off * 3600000).toISOString().slice(11, 16)}+0${off}:00` });
+    const raw = { number: 'DE 2282', status: 'Departed', airline: { name: 'Condor' }, aircraft: { model: 'Airbus A330', reg: 'D-ANRK' }, codeshareStatus: 'IsOperator',
+      departure: { airport: { iata: 'FRA' }, scheduledTime: t(dep, 1), runwayTime: t(dep + 29 * 60000, 1) },
+      arrival: { airport: { iata: 'ZNZ' }, scheduledTime: t(arr, 3), predictedTime: t(arr + 45 * 60000, 3) } };
+    const open = async history => {
+      localStorage.clear();
+      const base = network({ flights: {}, openMeteo: openMeteoOk,
+        schedule: { [`DE2282|${d}`]: { status: 'found', source: 'aerodatabox', number: 'DE2282', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) } } });
+      await openApp(vi.fn(async (url, o) => {
+        const u = String(url);
+        if (u.startsWith(`${LIVE_BASE}/history-adb/DE2282/${d}.json?leg=`)) { calls.push(u); return json(history); }
+        return base(url, o);
+      }));
+      await search('DE2282', d);
+      await until(() => $('#result .flight'), 'ficha');
+      await networkIdle();
+      return $('#result').textContent.replace(/\s+/g, ' ');
+    };
+    const takeoff = dep + 29 * 60000 + 36000, landed = takeoff + 528 * 60000 + 24000; // 8 h 48 min en el aire
+    const closed = await open({ state: 'landed', fr24Id: '4249d4dd', takeoff: new Date(takeoff).toISOString().slice(0, 19) + 'Z',
+      landed: new Date(landed).toISOString().slice(0, 19) + 'Z', type: 'A339', reg: 'D-ANRK', source: 'fr24' });
+    expect(calls.filter(u => u.includes('/history-adb/'))).toHaveLength(1);
+    expect($('#result .status').textContent).toContain('Aterrizado');
+    expect(closed).toContain('Confirmado por Flightradar24');
+    expect(closed).toContain('aterrizaje según Flightradar24'); // la procedencia, no AeroDataBox
+    expect(closed).toContain(`${new Date(landed + 3 * 3600000).toISOString().slice(11, 16)} Llegada final`);
+    expect(closed).toContain('Tiempo en el aire8 h 48 min');
+    expect(closed).toContain('Resumen del vuelo');
+    expect(closed).toContain('Airbus A330neo'); // el modelo que dio FR24 (A339)
+    const unknown = await open({ state: 'not-found', source: 'fr24' });
+    expect($('#result .status').textContent).toContain('Ha salido'); // sin confirmación: lo de AeroDataBox, sin dar por aterrizado
+    expect(unknown).not.toContain('Resumen del vuelo');
+  });
+
   it('AeroDataBox: foto con las reglas de Aena (exacta, representativa o ninguna si no se sabe quién opera)', async () => {
     const d = tomorrow();
     const dep = localToUtcMs(d, '10:00', 'Europe/Madrid'), arr = dep + 150 * 60000;

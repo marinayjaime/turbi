@@ -70,6 +70,51 @@ export async function fr24TestResponse(path, { fetchFn = fetch, env = process.en
   return { status: 200, headers: HEADERS, body: JSON.stringify(scrub(out, tokenOf(env))) };
 }
 
+// Flight Summary Light (histórico): fecha y hora en ISO UTC válidas o null; aeropuertos OACI de 4 letras o null.
+const iso = v => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null);
+const icao = v => (typeof v === 'string' && /^[A-Z]{4}$/.test(v) ? v : null);
+export function normalizeSummary(f = {}) {
+  return {
+    fr24Id: text(f.fr24_id), flight: text(f.flight), callsign: text(f.callsign), operatingAs: text(f.operating_as), type: text(f.type),
+    reg: text(f.reg), hex: text(f.hex), origIcao: icao(f.orig_icao), destIcao: icao(f.dest_icao), destIcaoActual: icao(f.dest_icao_actual),
+    takeoff: iso(f.datetime_takeoff), landed: iso(f.datetime_landed), firstSeen: iso(f.first_seen), lastSeen: iso(f.last_seen),
+    ended: f.flight_ended === true,
+  };
+}
+
+const utcParam = ms => new Date(ms).toISOString().slice(0, 19) + 'Z';
+// Vuelos históricos de un número en una ruta (OACI) cuyo first_seen cae en [fromMs, toMs]: FR24 Flight Summary Light. Una
+// llamada, sin reintentos, timeout de 10 s. → { state: 'ok', flights: [normalizeSummary…], credits } | { state: 'unavailable',
+// reason, httpStatus?, retryAfterSec? }. Elegir el vuelo (o ninguno) es cosa de quien llama (server/fr24-history.mjs).
+export async function fr24Summary({ flight, origIcao, destIcao, fromMs, toMs }, { fetchFn = fetch, env = process.env, timeoutMs = TIMEOUT_MS } = {}) {
+  if (!FLIGHT_RE.test(String(flight)) || !icao(origIcao) || !icao(destIcao) || !(toMs > fromMs)) return { state: 'unavailable', reason: 'consulta-no-valida' };
+  const token = tokenOf(env);
+  if (!token) return { state: 'unavailable', reason: 'sin-configurar' };
+  const query = new URLSearchParams({ flights: flight, routes: `${origIcao}-${destIcao}`, flight_datetime_from: utcParam(fromMs),
+    flight_datetime_to: utcParam(toMs), limit: '10' });
+  let res;
+  try {
+    res = await fetchFn(`${FR24_BASE}/flight-summary/light?${query}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Accept: 'application/json', 'Accept-Version': 'v1', Authorization: `Bearer ${token}` },
+    });
+  } catch (err) {
+    return { state: 'unavailable', reason: err?.name === 'TimeoutError' || err?.name === 'AbortError' ? 'timeout' : 'red' };
+  }
+  if (!res.ok) {
+    const out = { state: 'unavailable', reason: reasonOf(res.status), httpStatus: res.status };
+    const header = res.headers?.get?.('Retry-After');
+    const retry = header === null || header === undefined || String(header).trim() === '' ? NaN : Number(header);
+    if (res.status === 429 && Number.isFinite(retry) && retry >= 0) out.retryAfterSec = retry;
+    return out;
+  }
+  let body;
+  try { body = await res.json(); } catch { return { state: 'unavailable', reason: 'respuesta-invalida' }; }
+  const credits = Number(res.headers?.get?.('x-fr24-credits-consumed'));
+  const flights = (Array.isArray(body?.data) ? body.data : []).filter(f => f && typeof f === 'object').map(normalizeSummary);
+  return scrub({ state: 'ok', flights, credits: Number.isFinite(credits) ? credits : null }, token);
+}
+
 // Fuentes de posición REAL (decisión conservadora): cualquier otra (ESTIMATED, FAA, OTHER, vacía…) no es una medida.
 // La usan el radar (server/fr24-radar.mjs) y la estela (fr24Track).
 export const REAL_SOURCES = new Set(['ADSB', 'MLAT', 'SATELLITE', 'UAT', 'FLARM']);

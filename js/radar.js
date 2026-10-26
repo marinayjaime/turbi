@@ -107,6 +107,10 @@ export const fetchTrack = (al, n, leg, fetchFn = fetch, liveBase = LIVE_BASE) =>
   getTrack(`${liveBase}/track/${al}/${n}.json?${new URLSearchParams({ leg })}`, fetchFn);
 export const fetchAdbTrack = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE) =>
   getTrack(`${liveBase}/track-adb/${encodeURIComponent(number)}/${date}.json?${new URLSearchParams({ leg: legKey })}`, fetchFn);
+// Cierre histórico de un vuelo de AeroDataBox (Flightradar24 Flight Summary, server/fr24-history.mjs): { state: 'landed',
+// takeoff, landed, fr24Id, type, reg } | otro estado | null si falla (la ficha sigue con lo de AeroDataBox).
+export const fetchAdbHistory = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE) =>
+  getTrack(`${liveBase}/history-adb/${encodeURIComponent(number)}/${date}.json?${new URLSearchParams({ leg: legKey })}`, fetchFn);
 
 const MIN = 60000;
 

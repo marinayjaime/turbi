@@ -4,14 +4,18 @@
 //   - Vuelo físico: el mismo ?leg= que /radar y /radar-adb (obligatorio), entre los tramos de ese número. Sin exigir la
 //     puerta del radar: la asociación (≤ 24 h) ya prueba que el radar lo siguió, y así un vuelo aterrizado hace horas
 //     conserva su ruta realizada. Cancelado o desviado: no-aplica.
-//   - fr24Id: SOLO el que el radar ya asoció a ese vuelo físico (fr24Assoc, 24 h, server/fr24-radar.mjs). Nunca uno del
+//   - fr24Id: SOLO el que el radar ya asoció a ese vuelo físico (fr24Assoc, 24 h, server/fr24-radar.mjs) o el que verificó
+//     el histórico (Flight Summary, server/fr24-history.mjs); si los dos existen y difieren, ninguno. Nunca uno del
 //     usuario; sin asociación → «no-aplica» sin llamar a FR24.
-//   - Créditos: caché por fr24Id (encontrada 10 min, la app la prolonga con las posiciones en vivo; «sin estela» y «no
-//     disponible» 2 min), promesa compartida en curso por fr24Id (usuarios simultáneos = 1 llamada). Sin reintentos, sin
-//     temporizadores, sin segundo plano. Contadores trackRequests/trackCacheHits en /health.fr24.
+//   - Créditos (Flight Tracks cuesta ~40 por vuelo): caché por fr24Id (encontrada 10 min, la app la prolonga con las
+//     posiciones en vivo; «sin estela» y «no disponible» 2 min), promesa compartida en curso por fr24Id (usuarios
+//     simultáneos = 1 llamada). La de un vuelo ya terminado que verificó el histórico es inmutable: se guarda en la rama
+//     data (fr24/track-<fr24Id>.json) y no se vuelve a pagar. Sin reintentos, sin temporizadores, sin segundo plano.
+//     Contadores trackRequests/trackCacheHits/trackStoreHits en /health.fr24.
 // El token nunca sale de server/fr24.mjs: la respuesta es una lista cerrada de campos (fr24Track).
 import { fr24Track } from './fr24.mjs';
 import { fr24AdbLeg, fr24StatsOf, ASSOC_MS } from './fr24-radar.mjs';
+import { historyFr24Id } from './fr24-history.mjs';
 import { physicalFlightKey } from '../js/physical-flight.js';
 import { adbPhysicalKey } from '../js/adb.js';
 
@@ -47,6 +51,24 @@ async function cachedTrack(state, fr24Id, { fetchFn, env, nowMs }) {
   return job;
 }
 
+// Estela de un vuelo terminado (fr24Id del histórico): primero la guardada en la rama data; si no, FR24 (con la caché de
+// arriba) y, si la encuentra, se guarda. Sin caché persistente, como cachedTrack.
+async function finishedTrack(state, fr24Id, opts) {
+  const store = state.historyStore ?? null, path = `fr24/track-${fr24Id}.json`;
+  if (store) {
+    const saved = await store.get(path).catch(() => null);
+    if (saved?.data?.state === 'found' && saved.data.fr24Id === fr24Id) { fr24StatsOf(state).trackStoreHits++; return saved.data; }
+  }
+  const r = await cachedTrack(state, fr24Id, opts);
+  if (store && r.state === 'found') {
+    const data = { state: 'found', fr24Id: r.fr24Id, points: r.points, times: r.times, lastAt: r.lastAt };
+    const q = state.historyWrites ?? Promise.resolve();
+    state.historyWrites = q.then(() => store.update(path, cur => (cur ? null : data))).catch(() => {});
+    await state.historyWrites;
+  }
+  return r;
+}
+
 // GET /track/… y /track-adb/… (path con su ?leg=). 404 si la ruta no es una de las dos.
 export async function fr24TrackResponse(state, path, { fetchFn = fetch, nowMs = Date.now(), airports = {}, env = process.env } = {}) {
   const url = new URL(path, 'http://turbi.local');
@@ -65,8 +87,10 @@ export async function fr24TrackResponse(state, path, { fetchFn = fetch, nowMs = 
     if (leg && !ADB_ENDED_BADLY.has(leg.status)) phys = adbPhysicalKey(entry, leg);
   }
   const assoc = phys ? state.fr24Assoc?.get(phys) : null;
-  if (!assoc?.fr24Id || nowMs - assoc.at > ASSOC_MS) return trackNotApplicable(nowMs);
-  const r = await cachedTrack(state, assoc.fr24Id, { fetchFn, env, nowMs });
+  const live = assoc?.fr24Id && nowMs - assoc.at <= ASSOC_MS ? assoc.fr24Id : null;
+  const history = phys ? historyFr24Id(state, phys) : null;
+  if ((!live && !history) || (live && history && live !== history)) return trackNotApplicable(nowMs);
+  const r = live ? await cachedTrack(state, live, { fetchFn, env, nowMs }) : await finishedTrack(state, history, { fetchFn, env, nowMs });
   if (r.state === 'found') return reply(nowMs, { state: 'found', fr24Id: r.fr24Id, points: r.points, times: r.times, lastAt: r.lastAt }, CACHED);
   if (r.state === 'not-found') return reply(nowMs, { state: 'not-found' }, CACHED);
   return reply(nowMs, { state: 'unavailable', reason: typeof r.reason === 'string' ? r.reason : 'error' }, NO_STORE);

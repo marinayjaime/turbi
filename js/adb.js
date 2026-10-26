@@ -31,6 +31,33 @@ export function refreshDue(entry, nowMs) {
   });
 }
 
+// Histórico (Flightradar24 Flight Summary, server/fr24-history.mjs): la MISMA regla en la app y en Render. Solo para un
+// vuelo que ya debería haber terminado: 1 h después de su llegada más tardía conocida (programada, revisada, prevista o de
+// pista; sin ninguna, salida + estMin; sin ninguna de las dos, nunca). Un cancelado no se busca.
+export const HISTORY_AFTER_ARRIVAL_MS = 3600000;
+export function historyDue(leg, nowMs) {
+  if (!leg?.dep?.sched || leg.status === 'Canceled' || leg.status === 'CanceledUncertain') return false;
+  const arrivals = [leg.arr?.sched, leg.arr?.revised, leg.arr?.predicted, leg.arr?.runway].filter(Boolean).map(t => t.utc);
+  const end = arrivals.length ? Math.max(...arrivals) : Number.isFinite(leg.estMin) ? leg.dep.sched.utc + leg.estMin * 60000 : null;
+  return end !== null && nowMs >= end + HISTORY_AFTER_ARRIVAL_MS;
+}
+
+// Tramo de AeroDataBox cerrado por Flightradar24 (aterrizado en su destino, ya verificado en Render): sus horas de despegue y
+// aterrizaje pasan a ser las de pista, con el desfase horario de cada aeropuerto que ya dio AeroDataBox. closedBy marca la
+// procedencia (la ficha la atribuye a Flightradar24). Sin datos válidos, el tramo tal cual.
+export function withFr24Landing(leg, h) {
+  const takeoff = Date.parse(h?.takeoff), landed = Date.parse(h?.landed);
+  if (h?.state !== 'landed' || !Number.isFinite(takeoff) || !Number.isFinite(landed) || landed <= takeoff) return leg;
+  const at = (ms, side) => {
+    const off = (side.sched ?? side.revised ?? side.predicted)?.off;
+    return Number.isFinite(off) ? { local: new Date(ms + off * 60000).toISOString().slice(0, 16), utc: ms, off } : null;
+  };
+  const dep = at(takeoff, leg.dep), arr = at(landed, leg.arr);
+  if (!dep || !arr) return leg;
+  return { ...leg, status: 'Arrived', dep: { ...leg.dep, runway: dep }, arr: { ...leg.arr, runway: arr }, closedBy: 'fr24',
+    fr24: { fr24Id: h.fr24Id ?? null, type: h.type ?? null, reg: h.reg ?? null } };
+}
+
 function storage() {
   try { return globalThis.localStorage ?? null; } catch { return null; }
 }

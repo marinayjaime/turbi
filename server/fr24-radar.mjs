@@ -42,8 +42,11 @@ const MIN = 60000;
 const fin = v => Number.isFinite(v);
 
 // Contadores de /health: solo llamadas reales a FR24 disparadas por usuarios (abrir /health no consulta FR24).
-// trackRequests/trackCacheHits: Flight Tracks (estela, server/fr24-track.mjs).
-const freshStats = () => ({ requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0, trackRequests: 0, trackCacheHits: 0 });
+// trackRequests/trackCacheHits: Flight Tracks (estela, server/fr24-track.mjs). history…: Flight Summary (histórico,
+// server/fr24-history.mjs): consultas reales, aciertos de memoria y de la rama data, resultados y créditos que dice FR24.
+const freshStats = () => ({ requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0, trackRequests: 0, trackCacheHits: 0, trackStoreHits: 0,
+  historyRequests: 0, historyCacheHits: 0, historyStoreHits: 0, historyLanded: 0, historyNotFound: 0, historyMultiple: 0, historyOther: 0,
+  historyUnavailable: 0, historyCredits: 0 });
 export const fr24StatsOf = state => (state.fr24Stats ??= freshStats());
 export const fr24Health = (state, env = process.env) => ({ configured: fr24Configured(env), ...freshStats(), ...state?.fr24Stats });
 

@@ -3,7 +3,8 @@
 // Radar de un vuelo: /radar/AL/N.json y /radar-adb/<vuelo>/<fecha>.json (radarRoute). Con FR24_API_TOKEN, solo
 // Flightradar24 (server/fr24-radar.mjs); sin ella, el flujo antiguo de adsb.lol (server/radar.mjs, server/radar-adb.mjs).
 // Estela real (FR24 Flight Tracks): /track/AL/N.json y /track-adb/<vuelo>/<fecha>.json (trackRoute, server/fr24-track.mjs).
-// No guarda nada: el histórico de puntualidad lo sigue calculando GitHub Actions.
+// Cierre de un vuelo histórico (FR24 Flight Summary): /history-adb/<vuelo>/<fecha>.json (server/fr24-history.mjs).
+// Solo guarda la caché de AeroDataBox y el histórico de FR24 ya terminado (rama data); la puntualidad la calcula GitHub Actions.
 // Si el servicio se ha dormido, la primera petición lo despierta y dispara una descarga (la app, mientras, usa GitHub Pages).
 // Arranque: node server/live.mjs   (variable: PORT)
 import http from 'node:http';
@@ -21,6 +22,7 @@ import { adbRadarResponse } from './radar-adb.mjs';
 import { fr24Configured, fr24TestResponse } from './fr24.mjs';
 import { fr24RadarResponse, fr24AdbRadarResponse, fr24Health, fr24CachedLookup } from './fr24-radar.mjs';
 import { fr24TrackResponse, trackNotApplicable, TRACK_PATH, ADB_TRACK_PATH } from './fr24-track.mjs';
+import { fr24HistoryResponse } from './fr24-history.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -328,7 +330,10 @@ async function main() {
   const state = createState();
   // AeroDataBox: la clave y el token de la caché solo existen como variables de entorno de Render.
   const adbKey = process.env.AERODATABOX_API_KEY, cacheToken = process.env.GITHUB_CACHE_TOKEN;
-  if (adbKey && cacheToken) state.adb = createAerodatabox({ key: adbKey, store: createGithubStore({ token: cacheToken }), log: m => console.log(m) });
+  // La misma caché persistente (rama data) guarda también el histórico de Flightradar24 ya terminado (fr24/…).
+  const store = cacheToken ? createGithubStore({ token: cacheToken }) : null;
+  state.historyStore = store;
+  if (adbKey && store) state.adb = createAerodatabox({ key: adbKey, store, log: m => console.log(m) });
   else console.log('AeroDataBox desactivado: faltan AERODATABOX_API_KEY o GITHUB_CACHE_TOKEN');
   const airports = JSON.parse(readFileSync(new URL('../data/airports.json', import.meta.url), 'utf8'));
   // Tras un reinicio: las salidas ya despegadas que publicó GitHub (Aena las retira a las 2 h).
@@ -375,6 +380,10 @@ async function main() {
     }
     if (path.startsWith('/track/') || path.startsWith('/track-adb/')) { // estela real del vuelo (Flight Tracks de FR24)
       trackRoute(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable"}' }));
+      return;
+    }
+    if (path.startsWith('/history-adb/')) { // cierre de un vuelo histórico (Flight Summary de FR24, server/fr24-history.mjs)
+      fr24HistoryResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable"}' }));
       return;
     }
     if (path.startsWith('/radar/')) {

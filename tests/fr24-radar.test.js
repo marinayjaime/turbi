@@ -418,9 +418,11 @@ describe('24) /health', () => {
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('no debe llamarse'); });
     try {
       const body = handle(createState(), '/health', { env }).body;
-      // trackRequests/trackCacheHits: la estela (Flight Tracks, server/fr24-track.mjs), también a cero sin uso.
+      // trackRequests/trackCacheHits: la estela (Flight Tracks, server/fr24-track.mjs); history…: el histórico (Flight Summary,
+      // server/fr24-history.mjs). Todo a cero sin uso.
       expect(JSON.parse(body).fr24).toEqual({ configured: true, requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0,
-        trackRequests: 0, trackCacheHits: 0 });
+        trackRequests: 0, trackCacheHits: 0, trackStoreHits: 0, historyRequests: 0, historyCacheHits: 0, historyStoreHits: 0, historyLanded: 0, historyNotFound: 0,
+        historyMultiple: 0, historyOther: 0, historyUnavailable: 0, historyCredits: 0 });
       expect(body).not.toContain(TOKEN);
       expect(JSON.parse(handle(createState(), '/health', { env: {} }).body).fr24).toMatchObject({ configured: false });
       expect(spy).not.toHaveBeenCalled();
