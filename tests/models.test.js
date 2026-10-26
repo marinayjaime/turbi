@@ -85,6 +85,14 @@ describe('forecastRoute', () => {
     await expect(forecastRoute(profile, fakeOpenMeteo(calm, { fail: { ecmwf_ifs025: 500, gfs_seamless: 500 } })))
       .rejects.toThrow();
   });
+  it('uno caído y el otro sin datos: es falta de datos (cabe el cálculo simplificado), no servicio caído', async () => {
+    const f = fakeOpenMeteo((v, lat, lon, h, model) => (model === 'gfs_seamless' ? null : calm(v)), { fail: { ecmwf_ifs025: 503 } });
+    const err = await forecastRoute(profile, f).catch(e => e);
+    expect(err.message).toContain('no tienen datos suficientes');
+    expect(err.serviceUnavailable).toBeUndefined();
+    const both = await forecastRoute(profile, fakeOpenMeteo(calm, { fail: { ecmwf_ifs025: 503, gfs_seamless: 503 } })).catch(e => e);
+    expect(both.serviceUnavailable).toBe(true);
+  });
   it('429: se propaga el aviso de cupo, sin insistir', async () => {
     const f = fakeOpenMeteo(calm, { fail: { ecmwf_ifs025: 429, gfs_seamless: 429 } });
     await expect(forecastRoute(profile, f)).rejects.toThrow('Demasiadas consultas seguidas');

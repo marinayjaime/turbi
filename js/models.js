@@ -142,7 +142,8 @@ export async function forecastRoute(profile, fetchFn = fetch) {
   const ok = settled.filter(s => s.status === 'fulfilled').map(s => s.value)
     .filter(r => r.points.filter(p => p.valid).length / r.points.length >= MIN_VALID_SHARE);
   if (!ok.length) {
-    const errors = settled.filter(s => s.status === 'rejected').map(s => s.reason);
+    // Si algún modelo respondió (aunque sin datos suficientes), el servicio funciona: el fallo es de datos, no de Open-Meteo.
+    const errors = settled.some(s => s.status === 'fulfilled') ? [] : settled.map(s => s.reason);
     throw errors.find(e => /Demasiadas consultas/.test(e?.message)) ?? errors[0]
       ?? Object.assign(new Error('Los modelos meteorológicos no tienen datos suficientes para esta ruta.'), { retryable: true });
   }

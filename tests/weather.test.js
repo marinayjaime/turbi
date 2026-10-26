@@ -110,6 +110,16 @@ describe('errores reintentables', () => {
     const e500 = await fetchLocations([{ lat: 40, lon: 3 }], T0, T0, vi.fn(async () => ({ ok: false, status: 500 }))).catch(e => e);
     expect(e500.retryable).toBe(true);
   });
+  it('servicio no disponible (red, timeout, 429, 5xx) frente a un 4xx, en el que Open-Meteo sí respondió', async () => {
+    const fail = async f => fetchLocations([{ lat: 40, lon: 3 }], T0, T0, vi.fn(f)).catch(e => e);
+    for (const f of [async () => ({ ok: false, status: 503 }), async () => ({ ok: false, status: 429 }),
+      async () => { throw new TypeError('Load failed'); }, async () => { throw new DOMException('timeout', 'TimeoutError'); }]) {
+      expect((await fail(f)).serviceUnavailable).toBe(true);
+    }
+    const e400 = await fail(async () => ({ ok: false, status: 400 }));
+    expect(e400.retryable).toBe(true);
+    expect(e400.serviceUnavailable).toBeUndefined();
+  });
 });
 
 describe('fallos momentáneos de Open-Meteo', () => {

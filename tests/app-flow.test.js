@@ -458,6 +458,28 @@ describe('flujo DOM completo: la ficha y la sección Turbulencias están siempre
     expect(area()).toContain('No se pudo conectar con el servicio del tiempo');
     expect($('#forecast-retry')).not.toBeNull();
     expect(shell()).toEqual(SHELL_OK);
+    expect(calls.filter(u => u.startsWith('https://api.open-meteo.com/v1/') && !u.includes('models='))).toEqual([]); // sin cálculo simplificado
+  });
+  it('Open-Meteo con 503 persistente: no disponible sin cálculo simplificado; «Reintentar» trae el pronóstico', async () => {
+    const { d, leg } = tomorrowLeg();
+    let down = true;
+    const r503 = { ok: false, status: 503, headers: { get: () => null }, json: async () => ({}) };
+    await openApp(network({ flights: { IB1668: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } },
+      openMeteo: url => (down ? r503 : openMeteoOk(url)) }));
+    await search('IB1668', d);
+    const meteo = () => calls.filter(u => u.startsWith('https://api.open-meteo.com/v1/'));
+    // La última (vecinos de GFS) sigue en la cola tras rechazar su modelo: se espera a que salga y a que no llegue otra.
+    await until(() => area().includes(FORECAST_UNAVAILABLE) && meteo().length >= 8, 'aviso del 503');
+    await new Promise(r => setTimeout(r, 1500));
+    expect(area()).toContain('No se pudo obtener el pronóstico (HTTP 503)');
+    expect($('#forecast-area .forecast-loading')).toBeNull();
+    expect(meteo().every(u => u.includes('models='))).toBe(true); // el servicio está caído: v1 no vuelve a consultarlo
+    expect(meteo()).toHaveLength(8); // ECMWF y GFS (centros y vecinos), cada una con su reintento del 5xx
+    expect(shell()).toEqual(SHELL_OK);
+    down = false;
+    $('#forecast-retry').click();
+    await until(() => $('#forecast-area #timeline'), 'pronóstico tras Reintentar');
+    expect(area()).not.toContain(FORECAST_UNAVAILABLE);
   });
   it('vuelo cancelado: ficha y sección con el motivo', async () => {
     const { d, leg } = tomorrowLeg();

@@ -4,6 +4,9 @@ const HOUR_MS = 3600000;
 
 // Error de red o del servicio: tiene sentido que la app ofrezca «Reintentar».
 const retryable = message => Object.assign(new Error(message), { retryable: true });
+// Open-Meteo no está disponible como servicio (red, timeout, 429, 5xx tras su reintento): volver a consultarlo en el
+// acto (p. ej. con el cálculo simplificado) no sirve. Un 4xx o unos datos sin cobertura no lo son: el servicio respondió.
+const unavailable = message => Object.assign(retryable(message), { serviceUnavailable: true });
 
 const TIMEOUT_MS = 15000;
 const RETRY_DELAY_MS = 600;
@@ -24,7 +27,7 @@ const stateOf = fetchFn => states.get(fetchFn) ?? states.set(fetchFn, { cache: n
   downUntil: 0 }).get(fetchFn);
 const CONNECTION = 'No se pudo conectar con el servicio del tiempo (Open-Meteo). Revisa la conexión e inténtalo de nuevo.';
 const TOO_MANY = 'Demasiadas consultas seguidas: espera un minuto y vuelve a intentarlo.';
-const tooMany = ms => Object.assign(retryable(TOO_MANY), { retryAfterMs: ms, rateLimited: true });
+const tooMany = ms => Object.assign(unavailable(TOO_MANY), { retryAfterMs: ms, rateLimited: true });
 
 function retryAfterMs(res) {
   const v = res.headers?.get?.('Retry-After');
@@ -40,7 +43,7 @@ async function requestJson(url, fetchFn, st, tries) {
   // Se comprueba al empezar de verdad (no al entrar en la cola): un 429 de la petición anterior cancela las que
   // esperaban sin volver a tocar Open-Meteo.
   if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
-  if (Date.now() < st.downUntil) throw retryable(CONNECTION);
+  if (Date.now() < st.downUntil) throw unavailable(CONNECTION);
   for (let attempt = 1; ; attempt++) {
     let res;
     try {
@@ -50,7 +53,7 @@ async function requestJson(url, fetchFn, st, tries) {
       const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
       if (attempt < tries && !timedOut) { await sleep(RETRY_DELAY_MS); continue; }
       st.downUntil = Date.now() + DOWN_MS;
-      throw retryable(CONNECTION);
+      throw unavailable(CONNECTION);
     }
     if (res.status === 429) {
       const ms = retryAfterMs(res);
@@ -58,7 +61,7 @@ async function requestJson(url, fetchFn, st, tries) {
       throw tooMany(ms);
     }
     if (res.status >= 500 && attempt < tries) { await sleep(RETRY_DELAY_MS); continue; }
-    if (!res.ok) throw retryable(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
+    if (!res.ok) throw (res.status >= 500 ? unavailable : retryable)(`No se pudo obtener el pronóstico (HTTP ${res.status})`);
     const body = await res.json();
     if (st.cache.size > 200) st.cache.clear();
     st.cache.set(url, { at: Date.now(), body });
@@ -71,7 +74,7 @@ async function getJson(url, fetchFn, tries = 2) {
   const hit = st.cache.get(url);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.body;
   if (Date.now() < st.blockedUntil) throw tooMany(st.blockedUntil - Date.now());
-  if (Date.now() < st.downUntil) throw retryable(CONNECTION);
+  if (Date.now() < st.downUntil) throw unavailable(CONNECTION);
   // La misma consulta concurrente se comparte. Las distintas se ejecutan una detrás de otra para no lanzar de golpe
   // centros, laterales, ECMWF y GFS; el resultado visual es el mismo y se reducen mucho los 429.
   if (st.pending.has(url)) return st.pending.get(url);

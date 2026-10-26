@@ -845,7 +845,7 @@ async function run(q, handoff = null) {
     } catch (err) {
       // Sin red o sin cupo, el cálculo simplificado tampoco podría: se muestra el error.
       // (getJson ya convierte los fallos de red en errores en español; un TypeError aquí sería un fallo de código.)
-      if (/No se pudo conectar|Demasiadas consultas/.test(err.message)) throw err;
+      if (err?.serviceUnavailable) throw err;
       if (stale()) return;
       return await runLegacy(q, forecastProfile, times, flight, rel, stale);
     }
@@ -864,7 +864,8 @@ async function run(q, handoff = null) {
 }
 
 let lastForecastCtx = null;
-const isWeatherUnavailable = err => err?.rateLimited || err instanceof TypeError || /No se pudo conectar|Demasiadas consultas/.test(err?.message ?? '');
+// Open-Meteo caído (red, timeout, 429, 5xx; ver js/weather.js): sin cálculo simplificado, que volvería a consultarlo.
+const isWeatherUnavailable = err => err?.serviceUnavailable === true || err instanceof TypeError;
 
 // Sección de turbulencias de la ficha: pronóstico (o cálculo simplificado si los modelos no dan datos). Si Open-Meteo
 // falla (429, red…), solo esta sección lo dice, con «Reintentar»; la ficha no se toca.
