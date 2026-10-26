@@ -40,6 +40,7 @@ describe('fr24Lookup', () => {
       state: 'found', flight: 'XX123', fr24Id: '3a1b2c3d', callsign: 'XXX123', lat: 40.12345, lon: -3.5678, track: 72, alt: 23475,
       gspeed: 410, vspeed: 1536, timestamp: '2026-10-21T05:50:00Z', source: 'ADSB', hex: '34ABCD', type: 'A321', reg: 'EC-ABC',
       operatingAs: 'XXX', paintedAs: 'XXX', originIata: 'AAA', destinationIata: 'BBB', eta: '2026-10-21T06:25:00Z',
+      flightNumber: 'XX123', origIcao: 'LAAA', destIcao: 'LBBB',
     });
   });
 

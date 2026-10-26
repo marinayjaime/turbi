@@ -35,9 +35,10 @@ function aircraftRows(c) {
   if (c.aircraft) rows.push(row('Modelo', esc(c.aircraft)));
   if (c.airline) rows.push(row('Aerolínea', esc(c.airline)));
   if (c.operator) rows.push(row('Operado por', esc(c.operator)));
-  // Matrícula y transpondedor solo los da AeroDataBox.
-  if (c.source === 'aerodatabox' && c.aircraftReg) rows.push(row('Matrícula', esc(c.aircraftReg)));
-  if (c.source === 'aerodatabox' && c.aircraftHex) rows.push(row('Transpondedor', esc(String(c.aircraftHex).toUpperCase())));
+  // Matrícula y transpondedor solo los dan AeroDataBox y Flightradar24 (vuelo que solo encontró FR24).
+  const own = ['aerodatabox', 'fr24'].includes(c.source);
+  if (own && c.aircraftReg) rows.push(row('Matrícula', esc(c.aircraftReg)));
+  if (own && c.aircraftHex) rows.push(row('Transpondedor', esc(String(c.aircraftHex).toUpperCase())));
   const credit = photoCredit(c.photo);
   if (credit) rows.push(credit);
   return rows;
@@ -101,6 +102,8 @@ function sourceRows(c) {
   const rows = [];
   if (c.source === 'aerodatabox') {
     if (c.sourceNote) rows.push(row('AeroDataBox', esc(c.sourceNote)));
+  } else if (c.source === 'fr24') {
+    rows.push(row('Flightradar24', 'vuelo, avión, posición y llegada prevista · sin horario publicado'));
   } else {
     rows.push(row('Aena', c.updatedAgo ? `horario y estado · ${esc(c.updatedAgo)}` : 'horario y estado'));
   }

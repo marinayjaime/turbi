@@ -3411,3 +3411,129 @@ describe('seguimiento en vivo con Flightradar24', () => {
     } finally { vi.useRealTimers(); }
   }, 30000);
 });
+
+// Ni Aena ni AeroDataBox tienen el vuelo y Flightradar24 sí (server/fr24-discover.mjs): caso real EK2518 del 26/10/2026,
+// A380 de Emirates de Teruel (TEV, sin vuelos regulares) a Dubái. El servidor está simulado con sus respuestas.
+describe('vuelo que solo encuentra Flightradar24 (EK2518)', () => {
+  const d = () => dayOf(Date.now());
+  const TEV = { iata: 'TEV', icao: 'LETL', name: 'Teruel Airport', city: 'Teruel', lat: 40.4103, lon: -1.2174, tz: 'Europe/Madrid' };
+  const DXB = { iata: 'DXB', icao: 'OMDB', name: 'Dubai International Airport', city: 'Dubai', lat: 25.2498, lon: 55.371, tz: 'Asia/Dubai' };
+  const key = () => `fr24|EK2518|${d()}|TEV|DXB`;
+  const found = (over = {}) => ({ state: 'found', key: key(), number: 'EK2518', date: d(), fr24Id: '424c145f', origin: TEV, destination: DXB, reg: 'A6-EET',
+    type: 'A388', hex: '896193', callsign: 'UAE2518', operatingAs: 'UAE', eta: new Date(Date.now() + 6 * 3600000).toISOString(),
+    discoveredAt: new Date().toISOString(), source: 'fr24', ...over });
+  const FLYING = { state: 'volando', source: 'fr24', match: 'fr24', fr24Id: '424c145f', hex: '896193', callsign: 'UAE2518', reg: 'A6-EET', type: 'A388',
+    altFt: 32325, altM: 9853, kmh: 911, vRateFpm: 2560, track: 92, seenS: 3, posAgeS: 3, lat: 39.333, lon: 0.4174, remainingKm: 5100 };
+  const NOT_FOUND_ADB = () => ({ status: 'not_found', source: 'aerodatabox', number: 'EK2518', date: d(), legs: [] });
+  const discoverCalls = () => calls.filter(u => u.includes('/discover-fr24/'));
+  const fr24RadarCalls = () => calls.filter(u => u.includes('/radar-fr24/'));
+  async function open({ number = 'EK2518', discovery = found(), radar = () => FLYING, flights = {}, schedule = { [`EK2518|${d()}`]: NOT_FOUND_ADB() } } = {}) {
+    const base = network({ flights, schedule, openMeteo: () => tooMany, airlines: { UAE: 'EK' } });
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/discover-fr24/`)) { calls.push(u); return Promise.resolve(discovery ? json(discovery) : notFound); }
+      if (u.startsWith(`${LIVE_BASE}/radar-fr24/`)) { calls.push(u); const r = radar(); return Promise.resolve(r ? json(r) : notFound); }
+      return base(url, o);
+    }));
+    await search(number, d());
+  }
+  const text = () => $('#result')?.textContent.replace(/\s+/g, ' ') ?? '';
+
+  it('Aena tiene el vuelo → no se pregunta a Flightradar24', async () => {
+    const dep = Date.now() - 60 * 60000, day = dayOf(dep), sd = formatLocal(dep, MAD);
+    const leg = { d: day, o: 'MAD', a: 'LHR', sd, ed: `${day}T${sd}`, st: 'BOR', ac: 'A21N' };
+    await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, radar: RADAR_FLYING, openMeteo: () => tooMany }));
+    await search('IB715', day);
+    await until(() => $('#result .flight'), 'ficha de Aena');
+    await networkIdle();
+    expect(calls.filter(u => u.includes('/discover-fr24/') || u.includes('/schedule/'))).toEqual([]);
+  });
+  it('AeroDataBox tiene el vuelo → no se pregunta a Flightradar24', async () => {
+    const dep = Math.floor((Date.now() - 2 * 3600000) / 60000) * 60000, arr = dep + 7 * 3600000;
+    const iso = ms => new Date(ms).toISOString();
+    const raw = { number: 'EK 2518', status: 'EnRoute', codeshareStatus: 'IsOperator', airline: { name: 'Emirates' },
+      departure: { airport: { iata: 'MAD' }, scheduledTime: { utc: `${iso(dep).slice(0, 10)} ${iso(dep).slice(11, 16)}Z`, local: `${iso(dep).slice(0, 10)} ${iso(dep).slice(11, 16)}+00:00` } },
+      arrival: { airport: { iata: 'DXB' }, scheduledTime: { utc: `${iso(arr).slice(0, 10)} ${iso(arr).slice(11, 16)}Z`, local: `${iso(arr).slice(0, 10)} ${iso(arr).slice(11, 16)}+00:00` } },
+      aircraft: { model: 'Airbus A380' } };
+    const day = iso(dep).slice(0, 10);
+    await open({ schedule: { [`EK2518|${day}`]: { status: 'found', source: 'aerodatabox', number: 'EK2518', date: day, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) } } });
+    await until(() => $('#result .flight'), 'ficha de AeroDataBox');
+    await networkIdle();
+    expect(discoverCalls()).toEqual([]);
+    expect(text()).toContain('AeroDataBox');
+  });
+  it('EK2518: ni Aena ni AeroDataBox → ficha de Flightradar24: Teruel → Dubái, A380, A6-EET, «En vuelo», posición, altitud, velocidad y señal', async () => {
+    await open();
+    await until(() => $('.telemetry'), 'ficha con el radar de FR24');
+    await networkIdle();
+    expect($('#result .flight h2').textContent).toBe('EK 2518');
+    expect(routeText()).toBe('Teruel a Dubai');
+    expect($('#result .flight .status').textContent).toContain('En vuelo');
+    const panel = $('.telemetry').textContent.replace(/\s+/g, ' ');
+    for (const t of ['32.300', '911', '5.100', 'Última señal 3 s', 'Flightradar24']) expect(panel).toContain(t);
+    expect(text()).toContain('Emirates');
+    expect(text()).toContain('Airbus A380');
+    expect($('#adv-flight').textContent).toContain('A6-EET');
+    expect(text()).toContain('Llegada prevista');
+    expect(text()).not.toMatch(/Aena|AeroDataBox|Terminal|Puerta/);
+    expect(area()).toContain('sin horario publicado');
+    expect(decodeURIComponent($('.plane-photo img').getAttribute('src'))).toContain('EK Airbus A380'); // la foto exacta: aerolínea y modelo
+    expect(discoverCalls()).toEqual([`${LIVE_BASE}/discover-fr24/EK2518/${d()}.json`]);
+    expect(fr24RadarCalls()[0]).toBe(`${LIVE_BASE}/radar-fr24/EK2518/${d()}.json?leg=${encodeURIComponent(key())}`);
+    expect(calls.some(u => u.includes('/radar/') || u.includes('/radar-adb/') || u.includes('/track'))).toBe(false); // ni Flight Tracks
+    expect(calls.some(u => u.includes('adsbdb'))).toBe(false);
+  });
+  it('sin foto del modelo exacto de esa aerolínea, ninguna foto (nada de relleno)', async () => {
+    await open({ discovery: found({ type: 'B77W', operatingAs: 'XXX' }) });
+    await until(() => $('.telemetry'), 'ficha');
+    expect($('.plane-photo img')).toBeNull();
+  });
+  it.each([
+    ['varios candidatos', { state: 'multiple', count: 2 }],
+    ['posición ESTIMATED', { state: 'estimated' }],
+    ['FR24 con límite (429)', { state: 'unavailable', reason: 'limite', retryAfterSec: 30 }],
+    ['FR24 sin autorización (401/403)', { state: 'unavailable', reason: 'autorizacion' }],
+    ['Render sin respuesta (5xx)', null],
+  ])('%s → no se elige ningún avión: lo de siempre («No encuentro ese vuelo»)', async (_, discovery) => {
+    await open({ discovery });
+    await until(() => $('#notice')?.textContent.includes('No encuentro ese vuelo'), 'entrada manual');
+    expect($('#result .flight')).toBeNull();
+    expect(fr24RadarCalls()).toEqual([]);
+  });
+  it('seguimiento en vivo: el MISMO /radar-fr24 cada 45 s, sin volver a descubrir ni sondeos paralelos', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
+    try {
+      let k = 0;
+      await open({ radar: () => ({ ...FLYING, lat: 39.333 + 0.05 * k, lon: 0.4174 + 0.1 * k++ }) });
+      await until(() => $('.telemetry'), 'ficha');
+      await networkIdle();
+      expect(fr24RadarCalls()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(46000);
+      await networkIdle();
+      expect(fr24RadarCalls()).toHaveLength(2);
+      expect(fr24RadarCalls()[1]).toBe(fr24RadarCalls()[0]);
+      await vi.advanceTimersByTimeAsync(45000);
+      await networkIdle();
+      expect(fr24RadarCalls()).toHaveLength(3);
+      expect(discoverCalls()).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  }, 30000);
+  it('aterrizado y cerrado por Flight Summary («known»): «Aterrizado · Confirmado por Flightradar24», horas reales y sin radar', async () => {
+    const takeoff = Date.now() - 9 * 3600000, landed = Date.now() - 2 * 3600000;
+    await open({ discovery: found({ state: 'known', eta: new Date(landed).toISOString(),
+      history: { state: 'landed', takeoff: new Date(takeoff).toISOString(), landed: new Date(landed).toISOString() } }) });
+    await until(() => $('#result .flight .status')?.textContent.includes('Aterrizado'), 'aterrizado');
+    await networkIdle();
+    expect(text()).toContain('Confirmado por Flightradar24');
+    expect(text()).toContain(formatLocal(takeoff, 'Europe/Madrid'));
+    expect(text()).toContain('7 h'); // tiempo en el aire real
+    expect(fr24RadarCalls()).toEqual([]);
+  });
+  it('visto en vuelo y ya no está en Flight Positions, sin cerrar aún («known»): la ficha existe y no se da por aterrizado', async () => {
+    await open({ discovery: found({ state: 'known' }) });
+    await until(() => $('#result .flight'), 'ficha');
+    await networkIdle();
+    expect($('#result .flight .status').textContent).not.toContain('Aterrizado');
+    expect(fr24RadarCalls()).toEqual([]);
+  });
+});

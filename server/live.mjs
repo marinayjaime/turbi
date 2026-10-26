@@ -4,6 +4,8 @@
 // Flightradar24 (server/fr24-radar.mjs); sin ella, el flujo antiguo de adsb.lol (server/radar.mjs, server/radar-adb.mjs).
 // Estela real (FR24 Flight Tracks): /track/AL/N.json y /track-adb/<vuelo>/<fecha>.json (trackRoute, server/fr24-track.mjs).
 // Cierre de un vuelo histórico (FR24 Flight Summary): /history-adb/<vuelo>/<fecha>.json (server/fr24-history.mjs).
+// Vuelo que solo encuentra FR24 (ni Aena ni AeroDataBox): /discover-fr24/<vuelo>/<fecha>.json y su radar,
+// /radar-fr24/<vuelo>/<fecha>.json (server/fr24-discover.mjs).
 // Solo guarda la caché de AeroDataBox y el histórico de FR24 ya terminado (rama data); la puntualidad la calcula GitHub Actions.
 // Si el servicio se ha dormido, la primera petición lo despierta y dispara una descarga (la app, mientras, usa GitHub Pages).
 // Arranque: node server/live.mjs   (variable: PORT)
@@ -23,6 +25,7 @@ import { fr24Configured, fr24TestResponse } from './fr24.mjs';
 import { fr24RadarResponse, fr24AdbRadarResponse, fr24Health, fr24CachedLookup } from './fr24-radar.mjs';
 import { fr24TrackResponse, trackNotApplicable, TRACK_PATH, ADB_TRACK_PATH } from './fr24-track.mjs';
 import { fr24HistoryResponse } from './fr24-history.mjs';
+import { fr24DiscoverResponse, fr24DiscoveredRadarResponse } from './fr24-discover.mjs';
 
 const PAGES_URL = 'https://marinayjaime.github.io/turbi/';
 
@@ -384,6 +387,14 @@ async function main() {
     }
     if (path.startsWith('/history-adb/')) { // cierre de un vuelo histórico (Flight Summary de FR24, server/fr24-history.mjs)
       fr24HistoryResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable"}' }));
+      return;
+    }
+    if (path.startsWith('/discover-fr24/')) { // vuelo que solo encuentra FR24, volando ahora (server/fr24-discover.mjs)
+      fr24DiscoverResponse(state, `${path}${url.search}`, { airports }).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"unavailable"}' }));
+      return;
+    }
+    if (path.startsWith('/radar-fr24/')) { // su radar: el mismo de /radar-adb (fr24Serve)
+      fr24DiscoveredRadarResponse(state, `${path}${url.search}`).then(send, () => send({ status: 200, headers: { ...HEADERS, 'Cache-Control': 'no-store' }, body: '{"state":"sin-datos"}' }));
       return;
     }
     if (path.startsWith('/radar/')) {

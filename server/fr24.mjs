@@ -22,6 +22,8 @@ export function normalizeFlight(f = {}) {
     gspeed: num(f.gspeed), vspeed: num(f.vspeed), timestamp: text(f.timestamp), source: text(f.source), hex: text(f.hex),
     type: text(f.type), reg: text(f.reg), operatingAs: text(f.operating_as), paintedAs: text(f.painted_as),
     originIata: text(f.orig_iata), destinationIata: text(f.dest_iata), eta: text(f.eta),
+    // Para el descubrimiento (server/fr24-discover.mjs): número tal cual y aeropuertos OACI.
+    flightNumber: text(f.flight), origIcao: icao(f.orig_icao), destIcao: icao(f.dest_icao),
   };
 }
 

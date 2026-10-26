@@ -419,10 +419,11 @@ describe('24) /health', () => {
     try {
       const body = handle(createState(), '/health', { env }).body;
       // trackRequests/trackCacheHits: la estela (Flight Tracks, server/fr24-track.mjs); history…: el histórico (Flight Summary,
-      // server/fr24-history.mjs). Todo a cero sin uso.
+      // server/fr24-history.mjs); discover…: el descubrimiento (server/fr24-discover.mjs). Todo a cero sin uso.
       expect(JSON.parse(body).fr24).toEqual({ configured: true, requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0,
         trackRequests: 0, trackCacheHits: 0, trackStoreHits: 0, historyRequests: 0, historyCacheHits: 0, historyStoreHits: 0, historyLanded: 0, historyNotFound: 0,
-        historyMultiple: 0, historyOther: 0, historyUnavailable: 0, historyCredits: 0 });
+        historyMultiple: 0, historyOther: 0, historyUnavailable: 0, historyCredits: 0, discoverFound: 0, discoverKnown: 0, discoverNotFound: 0,
+        discoverMultiple: 0, discoverEstimated: 0, discoverUnavailable: 0 });
       expect(body).not.toContain(TOKEN);
       expect(JSON.parse(handle(createState(), '/health', { env: {} }).body).fr24).toMatchObject({ configured: false });
       expect(spy).not.toHaveBeenCalled();

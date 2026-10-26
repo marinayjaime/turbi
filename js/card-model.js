@@ -65,13 +65,14 @@ export function mainTime(card, nowMs) {
     ? (card.status.source === 'fr24' ? 'Aterrizado · Flightradar24' : 'Aterrizado · radar ADS-B') : flying;
   // Duración solo con salida y llegada reales: con una de las dos prevista sería una cuenta sobre una estimación. Con
   // las horas de pista de AeroDataBox es el tiempo en el aire (la misma etiqueta que el Resumen del vuelo).
-  const durLabel = card.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración';
+  const durLabel = ['aerodatabox', 'fr24'].includes(card.source) ? AIRBORNE_LABEL : 'Duración';
   return { ...base, label, aside: card.depFinal && card.arrFinal ? aside(durLabel, formatCountdown(card.arrMs - card.depMs)) : null };
 }
 
 // De dónde salen la hora y el estado que se ven (§5.4). Derivación directa: el radar suma si ve el avión (volando o
 // aterrizado); en curso o finalizado, sin llegada de Aena (estimación Turbi) y sin radar, la hora es solo de Turbi.
 export function sourceLabel(card) {
+  if (card.source === 'fr24') return 'Flightradar24'; // vuelo que solo encontró Flightradar24: todo es suyo
   const base = card.source === 'aerodatabox' ? 'AeroDataBox' : 'Aena';
   const radar = ['volando', 'aterrizado'].includes(card.radar?.state);
   if (card.source !== 'aerodatabox' && card.arr?.estimated && ['en-curso', 'finalizado'].includes(flightPhase(card))) {
@@ -119,9 +120,10 @@ export function summaryTiles(card) {
 }
 
 // Cuatro hitos del Horario (§5.6). Un lado estimado por Turbi (etaSide o la salida estimada) no tiene hora programada:
-// su programada es «Pendiente» y la hora se muestra solo como estimación. Lado nulo: los dos hitos, «Pendiente».
+// su programada es «Pendiente» y la hora se muestra solo como estimación. Lado nulo: los dos hitos, «Pendiente». Un lado
+// `unscheduled` (vuelo que solo encontró Flightradar24) tampoco: su hora es la ETA o la real de FR24.
 const pending = key => ({ key, time: PENDING, caption: 'Pendiente', kind: 'pending' });
-const sched = (key, side) => (side && !side.estimated ? { key, time: side.time, caption: 'Programada', kind: 'sched' } : pending(key));
+const sched = (key, side) => (side && !side.estimated && !side.unscheduled ? { key, time: side.time, caption: 'Programada', kind: 'sched' } : pending(key));
 function best(key, side, final, finalCaption) {
   if (!side) return pending(key);
   if (final) return { key, time: shown(side), caption: finalCaption, kind: 'real' };

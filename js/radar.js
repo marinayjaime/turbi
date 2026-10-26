@@ -113,6 +113,20 @@ export const fetchAdbTrack = (number, date, legKey, fetchFn = fetch, liveBase = 
 // takeoff, landed, fr24Id, type, reg } | otro estado | null si falla (la ficha sigue con lo de AeroDataBox).
 export const fetchAdbHistory = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE) =>
   getTrack(`${liveBase}/history-adb/${encodeURIComponent(number)}/${date}.json?${new URLSearchParams({ leg: legKey })}`, fetchFn);
+// Vuelo que solo encuentra Flightradar24 (server/fr24-discover.mjs): { state: 'found' | 'known', key, origin, destination,
+// fr24Id, reg, type, eta, history? … } | otro estado | null si falla (sigue la búsqueda de siempre).
+export const fetchFr24Discovery = (number, date, fetchFn = fetch, liveBase = LIVE_BASE) =>
+  getTrack(`${liveBase}/discover-fr24/${encodeURIComponent(number)}/${date}.json`, fetchFn);
+// Su radar: el de /radar-adb para ese vuelo físico ya descubierto (key: fr24Key, js/fr24-discovery.js).
+export async function fetchFr24Radar(number, date, key, fetchFn = fetch, liveBase = LIVE_BASE, { poll = false } = {}) {
+  try {
+    const query = new URLSearchParams({ leg: key, ...(poll ? { poll: '1' } : {}) }).toString();
+    const res = await fetchFn(`${liveBase}/radar-fr24/${encodeURIComponent(number)}/${date}.json?${query}`, { signal: AbortSignal.timeout(20000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
 
 const MIN = 60000;
 

@@ -44,9 +44,11 @@ const fin = v => Number.isFinite(v);
 // Contadores de /health: solo llamadas reales a FR24 disparadas por usuarios (abrir /health no consulta FR24).
 // trackRequests/trackCacheHits: Flight Tracks (estela, server/fr24-track.mjs). history…: Flight Summary (histórico,
 // server/fr24-history.mjs): consultas reales, aciertos de memoria y de la rama data, resultados y créditos que dice FR24.
+// discover…: resultados del descubrimiento (server/fr24-discover.mjs); sus consultas a FR24 ya cuentan en requests/cacheHits.
 const freshStats = () => ({ requests: 0, cacheHits: 0, found: 0, notFound: 0, multiple: 0, unavailable: 0, estimated: 0, trackRequests: 0, trackCacheHits: 0, trackStoreHits: 0,
   historyRequests: 0, historyCacheHits: 0, historyStoreHits: 0, historyLanded: 0, historyNotFound: 0, historyMultiple: 0, historyOther: 0,
-  historyUnavailable: 0, historyCredits: 0 });
+  historyUnavailable: 0, historyCredits: 0, discoverFound: 0, discoverKnown: 0, discoverNotFound: 0, discoverMultiple: 0, discoverEstimated: 0,
+  discoverUnavailable: 0 });
 export const fr24StatsOf = state => (state.fr24Stats ??= freshStats());
 export const fr24Health = (state, env = process.env) => ({ configured: fr24Configured(env), ...freshStats(), ...state?.fr24Stats });
 
@@ -155,8 +157,8 @@ export function agedPayload(payload, at, nowMs, posMs = null) {
 }
 
 // Consulta (o caché) de un vuelo físico. q: { phys (asociación), cacheKey, number, o, a, ctx, pending, firstDep, latestDep,
-// exclusiveOnly, diagnostic, debug }.
-async function serve(state, q, { fetchFn, env, nowMs }) {
+// exclusiveOnly, diagnostic, debug }. También la usa /radar-fr24 (server/fr24-discover.mjs).
+export async function fr24Serve(state, q, { fetchFn, env, nowMs }) {
   const stats = state.fr24Stats ??= freshStats();
   const cache = state.fr24Radar ??= new Map();
   const jobs = state.fr24Jobs ??= new Map();
@@ -259,7 +261,7 @@ export async function fr24RadarResponse(state, path, { fetchFn = fetch, nowMs = 
   let firstDep = fin(schedDepMs) && fin(estDepMs) ? Math.min(schedDepMs, estDepMs) : fin(schedDepMs) ? schedDepMs : fin(estDepMs) ? estDepMs : null;
   let latestDep = fin(estDepMs) ? estDepMs : fin(schedDepMs) ? schedDepMs : null;
   if (latestDep === null && fin(arrMs) && planned > 0) firstDep = latestDep = arrMs - planned * MIN; // origen extranjero
-  return serve(state, { phys, cacheKey, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep }, exclusiveOnly,
+  return fr24Serve(state, { phys, cacheKey, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep }, exclusiveOnly,
     pending: gate.confirmed ? {} : { departureConfirmed: false }, firstDep, latestDep, diagnostic, debug }, { fetchFn, env, nowMs });
 }
 
@@ -298,6 +300,6 @@ export async function fr24AdbRadarResponse(state, path, { fetchFn = fetch, nowMs
   const phys = adbPhysicalKey(entry, leg);
   const exclusiveOnly = legs.some(l => l !== leg && l.o === leg.o && l.a === leg.a && adbPhysicalKey(entry, l) !== phys
     && adbRadarGate(l, entry, nowMs, { plannedMin: plannedMinFor(coords(l.o), coords(l.a)), requireIdentifier: false }).mode !== 'none');
-  return serve(state, { phys, cacheKey: phys, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep }, exclusiveOnly,
+  return fr24Serve(state, { phys, cacheKey: phys, number, o: leg.o, a: leg.a, ctx: { origin, dest, depMs: latestDep }, exclusiveOnly,
     pending: gate.confirmed ? {} : { departureConfirmed: false }, firstDep, latestDep, diagnostic, debug }, { fetchFn, env, nowMs });
 }

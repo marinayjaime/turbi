@@ -1,4 +1,4 @@
-import { buildRoute } from './route.js';
+import { buildRoute, distanceKm } from './route.js';
 import { localToUtcMs, formatLocal } from './time.js';
 import { fetchRouteWeather, allowRetry } from './weather.js';
 import { analyze, reliability } from './turbulence.js';
@@ -33,7 +33,9 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName, adbModel } from './airline-photos.js';
 import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack, fetchAdbHistory } from './radar.js';
+  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack, fetchAdbHistory,
+  fetchFr24Discovery, fetchFr24Radar } from './radar.js';
+import { discoveryKnown } from './fr24-discovery.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
 import { LIVE_BASE } from './config.js';
 import { BUILD_ID } from './build.js';
@@ -265,7 +267,8 @@ async function resolveFlight() {
   return { number: '', airline: '', origin, destination, date, time };
 }
 
-// Sin horario de Aena (ni alias confirmado): AeroDataBox (vía Render) → ADSBDB → entrada manual.
+// Sin horario de Aena (ni alias confirmado): AeroDataBox (vía Render) → Flightradar24 (solo un vuelo que está volando
+// ahora) → ADSBDB → entrada manual.
 // adsb: resultado de ADSBDB si ya se consultó (para el veto del alias); si no, solo se consulta si AeroDataBox no da el vuelo.
 async function afterAena(number, date, adsb = null) {
   const adb = await fetchAdb(number, date);
@@ -273,9 +276,25 @@ async function afterAena(number, date, adsb = null) {
     const q = await adbQuery(number, date, adb);
     if (q !== undefined) return q;
   }
+  const fr24 = await fr24Query(number, date);
+  if (fr24) return fr24;
   let route = adsb ?? await lookupFlightResult(number);
   if (route.status === 'unknown') route = (await adsbdbByIcao(number)) ?? route;
   return adsbFallback(number, route);
+}
+
+// Ni Aena ni AeroDataBox tienen el vuelo: Flightradar24 (server/fr24-discover.mjs) lo da si está volando ahora con un
+// único avión inequívoco, o si ya lo encontró antes (fecha reciente). Su ficha es la de lo que FR24 da de verdad.
+// null = no (sigue ADSBDB, como siempre).
+const okPlace = a => a && typeof a.iata === 'string' && typeof a.city === 'string' && typeof a.tz === 'string'
+  && Number.isFinite(a.lat) && Number.isFinite(a.lon);
+async function fr24Query(number, date) {
+  if (!LIVE_BASE || !discoveryKnown(date, Date.now())) return null;
+  const r = await fetchFr24Discovery(numberKey(number), date);
+  if (!['found', 'known'].includes(r?.state) || typeof r.key !== 'string' || !okPlace(r.origin) || !okPlace(r.destination)) return null;
+  const place = a => ({ iata: a.iata, name: a.name ?? a.city, city: a.city, lat: a.lat, lon: a.lon, tz: a.tz });
+  return { kind: 'fr24', number: r.number, airline: '', origin: place(r.origin), destination: place(r.destination), date, fr24: r, fr24Key: r.key,
+    routeSource: 'fr24' };
 }
 
 // ADSBDB no conoce el número comercial tal cual (404), pero quizá sí su indicativo OACI: su catálogo de aerolíneas puede
@@ -439,6 +458,45 @@ function fr24Model(leg) {
   return name && !name.startsWith('modelo ') ? name : null;
 }
 
+// Ficha de un vuelo que solo encontró Flightradar24 (fr24Query): lo que FR24 da de verdad, nada más. Ruta, avión,
+// matrícula y operadora; mientras vuela, su ETA como «Llegada prevista» (no hay horario programado: los hitos programados
+// quedan «Pendiente»); cerrado con Flight Summary, despegue y aterrizaje reales. Sin terminal, puerta ni puntualidad.
+// Foto solo de la aerolínea del número (si FR24 dice que es la que opera) y del modelo exacto: ninguna de relleno.
+function fr24Card(q, photos = null, airlines = null) {
+  const r = q.fr24;
+  const m = String(r.number).match(/^([A-Z0-9]{2})(\d+[A-Z]?)$/);
+  const [al, n] = m ? [m[1], m[2]] : [String(r.number).slice(0, 2), String(r.number).slice(2)];
+  const operates = Boolean(m && r.operatingAs && airlines?.[r.operatingAs] === al);
+  const name = operates ? photos?.airlines?.[al] ?? null : null;
+  const known = r.type ? aircraftName(r.type) : null;
+  const model = known && !known.startsWith('modelo ') ? known : null;
+  const exact = operates && model ? photoFor(photos, { op: al, model }) : null;
+  const h = r.history ?? null;
+  const takeoffMs = h?.state === 'landed' ? Date.parse(h.takeoff) : NaN, landedMs = h?.state === 'landed' ? Date.parse(h.landed) : NaN;
+  const landed = Number.isFinite(takeoffMs) && Number.isFinite(landedMs);
+  const etaMs = Date.parse(r.eta ?? '');
+  const day = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(ms);
+  // unscheduled: no es una hora programada (js/card-model.js deja «Pendiente» la programada de ese lado).
+  const side = (ms, tz, extra = {}) => ({ date: day(ms, tz), time: formatLocal(ms, tz), est: null, late: false, terminal: null, unscheduled: true, ...extra });
+  const dep = landed ? side(takeoffMs, q.origin.tz) : null;
+  const arr = landed ? side(landedMs, q.destination.tz)
+    : Number.isFinite(etaMs) ? side(etaMs, q.destination.tz, { est: formatLocal(etaMs, q.destination.tz), note: `Hora local de ${q.destination.city} · según Flightradar24` }) : null;
+  const diverted = h?.state === 'diverted';
+  const card = {
+    al, title: flightTitle({ name, al, n }), number: `${al} ${n}`, airline: name,
+    photo: exact && !exact.representative ? exact : null, operator: null,
+    route: `${q.origin.city} a ${q.destination.city}`,
+    status: diverted ? { text: 'Desviado', tone: 'bad' } : { text: 'Visto en vuelo por Flightradar24', tone: 'info' },
+    o: q.origin.iata, a: q.destination.iata, duration: landed ? Math.round((landedMs - takeoffMs) / 60000) : null, durationEstimated: false,
+    dep, arr, aircraft: model, gateChanged: false, stale: false, past: false,
+    sourceNote: `Vuelo encontrado por Flightradar24 · sin horario publicado${landed ? ' · aterrizaje según Flightradar24' : ''}`,
+    ...presentationFields({ phase: diverted ? 'cancelado' : landed ? 'terminado' : 'en-curso', depFinal: landed, arrFinal: landed, source: 'fr24', q,
+      aircraftReg: r.reg ?? null, aircraftHex: r.hex ?? null, physicalKey: q.fr24Key }),
+    depMs: landed ? takeoffMs : null, arrMs: landed ? landedMs : Number.isFinite(etaMs) ? etaMs : null, km: Math.round(distanceKm(q.origin, q.destination)),
+  };
+  return landed ? withLanding(card, landedMs, {}, 'fr24') : card;
+}
+
 // Situación de hoy (inmediata) + histórico (se carga después). Solo vuelos con horario de Aena.
 function punctualityState(q) {
   const { leg, schedule } = q;
@@ -476,7 +534,7 @@ function adbArrivalNote(q, profile) {
 }
 
 // Clave del vuelo para avistamientos y aterrizajes guardados: el vuelo físico de Aena o el de AeroDataBox (nunca se mezclan).
-const radarKey = q => (q.kind === 'adb' ? q.adbKey : etaKey(q));
+const radarKey = q => (q.kind === 'adb' ? q.adbKey : q.kind === 'fr24' ? q.fr24Key : etaKey(q));
 // La ficha se ve (y es la de este documento: un módulo antiguo de la app nunca pinta ni pide nada).
 const cardVisible = () => els.result.isConnected && Boolean(els.result.querySelector('.flight')) && !els.result.closest('[hidden]');
 
@@ -555,8 +613,26 @@ async function showAdbRadar(q, flight, stale, ctx) {
   await poll.first;
 }
 
+// Radar de un vuelo que solo encontró Flightradar24: el mismo sondeo, panel y seguimiento en vivo que AeroDataBox, con
+// /radar-fr24 (el radar de siempre en el servidor para ese vuelo físico ya descubierto). Solo si FR24 lo da ahora.
+async function showFr24Radar(q, flight, stale) {
+  if (!flight || !LIVE_BASE || q.fr24?.state !== 'found') { liveIdle(); return; }
+  stopRadarPoll();
+  const fetchOnce = ({ poll: isPoll }) => fetchFr24Radar(q.fr24.number, q.fr24.date, q.fr24Key, undefined, undefined, { poll: isPoll });
+  if (adoptLive(q, flight, null, stale, fetchOnce)) return;
+  const poll = pollRadar({
+    fetchOnce,
+    onResult: radar => { paintRadar(q, flight, radar, null, stale); followLive(q, flight, null, stale, radar, fetchOnce); },
+    onGiveUp: () => { if (!stale()) liveIdle(); },
+    isActive: () => !stale() && cardVisible(),
+  });
+  radarPoll = poll;
+  await poll.first;
+}
+
 async function showRadar(q, flight, stale, ctx = null) {
   if (q.kind === 'adb') return showAdbRadar(q, flight, stale, ctx);
+  if (q.kind === 'fr24') return showFr24Radar(q, flight, stale);
   if (!flight || flight.stale || !q.leg || q.leg.past) { liveIdle(); return; }
   if (!wantsRadar(q.leg, undefined, { originTz: timezoneOf(q.origin), destTz: timezoneOf(q.destination), plannedMin: ctx?.plannedMin })) { liveIdle(); return; }
   stopRadarPoll();
@@ -594,7 +670,7 @@ function radarCard(q, flight, atReceipt, ctx, raw = atReceipt, { remember = true
     card = withRadar(base, atReceipt, recallSighting(radarKey(q)));
   }
   // Aterrizaje confirmado (ahora o antes, guardado): gana a «volando» y a «Ha salido»; nunca a Aena.
-  card = withLanding(card, recallLanding(radarKey(q)), q.kind === 'adb' ? {} : q.leg, recallLandingSource(radarKey(q)));
+  card = withLanding(card, recallLanding(radarKey(q)), q.kind === 'schedule' ? q.leg : {}, recallLandingSource(radarKey(q)));
   // Aterrizado con una lectura de Flightradar24 de este vuelo físico: su fr24Id se queda en la tarjeta solo para pedir la
   // estela («Ruta realizada», syncTrack). No cambia el estado, los textos ni la fuente.
   if (card.radar?.state === 'aterrizado' && raw?.state === 'aterrizado' && raw.source === 'fr24' && typeof raw.fr24Id === 'string' && !card.radar.fr24Id) {
@@ -805,6 +881,7 @@ async function run(q, handoff = null) {
   els.refresh.hidden = false;
   if (!same) show('loading'); // «Actualizar» del mismo vuelo: la ficha sigue a la vista mientras se consulta
   try {
+    if (q.kind === 'fr24') { await runFr24(q, same, stale); return; }
     const { oTz, dTz, departureMs, durationMin, profile, forecastProfile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
     const punct = flight && q.kind === 'schedule' ? punctualityState(q) : null; // la puntualidad es de Aena
@@ -877,6 +954,23 @@ async function run(q, handoff = null) {
     const msg = network ? 'Sin conexión o el servicio no responde.' : err.message;
     showError(msg || 'Algo ha fallado. Inténtalo de nuevo.', network || err.retryable === true);
   }
+}
+
+// Vuelo que solo encontró Flightradar24: su ficha (fr24Card) y su radar; sin horario no hay ventana de vuelo que
+// pronosticar, así que la tarjeta Turbulencias lo dice (y Calm Score no se calcula). Sin puntualidad (no es de Aena).
+const FR24_ONLY_NOTE = 'Vuelo encontrado por Flightradar24 sin horario publicado: no se muestra la previsión de turbulencias.';
+async function runFr24(q, same, stale) {
+  const flight = fr24Card(q, await loadAirlinePhotos(), await loadAirlines());
+  if (stale()) return;
+  currentView = null;
+  keptCalm = null;
+  els.changeTime.hidden = true;
+  const note = flightPhase(flight) === 'finalizado' ? landedNote('fr24') : FR24_ONLY_NOTE;
+  els.result.innerHTML = flightNoteHtml({ flight: withTurbEstimate(flight), punctuality: null, note });
+  show('result');
+  initFicha(q, flight, stale);
+  if (same) restoreScroll(same.scrollY);
+  await safely(() => showRadar(q, flight, stale, null));
 }
 
 let lastForecastCtx = null;
@@ -988,7 +1082,7 @@ function clearFicha() { destroyMap(); dropKeptMap(); stopPlaneTimer(); stopLive(
 // el #map-card con su mapa Leaflet pasa a la ficha nueva (sin destruirlo, recentrarlo ni cambiar el zoom), los
 // desplegables abiertos se vuelven a abrir, el scroll se restaura y no se muestra la pantalla de carga. Otra clave u
 // otra clase de consulta: como siempre.
-const physicalOf = q => (q?.kind === 'schedule' ? physicalFlightKey(q.leg) : q?.kind === 'adb' ? q.adbKey : null);
+const physicalOf = q => (q?.kind === 'schedule' ? physicalFlightKey(q.leg) : q?.kind === 'adb' ? q.adbKey : q?.kind === 'fr24' ? q.fr24Key : null);
 function refreshHandoff() {
   const key = physicalOf(lastQuery);
   if (!key || !els.result.querySelector('.flight')) return null;
@@ -1267,7 +1361,8 @@ function trailLimit(map, identity) {
   return Number.isFinite(ms) ? ms : null;
 }
 const endedBadly = q => (q?.kind === 'schedule' ? [q.leg?.st, q.leg?.std, q.leg?.sta].some(f => f === 'CAN' || f === 'DES')
-  : q?.kind === 'adb' ? ['Canceled', 'CanceledUncertain', 'Diverted'].includes(q.adbLeg?.status) : true);
+  : q?.kind === 'adb' ? ['Canceled', 'CanceledUncertain', 'Diverted'].includes(q.adbLeg?.status)
+  : q?.kind === 'fr24' ? q.fr24?.history?.state === 'diverted' : true);
 function syncTrack(map, card) {
   if (!map?.setTrack || !card?.physicalKey) return;
   const fr24Id = typeof card.radar?.fr24Id === 'string' && card.radar.fr24Id ? card.radar.fr24Id : null;

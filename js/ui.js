@@ -270,8 +270,8 @@ function nowHtml(c, phase, monoMs, open) {
             <div><p class="now-title">${esc(c.status.text)}${c.stale ? ` <small>${esc(c.updatedAgo)}</small>` : ''}</p>${
   c.dep?.terminal ? `<p class="now-meta">Terminal ${esc(c.dep.terminal)}</p>` : ''}</div>
           </div>`;
-  const aena = c.source !== 'aerodatabox';
-  const body = `${kv('Fuente', aena ? 'Aena' : 'AeroDataBox')}${aena && c.updatedAgo ? kv('Actualizado', esc(c.updatedAgo)) : ''}`;
+  const aena = !['aerodatabox', 'fr24'].includes(c.source);
+  const body = `${kv('Fuente', aena ? 'Aena' : c.source === 'fr24' ? 'Flightradar24' : 'AeroDataBox')}${aena && c.updatedAgo ? kv('Actualizado', esc(c.updatedAgo)) : ''}`;
   return details('now', 'now', open, `${head('Ahora')}${ground}${gateHtml(c)}`, body);
 }
 
@@ -335,7 +335,7 @@ function flightSummaryHtml(c) {
   const real = c.depFinal && c.arrFinal ? formatCountdown(c.arrMs - c.depMs) : null;
   const items = [
     Number.isFinite(c.km) && ['distance', 'Distancia en ruta directa', esc(`${thousands(Math.round(c.km))} km`)],
-    real && ['clock', c.source === 'aerodatabox' ? AIRBORNE_LABEL : 'Duración real', esc(real)],
+    real && ['clock', ['aerodatabox', 'fr24'].includes(c.source) ? AIRBORNE_LABEL : 'Duración real', esc(real)],
     c.turbEstimate && ['turbulence', 'Turbulencias estimadas', turbEstimateHtml(c.turbEstimate)],
   ].filter(Boolean);
   if (!items.length) return '';
