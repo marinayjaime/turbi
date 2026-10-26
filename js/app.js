@@ -31,7 +31,7 @@ import { buildSpeech, canSpeak, speak } from './speech.js';
 import { currentPunctuality, fetchPunctuality, fetchPastFlights, dowOf, slotOf } from './punctuality.js';
 import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
-import { loadAirlinePhotos, photoFor, operatorName } from './airline-photos.js';
+import { loadAirlinePhotos, photoFor, operatorName, adbModel } from './airline-photos.js';
 import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
   rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack } from './radar.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
@@ -400,10 +400,10 @@ function presentationFields({ phase, punctuality = null, depFinal = punctuality?
 }
 
 // Ficha de un vuelo de AeroDataBox (no es de Aena): horas del día según AeroDataBox (programada y, si cambia, la
-// revisada o la real), modelo y estado tal como estaban al consultar; sin puerta, foto ni puntualidad. El pie dice la
+// revisada o la real), modelo y estado tal como estaban al consultar; sin puerta ni puntualidad. El pie dice la
 // fuente y cuándo se consultó. El radar (si procede) se pinta encima con el mismo panel que los vuelos de Aena.
 const ADB_TONES = { Delayed: 'warn', Canceled: 'bad', CanceledUncertain: 'bad', Diverted: 'bad', Arrived: 'ok' };
-function adbCard(q, durationMin) {
+function adbCard(q, durationMin, photos = null) {
   const leg = q.adbLeg;
   const m = String(leg.number || q.number).match(/^([A-Z0-9]{2})(\d+[A-Z]?)$/);
   const [al, n] = m ? [m[1], m[2]] : [String(q.number).slice(0, 2), String(q.number).slice(2)];
@@ -413,7 +413,10 @@ function adbCard(q, durationMin) {
     : best ? { date: best.local.slice(0, 10), time: best.local.slice(11, 16), est: null, late: false, terminal: null } : null);
   const at = Date.parse(q.adbMeta.refreshedAt ?? q.adbMeta.fetchedAt);
   return {
-    al, title: flightTitle({ name: leg.airline, al, n }), number: `${al} ${n}`, airline: leg.airline ?? null, photo: null, operator: null,
+    al, title: flightTitle({ name: leg.airline, al, n }), number: `${al} ${n}`, airline: leg.airline ?? null,
+    // Foto con las mismas reglas que Aena, solo si AeroDataBox dice que la aerolínea del número es la que opera y el
+    // número da un código seguro (con «HTY203» los dos primeros caracteres serían otra aerolínea).
+    photo: m && leg.codeshareStatus === 'IsOperator' ? photoFor(photos, { op: al, model: adbModel(leg.aircraft) }) : null, operator: null,
     route: `${q.origin.city} a ${q.destination.city}`,
     status: { text: adbStatusText(leg.status) ?? 'Horario de AeroDataBox', tone: ADB_TONES[leg.status] ?? 'info' },
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: false,
@@ -751,7 +754,7 @@ async function buildFlight(q) {
   const flight = q.kind === 'schedule'
     ? withLanding(flightCard(q, profile.durationMin, await loadAirlinePhotos(), eta, visibleArrivalMs,
       departureEstimate({ leg: q.leg, arrivalUtcMs: officialMs, plannedMin: profile.durationMin, tz: oTz })), landedAt, q.leg, recallLandingSource(etaKey(q)))
-    : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin), landedAt, {}, recallLandingSource(q.adbKey)) : null;
+    : q.kind === 'adb' ? withLanding(adbCard(q, profile.durationMin, await loadAirlinePhotos()), landedAt, {}, recallLandingSource(q.adbKey)) : null;
   // Para js/card-model.js (cuentas «Sale en / Llega en / Duración»): la salida y la llegada visibles en UTC, sin calcular
   // nada nuevo. En AeroDataBox, la llegada visible es su mejor hora (adbTimes), la misma que muestra la ficha.
   const arrMs = q.kind === 'adb' ? adbTimes(q.adbLeg).arr?.utc ?? null : visibleArrivalMs;

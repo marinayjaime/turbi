@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { photoFor, operatorName, loadAirlinePhotos } from '../js/airline-photos.js';
+import { photoFor, operatorName, loadAirlinePhotos, adbModel } from '../js/airline-photos.js';
 
 const db = {
   airlines: { YW: 'Air Nostrum', FR: 'Ryanair' },
@@ -31,6 +31,13 @@ describe('foto real de la operadora y el modelo', () => {
     expect(photoFor(db, { op: 'EI', ac: '333' }, 'EI').thumb).toBe('ei333');
     expect(photoFor(db, { ac: '333' }, 'EI')).toMatchObject({ thumb: 'ei333', shared: true });
     expect(photoFor(db, { ac: '333' }, 'EI').representative).toBeUndefined();
+  });
+  it('AeroDataBox (modelo en texto): mismo resultado que con el código, sin adivinar variantes ni aerolíneas', () => {
+    expect(['Airbus A320 NEO', 'Boeing 737-8AS', 'Boeing 737-800', 'AgustaWestland AW139', 'Airbus A330', 'Boeing 737-8200', null].map(adbModel))
+      .toEqual(['Airbus A320neo', 'Boeing 737-800', 'Boeing 737-800', 'Helicóptero AW139', 'Airbus A330', 'Boeing 737-8200', null]);
+    expect(photoFor(db, { op: 'FR', model: adbModel('Boeing 737-8AS') })).toEqual(photoFor(db, { op: 'FR', ac: '73H' })); // exacta
+    expect(photoFor(db, { op: 'EI', model: adbModel('Airbus A330') })).toMatchObject({ thumb: 'ei320', representative: true }); // genérico
+    expect(photoFor(db, { op: 'ZZ', model: 'Boeing 737-800' })).toBeNull(); // nunca la de otra aerolínea con ese modelo
   });
   it('«Operado por» con el código de la aerolínea buscada (los tramos publicados no lo llevan)', () => {
     expect(operatorName(db, { op: 'FR' }, 'FR')).toBeNull();

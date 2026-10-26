@@ -1634,6 +1634,31 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     expect(calls.filter(u => u.includes('open-meteo'))).toEqual([]); // nada calculado a posteriori
   });
 
+  it('AeroDataBox: foto con las reglas de Aena (exacta, representativa o ninguna si no se sabe quién opera)', async () => {
+    const d = tomorrow();
+    const dep = localToUtcMs(d, '10:00', 'Europe/Madrid'), arr = dep + 150 * 60000;
+    const t = ms => ({ utc: `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`, local: `${d} 10:00+01:00` });
+    const card = async (model, codeshareStatus) => {
+      localStorage.clear(); // otra consulta de AeroDataBox (la caché del navegador guardaría la anterior)
+      const raw = { number: 'DE 2282', status: 'Expected', airline: { name: 'Condor' }, aircraft: { model }, codeshareStatus,
+        departure: { airport: { iata: 'FRA' }, scheduledTime: t(dep) }, arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr) } };
+      await openApp(network({ flights: {}, openMeteo: openMeteoOk,
+        schedule: { [`DE2282|${d}`]: { status: 'found', source: 'aerodatabox', number: 'DE2282', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) } } }));
+      await search('DE2282', d);
+      await until(() => $('#result .flight'), 'ficha');
+      await networkIdle();
+      const fig = $('#result .plane-photo');
+      return fig && { src: decodeURIComponent(fig.querySelector('img').getAttribute('src')), caption: fig.querySelector('figcaption')?.textContent ?? '' };
+    };
+    const exact = await card('Airbus A320 NEO', 'IsOperator'); // modelo de AeroDataBox con el nombre de Turbi: foto exacta de Condor
+    expect(exact.src).toBe('img/fotos-verificadas/DE Airbus A320neo.jpg');
+    expect(exact.caption).not.toContain('representativa');
+    const generic = await card('Airbus A330', 'IsOperator'); // sin variante: no hay modelo exacto, solo la de la aerolínea, rotulada
+    expect(generic.src).toMatch(/^img\/fotos-verificadas\/DE /);
+    expect(generic.caption).toContain('Imagen representativa de la aerolínea');
+    expect(await card('Airbus A320 NEO', 'Unknown')).toBeNull(); // no se sabe quién opera: ninguna foto
+  });
+
   it('AeroDataBox sin horas de pista: estimación en el aire (no el bloque completo)', async () => {
     const d = tomorrow();
     const dep = localToUtcMs(d, '10:00', 'Europe/Madrid'), arr = dep + 85 * 60000;
