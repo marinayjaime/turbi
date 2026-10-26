@@ -2,6 +2,8 @@
 // LIVE es /radar (Flight Positions); HISTÓRICO es esto (Flight Summary); TRACK es /track-adb (Flight Tracks con el fr24Id
 // que se verifique aquí). Solo vuelos de AeroDataBox (Aena ya da su propio estado final) y solo bajo demanda.
 //   - Cuándo: historyDue (js/adb.js), la misma regla que la app: 1 h después de la llegada más tardía conocida.
+//   - Número: el del tramo que dio AeroDataBox para ESE vuelo (p. ej. AF132 aunque se buscara AFR132: FR24 indexa por el
+//     número IATA); sin uno válido, el buscado. Nunca se convierte un código OACI en IATA por tablas ni recortes.
 //   - Identificación (falso negativo antes que otro avión): número comercial exacto, ruta OACI exacta (origen y destino
 //     previsto), despegue (o primera señal) entre 3 h antes y 12 h después de la salida programada y, si AeroDataBox y FR24
 //     dan matrícula o transpondedor, que coincidan. Exactamente UN candidato; varios → ninguno.
@@ -72,16 +74,17 @@ async function resolveHistory(state, { phys, entry, leg }, { fetchFn, env, nowMs
     if (isFinal(saved?.data)) { memory.set(phys, { at: nowMs, r: saved.data }); stats.historyStoreHits++; return saved.data; }
   }
   const origIcao = ICAO[leg.o], destIcao = ICAO[leg.a];
-  if (!origIcao || !destIcao || !FLIGHT_RE.test(entry.number)) return { state: 'no-aplica' };
+  const number = FLIGHT_RE.test(leg.number ?? '') ? leg.number : entry.number;
+  if (!origIcao || !destIcao || !FLIGHT_RE.test(number)) return { state: 'no-aplica' };
   stats.historyRequests++;
   const depMs = leg.dep.sched.utc;
-  const res = await fr24Summary({ flight: entry.number, origIcao, destIcao, fromMs: depMs - WINDOW_BEFORE_MS, toMs: Math.min(depMs + WINDOW_AFTER_MS, nowMs) },
+  const res = await fr24Summary({ flight: number, origIcao, destIcao, fromMs: depMs - WINDOW_BEFORE_MS, toMs: Math.min(depMs + WINDOW_AFTER_MS, nowMs) },
     { fetchFn, env }).catch(() => ({ state: 'unavailable', reason: 'error' }));
   let r;
   if (res.state !== 'ok') { stats.historyUnavailable++; r = { state: 'unavailable', reason: typeof res.reason === 'string' ? res.reason : 'error' }; }
   else {
     if (Number.isFinite(res.credits)) stats.historyCredits += res.credits;
-    const c = pickSummary(res.flights, { number: entry.number, origIcao, destIcao, depMs, reg: leg.reg, modeS: leg.modeS });
+    const c = pickSummary(res.flights, { number, origIcao, destIcao, depMs, reg: leg.reg, modeS: leg.modeS });
     r = !c ? { state: 'not-found' } : c.multiple ? { state: 'multiple', count: c.multiple } : summaryOutcome(c, destIcao);
     stats[r.state === 'landed' ? 'historyLanded' : r.state === 'not-found' ? 'historyNotFound' : r.state === 'multiple' ? 'historyMultiple' : 'historyOther']++;
   }

@@ -105,8 +105,10 @@ async function getTrack(url, fetchFn) {
 }
 export const fetchTrack = (al, n, leg, fetchFn = fetch, liveBase = LIVE_BASE) =>
   getTrack(`${liveBase}/track/${al}/${n}.json?${new URLSearchParams({ leg })}`, fetchFn);
-export const fetchAdbTrack = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE) =>
-  getTrack(`${liveBase}/track-adb/${encodeURIComponent(number)}/${date}.json?${new URLSearchParams({ leg: legKey })}`, fetchFn);
+// load: el usuario pidió la ruta realizada (ampliar el mapa). Sin él, la estela de un vuelo histórico solo llega si ya
+// estaba guardada (Flight Tracks cuesta ~40 créditos): si no, el servidor responde { state: 'on-demand' } sin pedirla.
+export const fetchAdbTrack = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE, { load = false } = {}) =>
+  getTrack(`${liveBase}/track-adb/${encodeURIComponent(number)}/${date}.json?${new URLSearchParams({ leg: legKey, ...(load ? { load: '1' } : {}) })}`, fetchFn);
 // Cierre histórico de un vuelo de AeroDataBox (Flightradar24 Flight Summary, server/fr24-history.mjs): { state: 'landed',
 // takeoff, landed, fr24Id, type, reg } | otro estado | null si falla (la ficha sigue con lo de AeroDataBox).
 export const fetchAdbHistory = (number, date, legKey, fetchFn = fetch, liveBase = LIVE_BASE) =>

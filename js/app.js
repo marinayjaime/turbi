@@ -1208,7 +1208,7 @@ function mountMap(q, stale) {
   if (keptMap) { adoptMap(card); return; } // «Actualizar» del mismo vuelo físico: el mapa de antes, tal cual
   destroyMap();
   const token = mapToken;
-  wireMapCard(card, { invalidate: () => routeMap?.invalidate() }); // el mapa aún se está creando: se busca al pulsar
+  wireMapCard(card, { invalidate: () => routeMap?.invalidate() }, loadTrackOnDemand); // el mapa aún se está creando: se busca al pulsar
   let route;
   try { route = buildRoute(q.origin, q.destination, 0).points; } catch { return; }
   createRouteMap(el, { origin: q.origin, destination: q.destination, route }).then(m => {
@@ -1242,7 +1242,7 @@ function showPlane(map, card) {
 // vuelve a pedir, salvo que la anterior fallara o se descartara; los sondeos, nunca.
 // Horas SIEMPRE del servidor (nunca el reloj del móvil): la de una posición es checked − posAgeS; las de la estela, las
 // de FR24 (times).
-let trackAsked = null; // { map, identity, failed }
+let trackAsked = null; // { map, identity, failed, onDemand? }
 let trackLast = null; // { map, ms }: hora (UTC del servidor) del último punto real de la estela
 let planeTimes = { map: null, utc: null, fromUtc: null }; // hora de la posición del avión en pantalla y de la anterior
 const readingUtc = radar => {
@@ -1293,11 +1293,22 @@ function syncTrack(map, card) {
   const asked = trackAsked = { map, identity, failed: false };
   requestTrack(map, card, fr24Id, asked).catch(() => { asked.failed = true; });
 }
+// Ruta realizada de un vuelo histórico que no estaba guardada: solo al ampliar el mapa (el usuario quiere verla) y una vez.
+function loadTrackOnDemand() {
+  const asked = trackAsked;
+  if (!asked?.onDemand || asked.map !== routeMap || !shownCard || physicalOf(lastQuery) !== asked.onDemand) return;
+  const next = trackAsked = { map: asked.map, identity: asked.identity, failed: false };
+  requestTrack(next.map, shownCard, null, next, { load: true }).catch(() => { next.failed = true; });
+}
+
 // fr24Id: el de la lectura (la respuesta tiene que ser de ese) o null (aterrizado: se acepta el de la respuesta).
-async function requestTrack(map, card, fr24Id, asked) {
+// load: el usuario pidió la ruta realizada (ver loadTrackOnDemand).
+async function requestTrack(map, card, fr24Id, asked, { load = false } = {}) {
   const q = lastQuery, key = physicalOf(q);
   const r = q?.kind === 'schedule' ? await fetchTrack(q.schedule.al, q.schedule.n, physicalFlightKey(q.leg))
-    : q?.kind === 'adb' ? await fetchAdbTrack(q.adbMeta.number, q.adbMeta.date, q.adbKey) : null;
+    : q?.kind === 'adb' ? await fetchAdbTrack(q.adbMeta.number, q.adbMeta.date, q.adbKey, undefined, undefined, { load }) : null;
+  // Vuelo histórico sin estela guardada: no se descarga sola (cuesta); queda pendiente de que se amplíe el mapa.
+  if (r?.state === 'on-demand' && trackAsked === asked && physicalOf(lastQuery) === key) { asked.onDemand = key; return; }
   const ok = r?.state === 'found' && typeof r.fr24Id === 'string' && (fr24Id === null || r.fr24Id === fr24Id)
     && Array.isArray(r.points) && Array.isArray(r.times) && r.times.length === r.points.length;
   // Cualquier descarte (no hay estela, otra ficha, mapa en traspaso, aún sin hora del avión): «Actualizar» lo reintenta.

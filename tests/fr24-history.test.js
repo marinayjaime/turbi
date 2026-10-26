@@ -51,7 +51,8 @@ function setup({ store = createMemoryStore({ [entryPath('DE2282', '2026-10-25')]
   state.adb = createAerodatabox({ key: null, store });
   state.historyStore = store;
   const history = (path = PATH, nowMs = NOW) => fr24HistoryResponse(state, path, { fetchFn: f.fetchFn, nowMs, airports, env }).then(r => JSON.parse(r.body));
-  const track = (nowMs = NOW) => trackRoute(state, `/track-adb/DE2282/2026-10-25.json?leg=${encodeURIComponent(KEY)}`, { fetchFn: f.fetchFn, nowMs, airports, env })
+  const track = (nowMs = NOW, load = false) => trackRoute(state, `/track-adb/DE2282/2026-10-25.json?leg=${encodeURIComponent(KEY)}${load ? '&load=1' : ''}`,
+    { fetchFn: f.fetchFn, nowMs, airports, env })
     .then(r => JSON.parse(r.body));
   return { state, store, f, history, track };
 }
@@ -137,21 +138,44 @@ describe('/history-adb: cuándo, caché persistente y llamadas', () => {
   });
 });
 
-describe('Flight Tracks con el fr24Id que verificó el histórico', () => {
-  it('sin histórico → no-aplica; con él → la ruta real, guardada (tras reiniciar, 0 llamadas); si el radar asoció otro, ninguna', async () => {
+describe('Flight Tracks con el fr24Id que verificó el histórico: solo bajo demanda (~40 créditos)', () => {
+  it('abrir la ficha no la descarga; pedirla (load=1) hace 1 llamada y la guarda; reabrir y tras reiniciar → 0 llamadas', async () => {
     const s = setup();
     expect((await s.track()).state).toBe('no-aplica'); // nada verificado todavía: ni siquiera se llama
-    expect(s.f.calls).toEqual([]);
     await s.history();
-    const r = await s.track();
-    expect(r).toMatchObject({ state: 'found', fr24Id: '4249d4dd', points: [[50.05, 8.57], [-6.22, 39.22]] });
+    expect((await s.track()).state).toBe('on-demand'); // abrir la ficha histórica: sin Flight Tracks
+    expect(s.f.trackCalls()).toEqual([]);
+    const [a, b] = await Promise.all([s.track(NOW, true), s.track(NOW, true)]); // dos usuarios a la vez
+    expect(a).toMatchObject({ state: 'found', fr24Id: '4249d4dd', points: [[50.05, 8.57], [-6.22, 39.22]] });
+    expect(b.state).toBe('found');
     expect(s.f.trackCalls()).toEqual(['https://fr24api.flightradar24.com/api/flight-tracks?flight_id=4249d4dd']);
-    const again = setup({ store: s.store, f: fake() });
+    const again = setup({ store: s.store, f: fake() }); // Render reiniciado: misma rama data
     await again.history();
-    expect((await again.track()).state).toBe('found');
-    expect(again.f.calls).toEqual([]); // resumen y estela, de la rama data
+    expect((await again.track()).state).toBe('found'); // ya guardada: también sin pedirla
+    expect(again.f.calls).toEqual([]);
     again.state.fr24Assoc = new Map([[KEY, { fr24Id: 'otro1234', at: NOW }]]);
-    expect((await again.track()).state).toBe('no-aplica');
+    expect((await again.track(NOW, true)).state).toBe('no-aplica'); // el radar asoció otro avión: ninguno
+  });
+});
+
+describe('número del vuelo para FR24: el del tramo de AeroDataBox, nunca una conversión inventada', () => {
+  // AFR132 (búsqueda con código OACI): AeroDataBox da para ESE vuelo number AF132, que es como lo indexa FR24.
+  const AF = { ...LEG, number: 'AF132', callSign: 'AFR132', reg: null, modeS: null, o: 'CDG', a: 'LOS',
+    dep: { sched: t('2026-10-20T14:05:00Z', 120), revised: null, runway: null }, arr: { sched: t('2026-10-20T20:30:00Z', 60), revised: null, predicted: null, runway: null } };
+  const afSummary = { ...RAW, fr24_id: '42301234', flight: 'AF132', callsign: 'AFR132', operating_as: 'AFR', orig_icao: 'LFPG', dest_icao: 'DNMM', dest_icao_actual: 'DNMM',
+    reg: 'F-HZUA', hex: '39CF00', datetime_takeoff: '2026-10-20T14:31:00Z', datetime_landed: '2026-10-20T20:12:00Z', first_seen: '2026-10-20T14:10:00Z' };
+  const run = async leg => {
+    const entry = { ...ENTRY, number: 'AFR132', date: '2026-10-20', legs: [leg] };
+    const s = setup({ store: createMemoryStore({ [entryPath('AFR132', '2026-10-20')]: entry }),
+      f: fake({ summary: u => res(200, { data: new URL(u).searchParams.get('flights') === 'AF132' ? [afSummary] : [] }) }) });
+    const r = await s.history(`/history-adb/AFR132/2026-10-20.json?leg=${encodeURIComponent(adbPhysicalKey(entry, leg))}`, NOW);
+    return { r, flights: s.f.summaries().map(u => new URL(u).searchParams.get('flights')) };
+  };
+  it('AFR132 buscado: se pregunta por AF132 (el número que dio AeroDataBox) y se cierra', async () => {
+    expect(await run(AF)).toMatchObject({ flights: ['AF132'], r: { state: 'landed', fr24Id: '42301234' } });
+  });
+  it('si el tramo no trae un número válido, el buscado tal cual: nada de convertir AFR → AF', async () => {
+    expect(await run({ ...AF, number: '' })).toEqual({ flights: ['AFR132'], r: expect.objectContaining({ state: 'not-found' }) });
   });
 });
 

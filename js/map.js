@@ -85,9 +85,10 @@ export function mapCardHtml(phase) {
 }
 
 // Ampliar / cerrar: la tarjeta pasa a pantalla completa (.expanded) y Leaflet recalcula el tamaño al terminar.
-export function wireMapCard(card, routeMap) {
+// onExpand: al ampliar (p. ej. pedir la ruta realizada de un vuelo histórico, que solo se descarga si se quiere ver).
+export function wireMapCard(card, routeMap, onExpand = null) {
   const toggle = on => { card.classList.toggle('expanded', on); routeMap?.invalidate(); };
-  card.querySelector('[data-map="expand"]')?.addEventListener('click', () => toggle(true));
+  card.querySelector('[data-map="expand"]')?.addEventListener('click', () => { toggle(true); onExpand?.(); });
   card.querySelector('[data-map="close"]')?.addEventListener('click', () => toggle(false));
 }
 

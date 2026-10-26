@@ -2594,6 +2594,45 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     expect(trackCalls()).toEqual([`${LIVE_BASE}/track-adb/GA89/${d}.json?leg=${encodeURIComponent(legKey)}`]);
     expect(calls.some(u => u.includes('/track/'))).toBe(false);
   });
+  it('AeroDataBox histórico cerrado por FR24: la ruta realizada solo se descarga al ampliar el mapa (y una vez)', async () => {
+    const fmt = (ms, offH) => { const t = new Date(ms + offH * 3600000).toISOString(); return `${t.slice(0, 10)} ${t.slice(11, 16)}${offH >= 0 ? '+' : '-'}${String(Math.abs(offH)).padStart(2, '0')}:00`; };
+    const utc = ms => `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`;
+    const dep = Math.floor((Date.now() - 12 * 3600000) / 60000) * 60000, arr = dep + 550 * 60000;
+    const d = fmt(dep, 1).slice(0, 10);
+    const raw = { number: 'DE 2282', callSign: 'CFG282', status: 'Departed', codeshareStatus: 'IsOperator', airline: { name: 'Condor' },
+      departure: { airport: { iata: 'FRA' }, scheduledTime: { utc: utc(dep), local: fmt(dep, 1) } },
+      arrival: { airport: { iata: 'ZNZ' }, scheduledTime: { utc: utc(arr), local: fmt(arr, 3) } }, aircraft: { model: 'Airbus A330' } };
+    const entry = { status: 'found', source: 'aerodatabox', number: 'DE2282', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) };
+    const takeoff = dep + 30 * 60000, landed = takeoff + 528 * 60000, sec = ms => Math.floor(ms / 1000);
+    const { L, log } = trackLeaflet();
+    vi.stubGlobal('L', L);
+    const base = network({ flights: {}, schedule: { [`DE2282|${d}`]: entry }, openMeteo: () => tooMany });
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/history-adb/`)) { calls.push(u); return Promise.resolve(json({ state: 'landed', fr24Id: '4249d4dd', source: 'fr24',
+        takeoff: new Date(takeoff).toISOString().slice(0, 19) + 'Z', landed: new Date(landed).toISOString().slice(0, 19) + 'Z', type: 'A339', reg: 'D-ANRK' })); }
+      if (u.startsWith(`${LIVE_BASE}/track-adb/`)) {
+        calls.push(u);
+        return Promise.resolve(json(new URL(u).searchParams.get('load') === '1'
+          ? { state: 'found', fr24Id: '4249d4dd', source: 'fr24', points: [[50.05, 8.57], [20, 30], [-6.22, 39.22]], times: [sec(takeoff), sec(takeoff + 3600000), sec(landed)],
+            lastAt: new Date(landed).toISOString(), checked: new Date().toISOString() }
+          : { state: 'on-demand', source: 'fr24', checked: new Date().toISOString() }));
+      }
+      return base(url, o);
+    }));
+    await search('DE2282', d);
+    await until(() => trackCalls().length === 1, 'consulta de la ruta realizada al abrir');
+    await networkIdle();
+    expect(new URL(trackCalls()[0]).searchParams.get('load')).toBeNull(); // abrir: solo la ya guardada (aquí, ninguna)
+    expect(trails(log)).toHaveLength(0);
+    $('#map-card [data-map="expand"]').click(); // el usuario quiere ver la ruta
+    await until(() => trails(log).length === 1, 'ruta realizada tras ampliar');
+    expect(new URL(trackCalls()[1]).searchParams.get('load')).toBe('1');
+    $('#map-card [data-map="close"]').click();
+    $('#map-card [data-map="expand"]').click();
+    await networkIdle();
+    expect(trackCalls()).toHaveLength(2); // ya pintada: ampliar otra vez no la vuelve a pedir
+  });
   // Ronda de corrección 1: «Actualizar» con /track en curso, reloj del móvil desfasado, estela durante A → B, ruta
   // realizada de un vuelo aterrizado hace horas y lecturas que no deben tocar la estela.
   const S = () => Math.floor(Date.now() / 1000) * 1000; // hora del «servidor», en segundos enteros
