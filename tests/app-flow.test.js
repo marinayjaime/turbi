@@ -1615,10 +1615,11 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
   it('AeroDataBox sin horas de pista: estimación en el aire (no el bloque completo)', async () => {
     const d = tomorrow();
     const dep = localToUtcMs(d, '10:00', 'Europe/Madrid'), arr = dep + 85 * 60000;
-    const t = (ms, off) => ({ utc: `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`,
+    const off = (Date.parse(`${d}T10:00Z`) - dep) / 3600000; // +1 en invierno, +2 en verano (no fijo: falla tras el cambio de hora)
+    const t = (ms) => ({ utc: `${new Date(ms).toISOString().slice(0, 10)} ${new Date(ms).toISOString().slice(11, 16)}Z`,
       local: `${new Date(ms + off * 3600000).toISOString().slice(0, 10)} ${new Date(ms + off * 3600000).toISOString().slice(11, 16)}+0${off}:00` });
     const raw = { number: 'XX 101', status: 'Expected', airline: { name: 'Prueba' },
-      departure: { airport: { iata: 'MAD' }, scheduledTime: t(dep, 2) }, arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr, 2) } };
+      departure: { airport: { iata: 'MAD' }, scheduledTime: t(dep) }, arrival: { airport: { iata: 'PMI' }, scheduledTime: t(arr) } };
     await openApp(network({ flights: {}, openMeteo: openMeteoOk,
       schedule: { [`XX101|${d}`]: { status: 'found', source: 'aerodatabox', number: 'XX101', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) } } }));
     await search('XX101', d);
