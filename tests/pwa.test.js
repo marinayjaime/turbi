@@ -30,6 +30,18 @@ describe('actualización de la PWA', () => {
     expect(sw).toContain("'js/build.js'"); // también disponible sin conexión
   });
 
+  // Sin conexión, un módulo que importe la app y no esté en la copia rompería la carga entera.
+  it('la copia sin conexión incluye todos los módulos que carga la app', () => {
+    const seen = new Set(), pending = ['js/app.js'];
+    while (pending.length) {
+      const file = pending.pop();
+      if (seen.has(file)) continue;
+      seen.add(file);
+      for (const [, rel] of readFileSync(file, 'utf8').matchAll(/from '\.\/([\w-]+\.js)'/g)) pending.push(`js/${rel}`);
+    }
+    for (const file of [...seen].filter(f => f !== 'js/app.js')) expect(sw, file).toContain(`'${file}'`);
+  });
+
   it('mantiene una copia sin conexión nueva y ofrece un aviso de actualización', () => {
     expect(sw).toContain("const CACHE = 'turbi-v95'");
     expect(sw).toContain("e.data?.type === 'SKIP_WAITING'");
