@@ -6,9 +6,12 @@
 // 4. Fotos propias: img/fotos/«CÓDIGO Modelo.jpg» (p. ej. «FR Boeing 737-800.jpg»); tienen prioridad.
 //    Y la biblioteca verificada img/aviones-comerciales-verificados (Aerolínea/Modelo/foto.jpg + CSV), aún más prioritaria.
 // 5. node scripts/fetch-airline-photos.mjs --publish → data/airline-photos.json (lo que carga la app)
+//    Para cambiar una foto verificada se cambia su original y su fila del CSV (nunca la copia de img/fotos-verificadas):
+//    --publish regenera la copia y --check comprueba que copia y créditos salen de la misma fila.
 // Sin foto de esa aerolínea con ese modelo, la app no muestra ninguna: nunca una de otra aerolínea ni «de ejemplo».
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const UA = 'Turbi/1.0 (+https://github.com/marinayjaime/turbi)';
 const API = 'https://commons.wikimedia.org/w/api.php';
@@ -19,6 +22,8 @@ const OWN = 'img/fotos';
 // Biblioteca verificada de Jaime (Aerolínea/Modelo/foto.jpg + FUENTES_Y_LICENCIAS.csv): prioridad máxima.
 const LIB = 'img/aviones-comerciales-verificados';
 const LIB_OUT = 'img/fotos-verificadas';
+// Por copia publicada: huella del original del que sale, huella de la copia y sus créditos (los de la misma fila del CSV).
+const MANIFEST = 'data/airline-photos-manifest.json';
 
 // Cómo llama Commons a cada modelo (varias formas posibles).
 const MODEL_NAMES = {
@@ -172,26 +177,79 @@ function publish() {
     }
   }
   // Biblioteca verificada: copias reducidas a 1000 px en img/fotos-verificadas, con autor y licencia de su CSV.
+  // La copia y sus créditos salen siempre de la misma fila: la copia se regenera cuando cambia el original (huella en
+  // MANIFEST) y la publicación se para si una copia se cambió a mano o si hay copias que no salen de ninguna fila.
   if (existsSync(`${LIB}/FUENTES_Y_LICENCIAS.csv`)) {
     mkdirSync(LIB_OUT, { recursive: true });
-    const [head, ...rows] = parseCsv(readFileSync(`${LIB}/FUENTES_Y_LICENCIAS.csv`, 'utf8').replace(/^\uFEFF/, ''));
-    const col = name => head.indexOf(name);
-    for (const r of rows) {
-      const code = r[col('CODIGO_OPERADOR')], model = r[col('MODELO')];
-      const src = `${LIB}/${r[col('ARCHIVO')]}`;
-      if (!code || !model || !existsSync(src)) continue;
-      const name = `${code} ${model}.jpg`.replace(/[/\\]/g, '-');
-      const out = `${LIB_OUT}/${name}`;
-      if (!existsSync(out)) execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '72', '--resampleWidth', '1000', src, '--out', out], { stdio: 'ignore' });
-      photos[`${code}|${model}`] = { thumb: `${LIB_OUT}/${encodeURIComponent(name)}`, artist: r[col('AUTOR')], license: r[col('LICENCIA')], page: r[col('PAGINA_FUENTE')] };
+    const manifest = existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, 'utf8')) : {};
+    const next = {}, problems = [];
+    let regenerated = 0;
+    for (const { key, name, src, credits } of libraryRows()) {
+      const out = `${LIB_OUT}/${name}`, m = manifest[name], srcHash = sha256(src);
+      const outHash = existsSync(out) ? sha256(out) : null;
+      // Mismo original y la copia no es la que se generó de él: alguien la sustituyó sin pasar por la biblioteca.
+      if (m && m.src === srcHash && outHash && outHash !== m.out) { problems.push(`${name}: la copia publicada no es la generada de su original (¿cambiada a mano?)`); continue; }
+      if (!m || m.src !== srcHash || !outHash) {
+        execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '72', '--resampleWidth', '1000', src, '--out', out], { stdio: 'ignore' });
+        if (sha256(out) !== outHash) regenerated++;
+      }
+      next[name] = { key, src: srcHash, out: sha256(out), ...credits };
+      photos[key] = { thumb: `${LIB_OUT}/${encodeURIComponent(name)}`, ...credits };
     }
+    for (const f of jpgsIn(LIB_OUT).filter(f => !next[f])) problems.push(`${f}: copia publicada sin fila en FUENTES_Y_LICENCIAS.csv`);
+    if (problems.length) throw new Error(`Biblioteca y copias publicadas desincronizadas; no se publica nada:\n  ${problems.join('\n  ')}`);
+    writeFileSync(MANIFEST, `${JSON.stringify(Object.fromEntries(Object.entries(next).sort(([a], [b]) => (a < b ? -1 : 1))), null, 1)}\n`);
+    console.log(`Biblioteca verificada: ${Object.keys(next).length} copias, ${regenerated} regeneradas`);
   }
   const airlines = Object.fromEntries(combos.filter(c => c.name).map(c => [c.op, c.name]));
   writeFileSync(PUBLISHED, `${JSON.stringify({ airlines, photos })}\n`);
   console.log(`Publicadas ${Object.keys(photos).length} fotos revisadas de ${Object.keys(all).length} combinaciones`);
 }
 
+const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+// macOS lista los nombres en NFD («Helicóptero»): se comparan en NFC, como los guarda git y los pide la app.
+const jpgsIn = dir => readdirSync(dir).filter(f => /\.jpe?g$/i.test(f)).map(f => f.normalize('NFC'));
+
+// Filas de FUENTES_Y_LICENCIAS.csv con su original presente: clave aerolínea|modelo, nombre de la copia y créditos.
+function libraryRows() {
+  const [head, ...rows] = parseCsv(readFileSync(`${LIB}/FUENTES_Y_LICENCIAS.csv`, 'utf8').replace(/^\uFEFF/, ''));
+  const col = name => head.indexOf(name);
+  // Cada fila, su propio original: dos filas con el mismo ARCHIVO acabarían publicando la foto de una con los créditos de la otra.
+  const files = rows.map(r => r[col('ARCHIVO')]).filter(Boolean);
+  const shared = [...new Set(files.filter((f, i) => files.indexOf(f) !== i))];
+  if (shared.length) throw new Error(`Varias filas de FUENTES_Y_LICENCIAS.csv comparten original: ${shared.join(', ')}`);
+  return rows.map(r => ({ code: r[col('CODIGO_OPERADOR')], model: r[col('MODELO')], src: `${LIB}/${r[col('ARCHIVO')]}`, r }))
+    .filter(x => x.code && x.model && existsSync(x.src))
+    .map(({ code, model, src, r }) => ({ key: `${code}|${model}`, name: `${code} ${model}.jpg`.replace(/[/\\]/g, '-'), src,
+      credits: { artist: r[col('AUTOR')], license: r[col('LICENCIA')], page: r[col('PAGINA_FUENTE')] } }));
+}
+
+// --check: sin escribir nada, comprueba que biblioteca (original + fila del CSV), copia publicada, MANIFEST y
+// data/airline-photos.json cuentan lo mismo. La parte sin biblioteca la cubre también tests/airline-photos.test.js.
+function check() {
+  const manifest = existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, 'utf8')) : {};
+  const { photos } = JSON.parse(readFileSync(PUBLISHED, 'utf8'));
+  const problems = [], seen = new Set();
+  for (const { key, name, src, credits } of libraryRows()) {
+    seen.add(name);
+    const m = manifest[name], out = `${LIB_OUT}/${name}`, p = photos[key];
+    if (!m) { problems.push(`${name}: sin entrada en el manifiesto`); continue; }
+    if (m.src !== sha256(src)) problems.push(`${name}: el original de la biblioteca cambió y la copia no se ha regenerado`);
+    if (!existsSync(out) || m.out !== sha256(out)) problems.push(`${name}: la copia publicada no es la generada de su original`);
+    for (const k of ['artist', 'license', 'page']) {
+      if (m[k] !== credits[k]) problems.push(`${name}: ${k} del manifiesto ≠ CSV`);
+      if (p?.[k] !== credits[k]) problems.push(`${name}: ${k} publicado ≠ CSV`);
+    }
+    if (p?.thumb !== `${LIB_OUT}/${encodeURIComponent(name)}`) problems.push(`${name}: ${key} no publica esta copia`);
+  }
+  for (const f of jpgsIn(LIB_OUT).filter(f => !seen.has(f))) problems.push(`${f}: copia publicada sin fila en la biblioteca`);
+  for (const f of Object.keys(manifest).filter(f => !seen.has(f))) problems.push(`${f}: entrada del manifiesto sin fila en la biblioteca`);
+  console.log(problems.length ? `Desincronizado (${problems.length}):\n  ${problems.join('\n  ')}` : `Biblioteca, copias y créditos sincronizados (${seen.size} fotos)`);
+  if (problems.length) process.exitCode = 1;
+}
+
 if (process.argv[1]?.endsWith('fetch-airline-photos.mjs') && process.argv[2] === '--publish') publish();
+else if (process.argv[1]?.endsWith('fetch-airline-photos.mjs') && process.argv[2] === '--check') check();
 else if (process.argv[1]?.endsWith('fetch-airline-photos.mjs')) {
   const combos = JSON.parse(readFileSync(COMBOS, 'utf8'));
   const limit = Number(process.argv[2] ?? Infinity);

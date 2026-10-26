@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { photoFor, operatorName, loadAirlinePhotos } from '../js/airline-photos.js';
 
 const db = {
@@ -42,5 +44,20 @@ describe('foto real de la operadora y el modelo', () => {
   });
   it('si no se puede cargar el archivo: null (la ficha sale sin foto)', async () => {
     expect(await loadAirlinePhotos(vi.fn(async () => { throw new TypeError('x'); }))).toBeNull();
+  });
+});
+
+// Cada copia de img/fotos-verificadas es la que --publish generó de su original y lleva sus mismos créditos
+// (data/airline-photos-manifest.json). Así una copia cambiada a mano, o unos créditos de otra foto, no pasan en silencio.
+describe('fotos verificadas publicadas: copia y créditos de la misma fuente', () => {
+  it('copia ↔ manifiesto ↔ data/airline-photos.json', () => {
+    const manifest = JSON.parse(readFileSync('data/airline-photos-manifest.json', 'utf8'));
+    const { photos } = JSON.parse(readFileSync('data/airline-photos.json', 'utf8'));
+    const files = readdirSync('img/fotos-verificadas').filter(f => /\.jpe?g$/i.test(f)).map(f => f.normalize('NFC'));
+    expect(files.sort()).toEqual(Object.keys(manifest).sort()); // ninguna copia sin fuente ni fuente sin copia
+    for (const [file, m] of Object.entries(manifest)) {
+      expect(createHash('sha256').update(readFileSync(`img/fotos-verificadas/${file}`)).digest('hex'), file).toBe(m.out);
+      expect(photos[m.key], file).toEqual({ thumb: `img/fotos-verificadas/${encodeURIComponent(file)}`, artist: m.artist, license: m.license, page: m.page });
+    }
   });
 });
