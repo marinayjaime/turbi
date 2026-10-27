@@ -24,6 +24,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapHeroHtml } from './map.js';
+import { identifyAircraft } from './aircraft-id.js';
 import { flightPhase, mapPhase, hasDeparted, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
 import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
@@ -394,6 +395,7 @@ function flightCard(q, durationMin, photos = null, eta = null, visibleArrivalMs 
     al: schedule.al,
     title: flightTitle(schedule),
     number: `${schedule.al} ${schedule.n}`, airline: schedule.name ?? null, photo: photoFor(photos, leg, schedule.al), operator: operatorName(photos, leg, schedule.al),
+    opCode: leg.op ?? null, // operadora según Aena (sin ella, Aena no dice quién opera: nunca el código del número)
     route: `${origin.city} a ${destination.city}`,
     // Estado mostrado: con la misma llegada visible que la ficha (Aena o estimación Turbi); ver presentStatus.
     status: presentStatus({ leg, city: destination.city, visibleArrivalMs, arrivalSource: arr ? 'aena' : 'turbi' }),
@@ -440,6 +442,7 @@ function adbCard(q, durationMin, photos = null) {
     // Foto con las mismas reglas que Aena, solo si AeroDataBox dice que la aerolínea del número es la que opera y el
     // número da un código seguro (con «HTY203» los dos primeros caracteres serían otra aerolínea).
     photo: m && leg.codeshareStatus === 'IsOperator' ? photoFor(photos, { op: al, model: adbModel(leg.aircraft) }) : null, operator: null,
+    opCode: m && leg.codeshareStatus === 'IsOperator' ? al : null,
     route: `${q.origin.city} a ${q.destination.city}`,
     status: { text: adbStatusText(leg.status) ?? 'Horario de AeroDataBox', tone: ADB_TONES[leg.status] ?? 'info' },
     o: leg.o, a: leg.a, duration: durationMin, durationEstimated: false,
@@ -484,7 +487,7 @@ function fr24Card(q, photos = null, airlines = null) {
   const diverted = h?.state === 'diverted';
   const card = {
     al, title: flightTitle({ name, al, n }), number: `${al} ${n}`, airline: name,
-    photo: exact && !exact.representative ? exact : null, operator: null,
+    photo: exact && !exact.representative ? exact : null, operator: null, opCode: operates ? al : null,
     route: `${q.origin.city} a ${q.destination.city}`,
     status: diverted ? { text: 'Desviado', tone: 'bad' } : { text: 'Visto en vuelo por Flightradar24', tone: 'info' },
     o: q.origin.iata, a: q.destination.iata, duration: landed ? Math.round((landedMs - takeoffMs) / 60000) : null, durationEstimated: false,
@@ -1323,7 +1326,7 @@ function mountMap(q, stale, slot) {
   const card = heroNode, el = heroNode.querySelector('#map');
   const token = mapToken;
   // El mapa aún se está creando: se busca al pulsar.
-  wireMapCard(card, { expanded: on => routeMap?.expanded?.(on) }, loadTrackOnDemand);
+  wireMapCard(card, { expanded: on => routeMap?.expanded?.(on), setMode: m => routeMap?.setMode?.(m) ?? '2d' }, loadTrackOnDemand);
   let route;
   try { route = buildRoute(q.origin, q.destination, 0).points; } catch { return; }
   createRouteMap(el, { origin: q.origin, destination: q.destination, route }).then(m => {
@@ -1345,7 +1348,14 @@ const planeIdentity = card => `${card?.physicalKey ?? ''}|${card?.radar?.fr24Id 
 function showPlane(map, card) {
   const seen = withDim(planeFor(card));
   const before = planeTimes.map === map ? planeTimes.utc : null;
-  map?.setPlane(seen?.pos ?? null, { identity: seen ? planeIdentity(seen.from) : planeIdentity(card) });
+  // Para el modo 3D, la altitud de esa lectura (pies, barométrica) y el instante de la posición (reloj monotónico).
+  const r = seen?.from.radar;
+  const pos = seen ? { ...seen.pos, alt: Number.isFinite(r?.altFt) ? r.altFt : null,
+    obsMono: Number.isFinite(r?.posAgeS) ? seen.from.radarReceivedMono - r.posAgeS * 1000 : null } : null;
+  map?.setPlane(pos, { identity: seen ? planeIdentity(seen.from) : planeIdentity(card) });
+  // Modelo y operadora del avión que se ve (para el modo 3D): el radar de esa lectura y el horario de la ficha.
+  map?.setAircraft?.(card ? identifyAircraft({ ...card, radar: (seen?.from ?? card).radar,
+    aircraft: card.source === 'aerodatabox' ? adbModel(card.aircraft) : card.aircraft }, aircraftName) : null);
   notePlaneTime(map, seen ? readingUtc(seen.from.radar) : null, before);
   if (map && map === routeMap) schedulePlane(map, seen);
   syncTrack(map, card);

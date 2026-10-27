@@ -1,0 +1,42 @@
+{
+ "fuselage": {
+  "nose": 0.09,
+  "tail": 0.3
+ },
+ "id": "atr72",
+ "name": "ATR 72",
+ "length": 27.17,
+ "span": 27.05,
+ "width": 2.57,
+ "wing": {
+  "at": 0.4,
+  "rootChord": 2.6,
+  "tipChord": 1.4,
+  "sweep": 3,
+  "dihedral": 0,
+  "mount": "high"
+ },
+ "tailplane": {
+  "span": 7.3,
+  "rootChord": 1.9,
+  "tipChord": 1,
+  "sweep": 10,
+  "dihedral": 0,
+  "mount": "fin"
+ },
+ "fin": {
+  "height": 4,
+  "rootChord": 4.2,
+  "tipChord": 1.9,
+  "sweep": 36
+ },
+ "engines": {
+  "kind": "turboprop",
+  "at": 0.3,
+  "length": 4.4,
+  "diameter": 1.05,
+  "propeller": 3.93,
+  "blades": 6
+ },
+ "winglet": "none"
+}

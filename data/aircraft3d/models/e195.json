@@ -1,0 +1,40 @@
+{
+ "fuselage": {
+  "nose": 0.1,
+  "tail": 0.27
+ },
+ "id": "e195",
+ "name": "Embraer 195",
+ "length": 38.67,
+ "span": 28.72,
+ "width": 3.01,
+ "wing": {
+  "at": 0.39,
+  "rootChord": 5.4,
+  "tipChord": 1.3,
+  "sweep": 23.5,
+  "dihedral": 5,
+  "mount": "low"
+ },
+ "tailplane": {
+  "span": 10.1,
+  "rootChord": 2.9,
+  "tipChord": 1.1,
+  "sweep": 30,
+  "dihedral": 5,
+  "mount": "fuselage"
+ },
+ "fin": {
+  "height": 5.3,
+  "rootChord": 4.6,
+  "tipChord": 1.6,
+  "sweep": 38
+ },
+ "engines": {
+  "kind": "underwing",
+  "at": 0.32,
+  "length": 3.7,
+  "diameter": 1.65
+ },
+ "winglet": "canted"
+}

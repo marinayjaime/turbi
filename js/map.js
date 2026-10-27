@@ -134,6 +134,7 @@ export function mapHeroHtml(phase) {
   <div id="map" class="map"></div>
   <span class="map-label card-title">${esc(mapTitle(phase))}</span>
   <p class="map-attrib">${ATTRIBUTION}</p>
+  <div class="map-mode" role="group" aria-label="Vista del mapa"><button type="button" data-mode="2d" aria-pressed="true">2D</button><button type="button" data-mode="3d" aria-pressed="false">3D</button></div>
   <button type="button" class="map-btn" data-map="expand" aria-label="Ampliar el mapa">${icon('expand')}</button>
   <button type="button" class="map-btn map-close" data-map="close" aria-label="Cerrar el mapa ampliado">${icon('close')}</button>
 </section>`;
@@ -141,10 +142,27 @@ export function mapHeroHtml(phase) {
 
 // Ampliar / cerrar: el mapa pasa a pantalla completa (.expanded); routeMap.expanded encuadra la ruta entera al ampliar y
 // vuelve a la vista de antes al cerrar. onExpand: al ampliar (p. ej. pedir la ruta realizada de un vuelo histórico).
+// 2D / 3D: routeMap.setMode (el 3D se carga al pulsarlo); si el 3D no se puede usar, se queda en 2D y se dice.
 export function wireMapCard(card, routeMap, onExpand = null) {
   const toggle = on => { card.classList.toggle('expanded', on); routeMap?.expanded?.(on); };
   card.querySelector('[data-map="expand"]')?.addEventListener('click', () => { toggle(true); onExpand?.(); });
   card.querySelector('[data-map="close"]')?.addEventListener('click', () => toggle(false));
+  const modes = [...card.querySelectorAll('[data-mode]')];
+  const show = mode => { for (const b of modes) b.setAttribute('aria-pressed', String(b.dataset.mode === mode)); };
+  for (const b of modes) {
+    b.addEventListener('click', async () => {
+      if (b.getAttribute('aria-pressed') === 'true' || card.dataset.modeBusy) return;
+      card.dataset.modeBusy = '1';
+      show(b.dataset.mode);
+      const got = await Promise.resolve(routeMap?.setMode?.(b.dataset.mode)).catch(() => '2d') ?? '2d';
+      delete card.dataset.modeBusy;
+      show(got);
+      if (b.dataset.mode === '3d' && got !== '3d') {
+        b.disabled = true;
+        b.title = 'El 3D no está disponible en este dispositivo';
+      }
+    });
+  }
 }
 
 // ---- Movimiento del avión ENTRE POSICIONES REALES (solo presentación) ----
@@ -264,6 +282,11 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   // Estela real: puntos reales recibidos (setTrack + extendTrack), [lat, lon, alt (pies) | null], de UNA identidad
   // (trackId, la misma que el avión).
   let trackPts = [], trackId = null, trackOn = false;
+  // Modo 3D (js/map3d.js, cargado al activarlo): lo que se dibuja en 2D (drawn), la dirección aplicada al icono
+  // (headingNow), la antigüedad de la posición (obsMono, dim) y el avión (aircraft: identifyAircraft de js/aircraft3d.js).
+  let drawn = { pts: [], planeAtEnd: false }, headingNow = null, obsMono = null, dimNow = false, aircraft = null;
+  let ext3d = null, mode = '2d', modeBusy = null;
+  const hero = el.closest?.('.map-hero') ?? el.parentElement;
   const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
   const isPending = p => pending.some(q => q.lat === p[0] && q.lon === p[1]);
   // Lo que se dibuja: los puntos reales y, si el avión de la misma identidad está en el mapa, su posición mostrada como
@@ -279,18 +302,21 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       if (!same(pts.at(-1), [shown.lat, shown.lon])) pts.push([shown.lat, shown.lon, ahead ? ahead[2] : null]);
     }
     map.getSource('track')?.setData(pts.length >= 2 ? trackSegments(pts) : EMPTY);
+    drawn = { pts, planeAtEnd: Boolean(plane && shown && identity === trackId) };
+    ext3d?.update({ trail: true });
   };
   const stop = () => { if (frame !== null) clock.caf(frame); frame = null; anim = null; pending = []; };
-  const put = (p, { track = true } = {}) => { shown = p; plane.setLngLat([p.lon, p.lat]); if (track) drawTrack(); };
+  const put = (p, { track = true } = {}) => { shown = p; plane.setLngLat([p.lon, p.lat]); if (track) drawTrack(); else ext3d?.update(); };
   // Gira el icono a `heading` (rumbo, 0 = norte) por el camino corto; la primera vez, en [-180, 180).
   const turn = heading => {
     if (!Number.isFinite(heading)) return;
+    headingNow = ((heading % 360) + 360) % 360;
     const goal = heading - 90;
     angle = angle === null ? wrap(goal) : angle + wrap(goal - angle);
     if (rotEl) rotEl.style.transform = `rotate(${angle}deg)`;
   };
   // Atenuado (.plane-old): falta la lectura esperada y lo que se ve es solo la última posición conocida.
-  const age = dimmed => rotEl?.classList.toggle('plane-old', dimmed === true);
+  const age = dimmed => { dimNow = dimmed === true; rotEl?.classList.toggle('plane-old', dimNow); };
 
   // Un fotograma del recorrido: dónde está el avión a esta hora, sin pasar nunca del último punto real.
   const step = () => {
@@ -307,7 +333,9 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     const seg = anim.cum[i] - anim.cum[i - 1];
     const f = k >= 1 ? 1 : seg > 0 ? Math.min(1, (d - anim.cum[i - 1]) / seg) : 1;
     pending = k >= 1 ? [] : anim.pts.slice(f >= 1 ? i + 1 : i);
-    const pos = k >= 1 ? anim.pts.at(-1) : { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
+    // La altitud, entre las de los dos puntos reales (solo si los dos la tienen; si no, la del punto al que va).
+    const alt = Number.isFinite(a.alt) && Number.isFinite(b.alt) ? a.alt + (b.alt - a.alt) * f : b.alt ?? null;
+    const pos = k >= 1 ? anim.pts.at(-1) : { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f, alt };
     // La estela, como mucho ~5 veces por segundo (y siempre al terminar): crece detrás del avión.
     const track = k >= 1 || t - lastTrackDraw >= 200;
     if (track) lastTrackDraw = t;
@@ -331,6 +359,13 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     drawTrack();
   };
 
+  // Lo que lee el 3D en cada fotograma: el avión mostrado (con su altitud interpolada y la dirección del icono), la
+  // estela tal como se dibuja en 2D y el avión identificado.
+  const state3d = () => ({
+    plane: plane && shown ? { lat: shown.lat, lon: shown.lon, alt: shown.alt ?? null, heading: headingNow, obsMono, dim: dimNow } : null,
+    track: drawn.pts, planeAtEnd: drawn.planeAtEnd, aircraft,
+  });
+
   const self = {
     // Recibe planeOnMap(): { lat, lon, heading, fresh, dim? } (posición real de 180 s o menos) o null; identity: avión y
     // vuelo físico de esa lectura. Con null no hay marcador. La primera posición, la que llega tras perderla y la de otro
@@ -339,15 +374,18 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     // se atenúa (.plane-old). El rumbo real se aplica en cada lectura. Solo la primera posición encuadra la vista.
     setPlane(pos, { identity: id = null } = {}) {
       if (!pos) {
-        stop(); plane?.remove(); plane = rotEl = null; shown = target = identity = null; angle = null; drawTrack(); return;
+        stop(); plane?.remove(); plane = rotEl = null; shown = target = identity = null; angle = null; headingNow = obsMono = null; drawTrack(); return;
       }
-      const next = { lat: pos.lat, lon: pos.lon };
+      // alt: pies (altitud barométrica de esa lectura) o null; obsMono: instante (reloj monotónico) de la posición real.
+      const next = { lat: pos.lat, lon: pos.lon, alt: Number.isFinite(pos.alt) ? pos.alt : null };
+      obsMono = Number.isFinite(pos.obsMono) ? pos.obsMono : null;
       const fresh = pos.fresh !== false;
       const dim = typeof pos.dim === 'boolean' ? pos.dim : !fresh;
       const heading = Number.isFinite(pos.heading) ? pos.heading : null;
       if (plane && id === identity && target && next.lat === target.lat && next.lon === target.lon) { // misma lectura
         turn(heading);
         age(dim);
+        ext3d?.update();
         return;
       }
       if (!plane) {
@@ -375,7 +413,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       identity = id;
       target = next;
       // Otro avión u otro vuelo físico: su orientación empieza de cero (sin track, sin rotar; nunca la del anterior).
-      if (!sameAircraft) { angle = null; if (rotEl) rotEl.style.transform = ''; }
+      if (!sameAircraft) { angle = null; headingNow = null; if (rotEl) rotEl.style.transform = ''; }
       age(dim);
       if (!sameAircraft || !fresh || clock.reducedMotion()) { stop(); turn(heading); put(next); return; }
       turn(heading ?? bearing(pending.at(-1) ?? shown, next));
@@ -412,6 +450,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       map.resize();
       if (on === isExpanded) return;
       isExpanded = on;
+      if (mode === '3d') { if (on) map.cooperativeGestures?.disable?.(); else map.cooperativeGestures?.enable?.(); return; }
       if (on) {
         savedView = { center: map.getCenter(), zoom: map.getZoom() };
         map.cooperativeGestures?.disable?.();
@@ -423,7 +462,25 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       }
     },
     invalidate() { map.resize(); },
-    destroy() { stop(); map.remove(); },
+    // El avión que se ve (identifyAircraft): modelo y operadora, para el 3D.
+    setAircraft(info) { aircraft = info ?? null; ext3d?.update(); },
+    mode: () => mode,
+    // '2d' | '3d' → el modo en que queda. El 3D (motor y avión) se carga solo ahora; si falla (sin WebGL 2, sin red
+    // para el módulo…), se queda en 2D.
+    setMode(next) {
+      modeBusy = (modeBusy ?? Promise.resolve()).then(async () => {
+        if (next === mode) return mode;
+        if (next === '2d') { ext3d?.destroy(); ext3d = null; mode = '2d'; return mode; }
+        try {
+          const { enable3d } = await import('./map3d.js');
+          ext3d = await enable3d({ map, ml, hero, state: state3d });
+          mode = '3d';
+        } catch { ext3d = null; mode = '2d'; }
+        return mode;
+      });
+      return modeBusy;
+    },
+    destroy() { stop(); ext3d?.destroy({ restore: false }); ext3d = null; map.remove(); },
   };
   return self;
 }

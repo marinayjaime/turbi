@@ -1,0 +1,17 @@
+{
+ "id": "vueling",
+ "name": "Vueling",
+ "paint": {
+  "fuselage": "#ffffff",
+  "belly": {
+   "color": "#5b5b5f",
+   "from": 0.37
+  },
+  "tail": {
+   "color": "#ffcc00"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#ffcc00"
+ }
+}

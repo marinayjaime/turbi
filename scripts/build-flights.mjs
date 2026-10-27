@@ -11,7 +11,7 @@ import { buildAliases } from './aliases.mjs';
 
 const SITE = '_site';
 const PAGES_URL = process.env.PAGES_URL ?? 'https://marinayjaime.github.io/turbi/';
-const APP_FILES = ['index.html', 'manifest.json', 'sw.js', '.nojekyll', 'css', 'js', 'icons', 'img', 'data/airports.json', 'data/icao.json', 'data/airline-photos.json'];
+const APP_FILES = ['index.html', 'manifest.json', 'sw.js', '.nojekyll', 'css', 'js', 'icons', 'img', 'data/airports.json', 'data/icao.json', 'data/airline-photos.json', 'data/aircraft3d'];
 async function previousLegs() {
   try {
     return await fetchJson(`${PAGES_URL}data/flights/_legs.json`, 2);

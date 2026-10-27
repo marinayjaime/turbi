@@ -1,0 +1,13 @@
+{
+ "id": "eurowings",
+ "name": "Eurowings",
+ "paint": {
+  "fuselage": "#ffffff",
+  "tail": {
+   "color": "#a3195b"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#a3195b"
+ }
+}

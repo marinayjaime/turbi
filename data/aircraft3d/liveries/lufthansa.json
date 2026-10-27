@@ -1,0 +1,13 @@
+{
+ "id": "lufthansa",
+ "name": "Lufthansa",
+ "paint": {
+  "fuselage": "#ffffff",
+  "tail": {
+   "color": "#05164d"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#05164d"
+ }
+}

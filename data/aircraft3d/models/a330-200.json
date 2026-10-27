@@ -1,0 +1,40 @@
+{
+ "id": "a330-200",
+ "name": "Airbus A330-200",
+ "length": 58.82,
+ "span": 60.3,
+ "width": 5.64,
+ "fuselage": {
+  "nose": 0.08,
+  "tail": 0.25
+ },
+ "wing": {
+  "at": 0.36,
+  "rootChord": 10.5,
+  "tipChord": 2.6,
+  "sweep": 31,
+  "dihedral": 6,
+  "mount": "low"
+ },
+ "tailplane": {
+  "span": 19.4,
+  "rootChord": 6.5,
+  "tipChord": 2,
+  "sweep": 33,
+  "dihedral": 7,
+  "mount": "fuselage"
+ },
+ "fin": {
+  "height": 9.4,
+  "rootChord": 9.5,
+  "tipChord": 3.2,
+  "sweep": 38
+ },
+ "engines": {
+  "kind": "underwing",
+  "at": 0.33,
+  "length": 7,
+  "diameter": 3
+ },
+ "winglet": "canted"
+}

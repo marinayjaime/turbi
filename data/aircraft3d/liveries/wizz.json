@@ -1,0 +1,20 @@
+{
+ "id": "wizz",
+ "name": "Wizz Air",
+ "paint": {
+  "fuselage": "#ffffff",
+  "tail": {
+   "color": "#c6007e",
+   "bands": [
+    {
+     "from": 0.55,
+     "to": 1,
+     "color": "#2e2a6b"
+    }
+   ]
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#c6007e"
+ }
+}

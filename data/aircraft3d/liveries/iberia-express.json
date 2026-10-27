@@ -1,0 +1,20 @@
+{
+ "id": "iberia-express",
+ "name": "Iberia Express",
+ "paint": {
+  "fuselage": "#ffffff",
+  "tail": {
+   "color": "#d7192d",
+   "bands": [
+    {
+     "from": 0,
+     "to": 0.32,
+     "color": "#ffc72c"
+    }
+   ]
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#d7192d"
+ }
+}

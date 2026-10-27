@@ -1,0 +1,13 @@
+{
+ "id": "jet2",
+ "name": "Jet2.com",
+ "paint": {
+  "fuselage": "#ffffff",
+  "tail": {
+   "color": "#d2232a"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#d2232a"
+ }
+}

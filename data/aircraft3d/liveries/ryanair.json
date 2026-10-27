@@ -1,0 +1,17 @@
+{
+ "id": "ryanair",
+ "name": "Ryanair",
+ "paint": {
+  "fuselage": "#ffffff",
+  "belly": {
+   "color": "#073590",
+   "from": 0.33
+  },
+  "tail": {
+   "color": "#073590"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#073590"
+ }
+}

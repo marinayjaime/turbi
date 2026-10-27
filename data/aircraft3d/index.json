@@ -1,0 +1,221 @@
+{
+ "version": 1,
+ "basis": "Geometría propia simplificada con las medidas públicas de cada modelo; decoraciones simplificadas propias (colores generales de la flota, sin logotipos, rótulos ni decoraciones especiales). Ver docs/aircraft-3d.md.",
+ "types": {
+  "Airbus A319": "a319ceo",
+  "Airbus A320": "a320ceo",
+  "Airbus A321": "a321ceo",
+  "Airbus A320neo": "a320neo",
+  "Airbus A321neo": "a321neo",
+  "Boeing 737-300": "b737-300",
+  "Boeing 737-700": "b737-700",
+  "Boeing 737-800": "b737-800",
+  "Boeing 737-900": "b737-900",
+  "Boeing 737 MAX 8": "b737-max8",
+  "Bombardier CRJ900": "crj900",
+  "Bombardier CRJ1000": "crj1000",
+  "ATR 72": "atr72",
+  "ATR 72-500": "atr72",
+  "ATR 72-600": "atr72",
+  "Embraer 190": "e190",
+  "Embraer 195": "e195",
+  "Embraer E190-E2": "e190-e2",
+  "Embraer E195-E2": "e195-e2",
+  "Airbus A220-300": "a220-300",
+  "Airbus A330-200": "a330-200",
+  "Airbus A330-300": "a330-300",
+  "Airbus A330neo": "a330-900",
+  "Airbus A350-900": "a350-900",
+  "Airbus A350-1000": "a350-1000",
+  "Boeing 787-8": "b787-8",
+  "Boeing 787-9": "b787-9",
+  "Boeing 787-10": "b787-10",
+  "Boeing 777-300ER": "b777-300er"
+ },
+ "liveries": {
+  "ryanair": {
+   "name": "Ryanair",
+   "icao": [
+    "RYR"
+   ],
+   "iata": [
+    "FR"
+   ],
+   "models": [
+    "b737-800",
+    "b737-max8"
+   ]
+  },
+  "easyjet": {
+   "name": "easyJet",
+   "icao": [
+    "EZY",
+    "EJU",
+    "EZS"
+   ],
+   "iata": [
+    "U2",
+    "EC",
+    "DS"
+   ],
+   "models": [
+    "a319ceo",
+    "a320ceo",
+    "a320neo",
+    "a321neo"
+   ]
+  },
+  "vueling": {
+   "name": "Vueling",
+   "icao": [
+    "VLG"
+   ],
+   "iata": [
+    "VY"
+   ],
+   "models": [
+    "a319ceo",
+    "a320ceo",
+    "a321ceo",
+    "a320neo",
+    "a321neo"
+   ]
+  },
+  "iberia": {
+   "name": "Iberia",
+   "icao": [
+    "IBE"
+   ],
+   "iata": [
+    "IB"
+   ],
+   "models": [
+    "a319ceo",
+    "a320ceo",
+    "a321ceo",
+    "a320neo",
+    "a321neo",
+    "a330-200",
+    "a330-300",
+    "a350-900"
+   ]
+  },
+  "iberia-express": {
+   "name": "Iberia Express",
+   "icao": [
+    "IBS"
+   ],
+   "iata": [
+    "I2"
+   ],
+   "models": [
+    "a320ceo",
+    "a320neo",
+    "a321neo"
+   ]
+  },
+  "air-nostrum": {
+   "name": "Air Nostrum (Iberia Regional)",
+   "icao": [
+    "ANE"
+   ],
+   "iata": [
+    "YW"
+   ],
+   "models": [
+    "crj900",
+    "crj1000",
+    "atr72"
+   ]
+  },
+  "jet2": {
+   "name": "Jet2.com",
+   "icao": [
+    "EXS"
+   ],
+   "iata": [
+    "LS"
+   ],
+   "models": [
+    "b737-300",
+    "b737-800",
+    "a321neo"
+   ]
+  },
+  "eurowings": {
+   "name": "Eurowings",
+   "icao": [
+    "EWG"
+   ],
+   "iata": [
+    "EW"
+   ],
+   "models": [
+    "a319ceo",
+    "a320ceo",
+    "a321ceo",
+    "a320neo",
+    "a321neo"
+   ]
+  },
+  "wizz": {
+   "name": "Wizz Air",
+   "icao": [
+    "WZZ",
+    "WMT",
+    "WUK",
+    "WAZ"
+   ],
+   "iata": [
+    "W6",
+    "W4",
+    "W9",
+    "5W"
+   ],
+   "models": [
+    "a320ceo",
+    "a321ceo",
+    "a320neo",
+    "a321neo"
+   ]
+  },
+  "lufthansa": {
+   "name": "Lufthansa",
+   "icao": [
+    "DLH"
+   ],
+   "iata": [
+    "LH"
+   ],
+   "models": [
+    "a319ceo",
+    "a320ceo",
+    "a321ceo",
+    "a320neo",
+    "a321neo",
+    "a350-900"
+   ]
+  },
+  "tui": {
+   "name": "TUI",
+   "icao": [
+    "TOM",
+    "TUI",
+    "JAF",
+    "TFL"
+   ],
+   "iata": [
+    "BY",
+    "X3",
+    "TB",
+    "OR"
+   ],
+   "models": [
+    "b737-800",
+    "b737-max8",
+    "b787-8",
+    "b787-9"
+   ]
+  }
+ }
+}

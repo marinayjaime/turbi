@@ -6,7 +6,7 @@ const SHELL = [
   'js/app.js?v=2026-10-27.3', 'js/ui.js', 'js/icons.js', 'js/card-model.js', 'js/route.js', 'js/time.js', 'js/weather.js', 'js/turbulence.js',
   'js/flight.js', 'js/aliases.js', 'js/adb.js', 'js/airports.js', 'js/places.js', 'js/schedule.js', 'js/radar.js', 'js/radar-gate.js', 'js/radar-distance.js', 'js/live-tracker.js', 'js/physical-flight.js', 'js/status-refresh.js', 'js/eta.js', 'js/airtime.js', 'js/airline-photos.js', 'js/fr24-discovery.js',
   'js/altitude.js', 'js/turbi-index.js', 'js/models.js', 'js/confidence.js', 'js/summary.js', 'js/forecast.js',
-  'js/ui-forecast.js', 'js/ui-advanced.js', 'js/storage.js', 'js/turb-memory.js', 'js/calm-score.js', 'js/sigmet-relevance.js', 'js/aviation-weather.js', 'js/map.js', 'js/speech.js', 'js/config.js', 'js/build.js', 'js/punctuality.js', 'js/ui-punctuality.js', 'js/plain.js', 'data/icao.json',
+  'js/ui-forecast.js', 'js/ui-advanced.js', 'js/storage.js', 'js/turb-memory.js', 'js/calm-score.js', 'js/sigmet-relevance.js', 'js/aviation-weather.js', 'js/map.js', 'js/aircraft-id.js', 'js/speech.js', 'js/config.js', 'js/build.js', 'js/punctuality.js', 'js/ui-punctuality.js', 'js/plain.js', 'data/icao.json',
   'data/airports.json', 'img/turbi-logo.png', 'icons/icon-32.png', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

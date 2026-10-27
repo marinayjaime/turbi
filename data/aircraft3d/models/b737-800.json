@@ -1,0 +1,41 @@
+{
+ "fuselage": {
+  "nose": 0.1,
+  "tail": 0.27
+ },
+ "id": "b737-800",
+ "name": "Boeing 737-800",
+ "length": 39.47,
+ "span": 35.8,
+ "width": 3.76,
+ "wing": {
+  "at": 0.38,
+  "rootChord": 6,
+  "tipChord": 1.25,
+  "sweep": 27,
+  "dihedral": 6,
+  "mount": "low"
+ },
+ "tailplane": {
+  "span": 14.35,
+  "rootChord": 3.6,
+  "tipChord": 1.1,
+  "sweep": 32,
+  "dihedral": 7,
+  "mount": "fuselage"
+ },
+ "fin": {
+  "height": 6.6,
+  "rootChord": 6,
+  "tipChord": 1.6,
+  "sweep": 37
+ },
+ "engines": {
+  "kind": "underwing",
+  "at": 0.3,
+  "length": 4,
+  "diameter": 1.8,
+  "tucked": true
+ },
+ "winglet": "blended"
+}

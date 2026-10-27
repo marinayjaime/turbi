@@ -1,0 +1,40 @@
+{
+ "id": "a350-900",
+ "name": "Airbus A350-900",
+ "length": 66.8,
+ "span": 64.75,
+ "width": 5.96,
+ "fuselage": {
+  "nose": 0.08,
+  "tail": 0.25
+ },
+ "wing": {
+  "at": 0.36,
+  "rootChord": 11,
+  "tipChord": 2.4,
+  "sweep": 32,
+  "dihedral": 6,
+  "mount": "low"
+ },
+ "tailplane": {
+  "span": 18.6,
+  "rootChord": 6.5,
+  "tipChord": 2,
+  "sweep": 33,
+  "dihedral": 7,
+  "mount": "fuselage"
+ },
+ "fin": {
+  "height": 9.2,
+  "rootChord": 9.5,
+  "tipChord": 3.2,
+  "sweep": 38
+ },
+ "engines": {
+  "kind": "underwing",
+  "at": 0.33,
+  "length": 7.6,
+  "diameter": 3.5
+ },
+ "winglet": "sharklet"
+}

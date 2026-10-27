@@ -1,0 +1,17 @@
+{
+ "id": "tui",
+ "name": "TUI",
+ "paint": {
+  "fuselage": "#ffffff",
+  "belly": {
+   "color": "#70cbf4",
+   "from": 0.36
+  },
+  "tail": {
+   "color": "#70cbf4"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#70cbf4"
+ }
+}

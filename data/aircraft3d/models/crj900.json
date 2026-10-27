@@ -1,0 +1,40 @@
+{
+ "fuselage": {
+  "nose": 0.09,
+  "tail": 0.3
+ },
+ "id": "crj900",
+ "name": "Bombardier CRJ900",
+ "length": 36.2,
+ "span": 24.85,
+ "width": 2.69,
+ "wing": {
+  "at": 0.43,
+  "rootChord": 4.4,
+  "tipChord": 1,
+  "sweep": 27,
+  "dihedral": 3,
+  "mount": "low"
+ },
+ "tailplane": {
+  "span": 8.5,
+  "rootChord": 2.4,
+  "tipChord": 1.1,
+  "sweep": 32,
+  "dihedral": -3,
+  "mount": "fin"
+ },
+ "fin": {
+  "height": 4.4,
+  "rootChord": 4.6,
+  "tipChord": 2.4,
+  "sweep": 42
+ },
+ "engines": {
+  "kind": "rear",
+  "at": 0.72,
+  "length": 3.6,
+  "diameter": 1.35
+ },
+ "winglet": "canted"
+}

@@ -1,0 +1,13 @@
+{
+ "id": "easyjet",
+ "name": "easyJet",
+ "paint": {
+  "fuselage": "#ffffff",
+  "tail": {
+   "color": "#ff6600"
+  },
+  "wings": "#c3c8cf",
+  "engines": "#d9dde2",
+  "winglets": "#ff6600"
+ }
+}

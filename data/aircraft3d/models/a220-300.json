@@ -1,0 +1,40 @@
+{
+ "fuselage": {
+  "nose": 0.1,
+  "tail": 0.27
+ },
+ "id": "a220-300",
+ "name": "Airbus A220-300",
+ "length": 38.7,
+ "span": 35.1,
+ "width": 3.7,
+ "wing": {
+  "at": 0.39,
+  "rootChord": 6,
+  "tipChord": 1.3,
+  "sweep": 25,
+  "dihedral": 5,
+  "mount": "low"
+ },
+ "tailplane": {
+  "span": 11.5,
+  "rootChord": 3.2,
+  "tipChord": 1.2,
+  "sweep": 30,
+  "dihedral": 5,
+  "mount": "fuselage"
+ },
+ "fin": {
+  "height": 6,
+  "rootChord": 5.2,
+  "tipChord": 1.8,
+  "sweep": 38
+ },
+ "engines": {
+  "kind": "underwing",
+  "at": 0.32,
+  "length": 4.4,
+  "diameter": 2.1
+ },
+ "winglet": "canted"
+}
