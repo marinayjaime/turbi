@@ -295,6 +295,19 @@ export function rememberSighting(key, radar, nowMs = Date.now(), storage = globa
   } catch { /* sin almacenamiento: queda en memoria */ }
 }
 
+// ¿Se vio en el aire (o aterrizar) algún vuelo físico cuya clave empieza por `prefix`? Lo que ya guardan rememberSighting
+// y rememberLanding (memoria y almacenamiento del navegador). Para el mapa del vuelo (mapPhase): Aena retira la salida unas
+// 2 h después de despegar y la clave del vuelo físico pasa de la hora de salida a la de llegada (physicalFlightKey).
+export function seenBefore(prefix, storage = globalThis.localStorage) {
+  const any = keys => [...keys].some(k => k.startsWith(prefix));
+  if (any(seen.keys()) || any(landings.keys())) return true;
+  try {
+    return any(Object.keys(JSON.parse(storage?.getItem(SEEN_STORE) ?? '{}'))) || any(Object.keys(JSON.parse(storage?.getItem(LANDED_STORE) ?? '{}')));
+  } catch {
+    return false;
+  }
+}
+
 export function recallSighting(key, storage = globalThis.localStorage) {
   if (seen.has(key)) return seen.get(key);
   try {

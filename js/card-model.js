@@ -26,15 +26,17 @@ const PENDING = '--:--';
 //   En el aire: el radar lo ve (volando, visto hace poco o ya aterrizado), Aena lo da en el aire (FLY/FNL), hay hora
 //   real de salida, AeroDataBox lo da salido o en ruta, o lo encontró Flightradar24 volando.
 //   Aterrizado: aterrizaje confirmado (radar o Flightradar24), hora real de llegada o AeroDataBox «Arrived».
+//   Y, una vez visto en el aire, sigue (card.seenFlying: el radar ya lo vio volar o aterrizar, js/app.js): si Aena
+//   después retira la salida y el tramo vuelve a parecer «programado», el mapa no desaparece. Cancelado, nunca.
 export function mapPhase(card) {
   const phase = flightPhase(card);
+  if (phase === 'cancelado') return null;
   if (phase === 'finalizado') {
-    return card.status?.landing || card.arrFinal || (card.source === 'aerodatabox' && card.phase === 'terminado') ? 'finalizado' : null;
+    return card.status?.landing || card.arrFinal || card.seenFlying || (card.source === 'aerodatabox' && card.phase === 'terminado') ? 'finalizado' : null;
   }
-  if (phase !== 'en-curso') return null;
   const airborne = ['volando', 'reciente', 'aterrizado'].includes(card.radar?.state) || card.status?.flying || card.depFinal
     || (['aerodatabox', 'fr24'].includes(card.source) && card.phase === 'en-curso');
-  return airborne ? 'en-curso' : null;
+  return (phase === 'en-curso' && airborne) || card.seenFlying ? 'en-curso' : null;
 }
 
 // 'programado' | 'en-curso' | 'finalizado' | 'cancelado'. Solo agrupa lo que ya dicen la fase del tramo (legPhase o

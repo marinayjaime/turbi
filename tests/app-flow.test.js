@@ -3570,6 +3570,55 @@ describe('mapa del vuelo según la fase', () => {
     expect(planeOnScreen(log)).toBe(false);
   });
 
+  // Caso real (VY3030, 27/10/2026): unas 2 h después de despegar, Aena retira la salida y deja solo el tramo de llegada
+  // («programado», sin hora de salida): la clave del vuelo físico cambia (de la salida a la llegada) y la ficha ya no trae
+  // evidencia propia. Que el radar ya lo vio volar (lo guardado por rememberSighting) basta para conservar el mapa.
+  const degraded = d => {
+    const arr = Date.now() + 90 * 60000, sa = formatLocal(arr, MAD);
+    return { d, o: 'BCN', a: 'TFN', sa, ea: `${dayOf(arr)}T${sa}`, ta: 'T1', st: 'SCH', sta: 'SCH', ac: 'A320' };
+  };
+  async function openSwitching({ d, legs, radar }) {
+    const { L, log } = fakeMapLibre();
+    vi.stubGlobal('maplibregl', L);
+    const data = { VY3030: { name: 'Vueling', updated: new Date().toISOString(), legs: legs[0] } };
+    const base = network({ flights: data, openMeteo: () => tooMany });
+    let k = 0;
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); const r = radar(k++); return Promise.resolve(r ? json(r) : notFound); }
+      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(notFound); }
+      if (u.startsWith(`${LIVE_BASE}/flights/VY/3030.json`)) { calls.push(u); return Promise.resolve(json(data.VY3030)); }
+      return base(url, o);
+    }));
+    await search('VY3030', d);
+    await until(() => $('#result .flight'), 'ficha');
+    return { log, data };
+  }
+
+  it('visto en el aire y después Aena retira la salida (tramo degradado): el mapa NO desaparece', async () => {
+    const dep = Date.now() - 125 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    const full = { d, o: 'BCN', a: 'TFN', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A320' }; // salió (Aena BOR)
+    const { log, data } = await openSwitching({ d, legs: [[full]], radar: k => (k === 0 ? { ...FLYING, callsign: 'VLG3030' } : null) });
+    await until(() => $('#map-card .map') && planeOnScreen(log), 'en vuelo con el mapa');
+    expect($('#map-card .card-title').textContent).toBe('Radar');
+    data.VY3030 = { name: 'Vueling', updated: new Date().toISOString(), legs: [degraded(d)] }; // Aena: solo la llegada
+    $('#refresh').click();
+    await until(() => calls.filter(u => u.includes('/flights/VY/3030')).length >= 2, 'nueva consulta de Aena');
+    await networkIdle();
+    expect($('#result .flight .route-codes')).not.toBeNull();
+    expect($('#map-slot > #map-card .map')).not.toBeNull(); // el mapa sigue en la ficha…
+    expect($('#map-card .card-title').textContent).toBe('Radar'); // …como mapa del vuelo en el aire
+  });
+
+  it('control: el mismo tramo degradado sin haberlo visto nunca volar (solo ha pasado la hora) → sin mapa', async () => {
+    const d = dayOf(Date.now() - 125 * 60000);
+    const { log } = await openSwitching({ d, legs: [[degraded(d)]], radar: () => null });
+    await networkIdle();
+    expect($('#map-slot')).toBeNull();
+    expect(log.maps).toBe(0);
+  });
+
   it('sin MapLibre (sin WebGL o sin conexión): la ficha en vuelo sigue completa y el hueco del mapa queda vacío', async () => {
     const { d, leg } = legAt(60);
     await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, radar: FLYING, openMeteo: () => tooMany }));

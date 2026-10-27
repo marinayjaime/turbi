@@ -24,7 +24,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapHeroHtml } from './map.js';
-import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
+import { flightPhase, mapPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
 import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
@@ -33,7 +33,7 @@ import { punctualityHtml } from './ui-punctuality.js';
 import { aircraftName } from './plain.js';
 import { loadAirlinePhotos, photoFor, operatorName, adbModel } from './airline-photos.js';
 import { wantsRadar, fetchRadar, fetchAdbRadar, withRadar, presentStatus, arrivalNote, radarNote, ENDED_ESTIMATED, NO_ARRIVAL_NOTE, landedNote, recallLandingSource,
-  rememberSighting, recallSighting, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack, fetchAdbHistory,
+  rememberSighting, recallSighting, seenBefore, withLanding, rememberLanding, recallLanding, pollRadar, endedNote, fetchTrack, fetchAdbTrack, fetchAdbHistory,
   fetchFr24Discovery, fetchFr24Radar } from './radar.js';
 import { discoveryKnown } from './fr24-discovery.js';
 import { turbiEstimate, etaSide, departureUtcMs, departureEstimate, recallEta, rememberEta } from './eta.js';
@@ -533,6 +533,10 @@ function adbArrivalNote(q, profile) {
   return profile.arrivalMs < Date.now() ? 'La hora prevista de llegada ya ha pasado: no se muestra la previsión de turbulencias.' : null;
 }
 
+// El vuelo físico ya se vio en el aire (o aterrizar) antes, para el mapa (mapPhase): en Aena, por número, fecha y ruta,
+// porque su clave cambia cuando Aena retira la salida (de la hora de salida a la de llegada, physicalFlightKey); en
+// AeroDataBox, su clave, que no cambia.
+const flownPrefix = q => (q.kind === 'schedule' ? `${q.schedule.al}${q.schedule.n}|${q.leg.d}|${q.leg.o}|${q.leg.a}|` : radarKey(q));
 // Clave del vuelo para avistamientos y aterrizajes guardados: el vuelo físico de Aena o el de AeroDataBox (nunca se mezclan).
 const radarKey = q => (q.kind === 'adb' ? q.adbKey : q.kind === 'fr24' ? q.fr24Key : etaKey(q));
 // La ficha se ve (y es la de este documento: un módulo antiguo de la app nunca pinta ni pide nada).
@@ -847,7 +851,7 @@ async function buildFlight(q) {
   // Para js/card-model.js (cuentas «Sale en / Llega en / Duración»): la salida y la llegada visibles en UTC, sin calcular
   // nada nuevo. En AeroDataBox, la llegada visible es su mejor hora (adbTimes), la misma que muestra la ficha.
   const arrMs = q.kind === 'adb' ? adbTimes(q.adbLeg).arr?.utc ?? null : visibleArrivalMs;
-  if (flight) Object.assign(flight, { depMs: departureMs, arrMs, km: profile.km });
+  if (flight) Object.assign(flight, { depMs: departureMs, arrMs, km: profile.km, seenFlying: seenBefore(flownPrefix(q)) });
   return { oTz, dTz, departureMs, durationMin, profile, forecastProfile, air, etaCtx, eta, officialMs, landedAt, flight };
 }
 
@@ -1116,7 +1120,7 @@ function adoptMap(slot) {
   heroNode = node;
   routeMap = map;
   const title = node.querySelector('.card-title');
-  if (title) title.textContent = mapTitle(flightPhase(shownCard));
+  if (title) title.textContent = mapTitle(mapPhase(shownCard) ?? flightPhase(shownCard));
   map.invalidate();
   // Como recién creado: la ruta sin colorear, sin SIGMET ni PIREP; el pronóstico nuevo la colorea (forecastExtras).
   map.clearForecast();
@@ -1314,7 +1318,7 @@ function syncMap(q, stale) {
 }
 function mountMap(q, stale, slot) {
   destroyMap();
-  slot.innerHTML = mapHeroHtml(flightPhase(shownCard ?? {}));
+  slot.innerHTML = mapHeroHtml(mapPhase(shownCard ?? {}) ?? flightPhase(shownCard ?? {}));
   heroNode = slot.firstElementChild;
   const card = heroNode, el = heroNode.querySelector('#map');
   const token = mapToken;
@@ -1478,7 +1482,7 @@ function repaintFlight(card, stale) {
   paintHistory(currentView, open);
   syncMap(lastQuery, stale);
   const title = $in('map-card')?.querySelector('.card-title');
-  if (title) title.textContent = mapTitle(flightPhase(card));
+  if (title) title.textContent = mapTitle(mapPhase(card) ?? flightPhase(card));
   showPlane(routeMap, card);
   paintNow();
   if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;

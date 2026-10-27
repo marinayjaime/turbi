@@ -442,6 +442,12 @@ describe('mapPhase', () => {
     expect(mapPhase(card({ phase: 'terminado', source: 'aerodatabox', status: { text: 'Aterrizado' } }))).toBe('finalizado');
     expect(mapPhase(card({ phase: 'terminado', status: { text: 'Ha llegado' } }))).toBeNull();
   });
+  it('ya visto en el aire (seenFlying) aunque el tramo vuelva a parecer programado → mapa; sin verlo, solo por la hora, no', () => {
+    expect(mapPhase(card({ phase: 'pendiente', status: { text: 'Programado' }, seenFlying: true }))).toBe('en-curso');
+    expect(mapPhase(card({ phase: 'terminado', status: { text: 'Ha llegado' }, seenFlying: true }))).toBe('finalizado');
+    expect(mapPhase(card({ phase: 'pendiente', status: { text: 'Programado' } }))).toBeNull();
+    expect(mapPhase(card({ phase: 'cancelado', seenFlying: true }))).toBeNull();
+  });
   it('cancelado o desviado → sin mapa', () => {
     expect(mapPhase(card({ phase: 'cancelado', radar: { state: 'volando' } }))).toBeNull();
     expect(mapPhase(card({ status: { text: 'Desviado' }, radar: { state: 'volando' } }))).toBeNull();
