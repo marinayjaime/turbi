@@ -166,9 +166,10 @@ describe('renderForecast', () => {
     const el = { innerHTML: '' };
     renderForecast(el, { ...view, title: '<b>x</b>' }, NOW);
     for (const id of ['trend', 'speak', 'timeline', 'seg-detail', 'altitudes', 'fresh']) expect(el.innerHTML).toContain(`id="${id}"`);
-    // Tarea 8: el mismo orden de bloques que la ficha. #fresh y #aviation, en Detalles avanzados; #map, en su tarjeta.
-    const ids = [...el.innerHTML.matchAll(/id="(forecast-area|map-card|adv-sources|aviation)"/g)].map(m => m[1]);
-    expect(ids).toEqual(['forecast-area', 'map-card', 'aviation', 'adv-sources']);
+    // Tarea 8: el mismo orden de bloques que la ficha. #fresh y #aviation, en Detalles avanzados. Sin mapa: una consulta
+    // manual es un vuelo aún por hacer (el mapa es solo del vuelo en el aire o aterrizado).
+    const ids = [...el.innerHTML.matchAll(/id="(forecast-area|map-card|map-slot|adv-sources|aviation)"/g)].map(m => m[1]);
+    expect(ids).toEqual(['forecast-area', 'aviation', 'adv-sources']);
     expect(el.innerHTML.match(/id="fresh"/g)).toHaveLength(1); // un único #fresh (antes también en la sección)
     expect(el.innerHTML).toContain('Estimación orientativa para pasajeros');
     expect(el.innerHTML).not.toContain('<b>x</b>');
@@ -192,7 +193,7 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
   const punctuality = { current: { state: 'sin-datos', text: 'x', band: null, dep: null, arr: null, basis: null }, history: undefined, flight: 'IB1668', airline: 'Iberia', route: ['PMI', 'MAD'], dow: 4, slot: 2, since: '2026-09-24' };
   it('armazón: ficha (con el panel ADS-B), puntualidad y la sección de turbulencias «calculando»', () => {
     const html = flightShellHtml({ flight, punctuality });
-    expect(html).toContain('class="flight"');
+    expect(dom(html).querySelector('section.flight')).not.toBeNull();
     expect(html).toContain('class="card now telemetry"'); // el radar no depende de la meteorología
     expect(html).toContain('id="punctuality"');
     const area = dom(html).querySelector('#forecast-area');
@@ -221,14 +222,24 @@ describe('la ficha primero; el pronóstico en su propia sección', () => {
     for (const id of ['trend', 'timeline', 'altitudes']) expect(html).toContain(`id="${id}"`);
     expect(html).not.toContain('id="fresh"'); // Tarea 8: #fresh vive en Detalles avanzados (si no, id duplicado)
   });
-  it('armazón y ficha con nota: .flight, #forecast-area, el mapa, Detalles avanzados y el aviso legal, en ese orden', () => {
+  it('armazón y ficha con nota: .flight (con el hueco del mapa en el aire), #forecast-area, Detalles avanzados y el aviso legal, en ese orden', () => {
     for (const html of [flightShellHtml({ flight, punctuality }), flightNoteHtml({ flight, punctuality, note: 'x' })]) {
       const root = dom(html).body;
       const blocks = [...root.children].map(c => (c.matches('.summary') ? 'flight' : c.matches('.disclaimer') ? 'disclaimer' : c.id || c.dataset.card));
-      expect(blocks).toEqual(['flight', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
+      expect(blocks).toEqual(['flight', 'forecast-area', 'advanced', 'disclaimer']);
       expect(root.querySelectorAll('.disclaimer')).toHaveLength(1); // también con la nota en lugar del pronóstico (§5.7)
-      expect(root.querySelector('#map-card .card-title').textContent).toBe('Radar'); // en curso (radar volando)
+      // En el aire (radar volando): el mapa va dentro de la ficha, tras el número y la ruta y antes de «Ahora».
+      const order = ['.live-top', '#map-slot', '.live-data .now'].map(sel => [...root.querySelectorAll('*')].indexOf(root.querySelector(`.flight ${sel}`)));
+      expect(order.every(i => i >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
+      expect(root.querySelector('.map-card')).toBeNull();
     }
+  });
+  it('antes de volar: la ficha de siempre, sin hueco del mapa', () => {
+    const scheduled = { ...flight, status: { text: 'Programado', tone: 'info' }, radar: null, phase: 'pendiente' };
+    const root = dom(flightShellHtml({ flight: scheduled, punctuality })).body;
+    expect(root.querySelector('#map-slot')).toBeNull();
+    expect(root.querySelector('.flight-live')).toBeNull();
   });
 });
 

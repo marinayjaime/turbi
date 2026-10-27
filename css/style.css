@@ -581,42 +581,62 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 #aviation ul { font-size: 14px; }
 details.raw summary { font-size: 12px; color: var(--accent); cursor: pointer; }
 details.raw code { display: block; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--field); padding: 8px; border-radius: 8px; margin-top: 4px; }
-.tiles-soft { filter: saturate(.55) brightness(1.06) contrast(.92); }
-.plane-marker { color: var(--accent); background: none; border: 0; filter: drop-shadow(0 1px 2px rgba(15, 40, 80, .35)); }
+/* ---- Mapa del vuelo (js/map.js, MapLibre): solo en el aire o aterrizado ----
+   Avión: el icono apunta al este y el mapa lo gira hacia su rumbo real (solo presentación), con un contorno blanco que
+   lo separa del mapa y de la estela. */
+.plane-marker { color: var(--accent); line-height: 0; pointer-events: none;
+  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff) drop-shadow(0 1px 3px rgba(15, 40, 80, .35)); }
 .plane-marker .icon { display: block; }
-/* El icono apunta al este; el mapa lo gira hacia la última posición real recibida (solo presentación). */
 .plane-marker .plane-rot { display: block; transition: transform var(--ease); }
 /* Última posición conocida (60–180 s, js/map.js): quieta y atenuada, para no presentarla como una medición nueva. */
 .plane-marker .plane-rot.plane-old { opacity: .5; }
 @media (prefers-reduced-motion: reduce) { .plane-marker .plane-rot { transition: none; } }
+/* Aeropuertos: punto y código, legibles sin depender de las fuentes del estilo. */
+.map-airport { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+.map-airport-dot { width: 10px; height: 10px; border-radius: 50%; background: #fff; border: 2.5px solid var(--text); box-sizing: border-box; }
+.map-airport-code { position: absolute; top: 12px; padding: 1px 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.92);
+  font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--text); box-shadow: 0 1px 2px rgba(15, 40, 80, .15); }
 .map-btn { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--field); color: var(--text); cursor: pointer; }
 .map-btn .icon { color: inherit; }
 .map-close { display: none; }
-/* Tarjeta del mapa como en la referencia: título solo y el botón de ampliar en la esquina del propio mapa (blanco,
-   cuadrado redondeado). El mapa aísla los z-index de Leaflet para que el botón quede siempre encima. */
-/* La posición del botón sale de las mismas medidas que colocan el mapa (relleno superior de la tarjeta, alto de la
-   cabecera y separación hasta el mapa): queda a 8 px de la esquina del mapa aunque cambie alguna. */
-.map-card { position: relative; --map-pt: 18px; --map-head: 36px; --map-gap: 12px; padding-top: var(--map-pt); }
-.map-card h3.card-head { height: var(--map-head); margin-bottom: 0; }
-.map-card .map { margin-top: var(--map-gap); }
-.map-card [data-map="expand"] { position: absolute; z-index: 2; top: calc(var(--map-pt) + var(--map-head) + var(--map-gap) + 8px);
-  right: calc(var(--pad) + 8px); width: 32px; height: 32px;
-  border-radius: 10px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
-.map-card [data-map="expand"] .icon { width: 16px; height: 16px; }
-/* Ampliado: pantalla completa respetando las zonas seguras; el mapa ocupa el resto bajo la cabecera. */
-.map-card.expanded {
-  position: fixed; inset: 0; z-index: 1000; margin: 0; border-radius: 0; display: flex; flex-direction: column;
-  padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 12px) calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + 12px);
-}
-.map-card.expanded .map { flex: 1; height: auto; margin-top: 12px; border-radius: 14px; }
-.map-card.expanded [data-map="expand"] { display: none; }
-.map-card.expanded .map-close { display: grid; }
-/* Bajo el mapa, en el aire (mapFactsHtml): Indicativo, Avión e Identificación; vacío, no ocupa sitio. */
-#map-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; margin-top: 12px; }
-#map-facts:empty { display: none; }
-#map-facts .kv .v { font-size: 14px; overflow-wrap: anywhere; }
-.map-card.expanded #map-facts { flex: none; }
-.map { height: 180px; border-radius: 14px; margin-top: 12px; overflow: hidden; isolation: isolate; }
+/* Hueco del mapa en la ficha (#map-slot): vacío (MapLibre no carga, sin red), no ocupa sitio. */
+.map-slot:empty { display: none; }
+/* El mapa protagonista: sin tarjeta, a todo el ancho del móvil (sale de la columna de 16 px de margen) y, en
+   pantallas anchas, hasta 760 px centrado y con las esquinas redondeadas. Alto útil en el móvil, contenido en
+   escritorio. La etiqueta (Radar / Ruta realizada) y el botón de ampliar flotan en las esquinas de arriba. */
+.map-hero { position: relative; margin: 14px calc(50% - min(50vw, 380px)) 0; }
+.map-hero .map { height: clamp(300px, 56vh, 460px); overflow: hidden; isolation: isolate; background: #eef2f6; }
+.map-label { position: absolute; z-index: 2; top: 10px; left: max(10px, env(safe-area-inset-left)); padding: 4px 10px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); font-size: 13px; font-weight: 600; color: var(--text); }
+.map-hero [data-map] { position: absolute; z-index: 2; top: 8px; right: max(8px, env(safe-area-inset-right)); width: 40px; height: 40px;
+  border-radius: 12px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
+.map-hero [data-map] .icon { width: 18px; height: 18px; }
+@media (min-width: 600px) { .map-hero .map { height: 420px; border-radius: 18px; } }
+/* Ampliado: pantalla completa respetando las zonas seguras (los botones quedan dentro). */
+.map-hero.expanded { position: fixed; inset: 0; z-index: 1000; margin: 0; background: var(--bg); }
+.map-hero.expanded .map { height: 100%; border-radius: 0; }
+.map-hero.expanded .map-label { top: calc(env(safe-area-inset-top) + 10px); }
+.map-hero.expanded [data-map] { top: calc(env(safe-area-inset-top) + 8px); }
+.map-hero.expanded [data-map="expand"] { display: none; }
+.map-hero.expanded .map-close { display: grid; }
+.map-attrib { position: absolute; z-index: 2; right: max(6px, env(safe-area-inset-right)); bottom: 4px; margin: 0; padding: 1px 6px;
+  border-radius: 6px; background: rgba(255, 255, 255, 0.8); font-size: 10px; line-height: 1.5; color: var(--muted); }
+.map-attrib a { color: inherit; text-decoration: none; }
+.map-hero.expanded .map-attrib { bottom: calc(env(safe-area-inset-bottom) + 4px); }
+/* Ficha en el aire o aterrizada (.flight-live): el vuelo y su mapa son lo principal, sin tarjeta; debajo, la hora
+   principal y «Ahora» en un solo bloque; después, las tarjetas de siempre. */
+.flight-live .live-top .hero-head { padding: 4px 0 0; }
+.flight-live .live-top .route-codes { padding: 12px 0 0; }
+.flight-live .live-top .route-codes strong { font-size: 24px; }
+.flight-live .live-top .stale { margin-inline: 0; }
+.live-data { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  margin: 14px 0 16px; padding: 0 0 16px; }
+.live-data:not(:has(> *)) { display: none; }
+.live-data > .card { margin: 0; border: 0; box-shadow: none; background: none; padding-bottom: 0; }
+.live-data > .main-time + .card { padding-top: 14px; }
+.live-more:not(:has(> *)) { display: none; }
+.live-more { padding-top: 0; }
+.live-more:not(:has(.plane-photo)) { padding-top: 2px; }
 .fresh { font-size: 12px; color: var(--muted); margin: 18px 0 0; line-height: 1.5; }
 /* ---- Detalles avanzados (js/ui-advanced.js): tarjeta cerrada con categorías desplegables ---- */
 /* Abierta, una lista compacta como en la referencia: cada categoría es una fila (icono, título y chevron que gira al

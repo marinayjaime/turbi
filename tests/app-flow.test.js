@@ -8,6 +8,8 @@ import { formatLocal } from '../js/time.js';
 import { FORECAST_UNAVAILABLE } from '../js/ui-forecast.js';
 import { normalizeFlights } from '../server/aerodatabox.mjs';
 import { physicalFlightKey } from '../js/physical-flight.js';
+import { fakeMapLibre } from './fixtures/fake-maplibre.js';
+import { PLANE_GLIDE_MS } from '../js/map.js';
 
 const MAD = 'Europe/Madrid';
 const dayOf = ms => new Intl.DateTimeFormat('en-CA', { timeZone: MAD }).format(ms);
@@ -105,7 +107,9 @@ function memoryStorage() {
   return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k),
     clear: () => m.clear(), key: i => [...m.keys()][i] ?? null, get length() { return m.size; } };
 }
-beforeEach(() => { vi.stubGlobal('localStorage', memoryStorage()); });
+// Sin MapLibre de verdad en jsdom (no hay WebGL): por defecto, uno que no puede crear el mapa (la ficha sigue sin él);
+// las pruebas del mapa ponen el simulado (fakeMapLibre).
+beforeEach(() => { vi.stubGlobal('localStorage', memoryStorage()); vi.stubGlobal('maplibregl', fakeMapLibre({ fail: true }).L); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Open-Meteo falla (429) y el radar ADS-B responde', () => {
@@ -209,7 +213,6 @@ function turbGone() {
   expect(shell()).toEqual(TURB_GONE);
   expect($('#forecast-area').hidden).toBe(true);
   expect($('#forecast-area').innerHTML).toBe(''); // y sin «Ahora» (#turb-now vive en la tarjeta)
-  expect($('#map-card')).not.toBeNull();
   expect($('details[data-card="advanced"]')).not.toBeNull();
 }
 // «Turbulencias estimadas» del Resumen del vuelo (null si no está).
@@ -1663,7 +1666,8 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
     expect($('#result .status').textContent).toContain('Aterrizado');
     expect(closed).toContain('Confirmado por Flightradar24');
     expect(closed).toContain('aterrizaje según Flightradar24'); // la procedencia, no AeroDataBox
-    expect(closed).toContain(`${new Date(landed + 3 * 3600000).toISOString().slice(11, 16)} Llegada final`);
+    // «+1 día» si el vuelo cruza la medianoche de Zanzíbar (depende de la hora a la que se pase la prueba).
+    expect(closed).toMatch(new RegExp(`${new Date(landed + 3 * 3600000).toISOString().slice(11, 16)}(\\+1 día)? Llegada final`));
     expect(closed).toContain('Tiempo en el aire8 h 48 min');
     expect(closed).toContain('Resumen del vuelo');
     expect(closed).toContain('Airbus A330neo'); // el modelo que dio FR24 (A339)
@@ -1732,31 +1736,7 @@ describe('pronóstico con el tiempo en el aire, no con el de bloque', () => {
 
 // Integración del rediseño (Tarea 8): repintado con estado, mapa con el avión, señal en vivo y previsión tras aterrizar.
 // Leaflet se simula con un `L` falso: se cuentan los mapas creados y destruidos y los marcadores del avión.
-function fakeLeaflet() {
-  // view: llamadas que mueven la vista (fitBounds, setView, setZoom); path: todas las posiciones de cada marcador.
-  const log = { maps: 0, mapsRemoved: 0, markers: [], view: [] };
-  const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
-  const L = {
-    map: () => {
-      log.maps++;
-      return { fitBounds() { log.view.push('fitBounds'); }, setView() { log.view.push('setView'); }, setZoom() { log.view.push('setZoom'); },
-        invalidateSize() {}, remove() { log.mapsRemoved++; } };
-    },
-    tileLayer: layer, polyline: layer, polygon: layer, circleMarker: layer,
-    latLngBounds: () => ({ pad() { return this; } }),
-    divIcon: o => o,
-    marker: ll => {
-      // rot: el .plane-rot del icono (rotación y atenuado de «última posición conocida»).
-      const cls = new Set();
-      const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
-      const m = { ...layer(), ll, path: [ll], removed: false, rot, cls, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; },
-        getElement() { return { querySelector: () => rot }; } };
-      log.markers.push(m);
-      return m;
-    },
-  };
-  return { L, log };
-}
+const fakeLeaflet = () => fakeMapLibre();
 const planeOnScreen = log => log.markers.some(m => !m.removed);
 // El avión está y es la «última posición conocida» (60–180 s): quieto y atenuado (.plane-old).
 const planeDimmed = log => log.markers.some(m => !m.removed && m.cls.has('plane-old'));
@@ -1771,14 +1751,17 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
 
   it('el orden de bloques es fijo: selector, .flight, Turbulencias, mapa y Detalles avanzados', async () => {
     const { L } = fakeLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = flyingLeg();
     await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
     await search('IB715', d);
     await until(() => $('.telemetry') && area().includes(FORECAST_UNAVAILABLE), 'ficha completa');
     const blocks = [...$('#result').children].map(c => (c.matches('.summary') ? '.flight' : c.matches('.disclaimer') ? 'disclaimer' : c.id || c.dataset.card));
-    expect(blocks).toEqual(['.flight', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
-    expect($('#map-card .card-title').textContent).toBe('Radar'); // en curso
+    expect(blocks).toEqual(['.flight', 'forecast-area', 'advanced', 'disclaimer']);
+    // En curso: el mapa es parte de la ficha (en su hueco, bajo el número y la ruta), no una tarjeta más.
+    await until(() => $('.flight #map-slot > #map-card.map-hero'), 'mapa en la ficha');
+    expect($('#map-card .card-title').textContent).toBe('Radar');
+    expect($('.card.map-card')).toBeNull();
   });
 
   it('repintado conserva desplegables: «Horario» abierto y el historial de puntualidad siguen tras una lectura «volando»', async () => {
@@ -1808,7 +1791,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, posAgeS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
       await search('IB715', d);
@@ -1841,7 +1824,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     frozenClock();
     try {
       const { L, log } = fakeLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       const t0 = Date.now();
       await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 1, posAgeS: 50, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
@@ -1873,7 +1856,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 5, posAgeS: 5, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
       await search('IB715', d);
@@ -1907,7 +1890,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
     try {
       const { L, log } = fakeLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, seenS: 1, posAgeS: 50, lat: 51.2, lon: -0.9 }, openMeteo: () => tooMany }));
       await search('IB715', d);
@@ -1927,20 +1910,22 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
     } finally { vi.useRealTimers(); }
   });
 
-  it('bajo el mapa, en el aire con el radar «volando»: Indicativo, Avión e Identificación', async () => {
+  it('el mapa en el aire va limpio: sin datos repetidos bajo él; indicativo, avión e identificación siguen en la ficha', async () => {
     const { L } = fakeLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = flyingLeg();
     await openApp(network({ flights: flights(leg), radar: { ...RADAR_FLYING, match: 'ruta' }, openMeteo: () => tooMany }));
     await search('IB715', d);
-    await until(() => $('.telemetry') && $('#map-facts')?.textContent.trim(), 'datos bajo el mapa');
-    const facts = [...document.querySelectorAll('#map-facts .kv')].map(r => [r.querySelector('.k').textContent, r.querySelector('.v').textContent]);
-    expect(facts).toEqual([['Indicativo', 'IBE715'], ['Avión', 'Airbus A321neo'], ['Identificación', 'Por ruta']]);
+    await until(() => $('.telemetry') && $('#map-card .map'), 'ficha con el mapa');
+    expect($('#map-facts')).toBeNull();
+    expect($('.telemetry').textContent).toContain('IBE715'); // indicativo, en «Ahora»
+    expect($('#result .flight .hero-sub').textContent).toContain('Airbus A321neo');
+    await until(() => $('#adv-flight')?.textContent.includes('Por ruta'), 'identificación en Detalles avanzados');
   });
 
   it('mapa sin coordenadas: la tarjeta del mapa existe y no hay avión', async () => {
     const { L, log } = fakeLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = flyingLeg();
     await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
     await search('IB715', d);
@@ -1952,7 +1937,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
 
   it('otra búsqueda o «Nueva consulta» destruyen el mapa: nunca dos mapas a la vez', async () => {
     const { L, log } = fakeLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = flyingLeg();
     await openApp(network({ flights: flights(leg), radar: RADAR_FLYING, openMeteo: () => tooMany }));
     await search('IB715', d);
@@ -2038,9 +2023,9 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
         turbGone();
         expect(area()).not.toContain('Previsión mostrada antes del aterrizaje');
         expect(turbEstimate()).toBe('Turbulencias estimadas Tranquilo No se estimó turbulencia relevante');
-        expect([...$('#result').children].map(c => c.id || c.dataset.card || c.className)).toEqual(['summary', 'forecast-area', 'map-card', 'advanced', 'disclaimer']);
+        expect([...$('#result').children].map(c => c.id || c.dataset.card || c.className)).toEqual(['summary', 'forecast-area', 'advanced', 'disclaimer']); // el mapa, si lo hay, va dentro de la ficha
         expect(meteoCalls()).toHaveLength(meteo);
-        expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+        expect($('#map-slot')).not.toBeNull(); // aterrizado: la ficha conserva el sitio del mapa (Ruta realizada)
       } finally { vi.useRealTimers(); }
     });
 
@@ -2136,7 +2121,7 @@ describe('integración del rediseño: repintado, mapa, señal en vivo y previsi�
       turbGone();
       expect(turbEstimate()).toBeNull();
       expect(meteoCalls()).toHaveLength(0); // nada calculado a posteriori
-      expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+      expect($('#map-slot')).not.toBeNull(); // aterrizado: la ficha conserva el sitio del mapa (Ruta realizada)
 
       const at = Date.now() - 5 * 3600000;
       localStorage.setItem(STORE, JSON.stringify({
@@ -2180,7 +2165,7 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
   // Primera carga con el avión en A: ficha, panel ADS-B, un mapa y el marcador en pantalla.
   async function firstLoad(answers, { openMeteo, data } = {}) {
     const { L, log } = fakeLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = flyingLeg();
     data ??= { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } };
     await openApp(app(answers, data, openMeteo));
@@ -2195,7 +2180,12 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
   const within = (p, a, b) => p[0] >= Math.min(a.lat, b.lat) && p[0] <= Math.max(a.lat, b.lat)
     && p[1] >= Math.min(a.lon, b.lon) && p[1] <= Math.max(a.lon, b.lon);
   const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
-  const refreshed = log => until(() => radarCalls().length === 2 && log.markers.some(m => !m.removed && m.ll[0] === B.lat && m.ll[1] === B.lon), 'el avión en B');
+  // La lectura B llega y el avión la recorre desde A durante el intervalo del seguimiento (PLANE_GLIDE_MS) hasta quedar en B.
+  const refreshed = async log => {
+    await until(() => radarCalls().length === 2, 'segunda lectura');
+    await vi.advanceTimersByTimeAsync(PLANE_GLIDE_MS + 500);
+    await until(() => log.markers.some(m => !m.removed && m.ll[0] === B.lat && m.ll[1] === B.lon), 'el avión en B');
+  };
 
   it('vuelve a consultar el radar una vez por pulsación y ninguna automática después', async () => {
     fake();
@@ -2227,7 +2217,7 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       expect($('#map-card')).toBe(node); // el mismo nodo, con su mapa, dentro de la ficha nueva
       expect(document.querySelectorAll('#map-card')).toHaveLength(1);
       expect($('#map-card .card-title').textContent).toBe('Radar');
-      expect($('#map-facts').textContent).toContain('IBE715');
+      expect($('.telemetry').textContent).toContain('IBE715');
     } finally { vi.useRealTimers(); }
   }, 30000);
 
@@ -2370,7 +2360,7 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
       // Las fotos de aerolínea fallan en la primera carga (no se guardan) y en la segunda quedan en espera: la primera
       // «Actualizar» se queda en buildFlight con el mapa conservado aún sin montar mientras llega la segunda.
       const { L, log } = fakeLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       const base = app([A, B, B], { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } });
       let photos = 0, release;
@@ -2437,26 +2427,7 @@ describe('«Actualizar» conserva el mapa de la ficha y mueve el avión de A a B
 // real nueva del mismo avión la prolonga. «Actualizar» no la vuelve a pedir; otro fr24Id la reinicia. Sin estela (no
 // encontrada, no disponible, sin FR24), la ruta prevista sigue como siempre.
 describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
-  function trackLeaflet() {
-    const log = { maps: 0, mapsRemoved: 0, markers: [], view: [], lines: [] };
-    const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
-    const L = {
-      map: () => { log.maps++; return { fitBounds() { log.view.push('fitBounds'); }, setView() { log.view.push('setView'); }, setZoom() { log.view.push('setZoom'); },
-        invalidateSize() {}, remove() { log.mapsRemoved++; } }; },
-      tileLayer: layer, polygon: layer, circleMarker: layer,
-      polyline: (coords, o = {}) => ({ coords, o, live: false, addTo() { this.live = true; log.lines.push(this); return this; }, bindTooltip() { return this; },
-        remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } }),
-      latLngBounds: () => ({ pad() { return this; } }),
-      divIcon: o => o,
-      marker: ll => {
-        const cls = new Set();
-        const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
-        const m = { ...layer(), ll, path: [ll], removed: false, rot, cls, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; },
-          getElement() { return { querySelector: () => rot }; } };
-        log.markers.push(m); return m; },
-    };
-    return { L, log };
-  }
+  const trackLeaflet = () => fakeMapLibre();
   const trails = log => log.lines.filter(l => l.live && !l.o.dashArray);
   const trackCalls = () => calls.filter(u => u.includes('/track/') || u.includes('/track-adb/'));
   const flyingLeg = () => {
@@ -2475,9 +2446,9 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
   // Radar: una respuesta por consulta (la última se repite); tracks: una por petición a /track (null = 404). Cada una puede
   // ser una función (p. ej. una promesa retenida). Como el servidor, el radar lleva siempre `checked` (su hora).
   // leg: otro tramo de Aena; photos: respuesta de las fotos de aerolínea a partir de la 2.ª (para retener «Actualizar»).
-  async function load({ radar, tracks = [track()], openMeteo = () => tooMany, leg: legOver = null, photos = null }) {
+  async function load({ radar, tracks = [track()], openMeteo = () => tooMany, leg: legOver = null, photos = null, map = true }) {
     const { L, log } = trackLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = legOver ?? flyingLeg();
     const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo });
     let i = 0, j = 0, p = 0;
@@ -2491,7 +2462,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
       return base(url, o);
     }));
     await search('IB715', d);
-    await until(() => $('#result .flight') && log.maps === 1, 'ficha con mapa');
+    await until(() => $('#result .flight') && (!map || log.maps === 1), 'ficha con mapa');
     await networkIdle();
     return { log, leg };
   }
@@ -2520,7 +2491,8 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
       const { log } = await load({ radar: [FA, FB, FB] });
       await refresh(log);
       const atB = () => trails(log)[0]?.coords.at(-1)?.[0] === 51.4 && log.markers[0]?.ll[0] === 51.4;
-      await until(atB, 'la animación A → B termina'); // requestAnimationFrame de jsdom: tiempo real
+      await vi.advanceTimersByTimeAsync(PLANE_GLIDE_MS + 500); // el recorrido A → B dura el intervalo del seguimiento
+      await until(atB, 'la animación A → B termina');
       await refresh(log);
       expect(trackCalls()).toHaveLength(1);
       expect(log.maps).toBe(1);
@@ -2537,12 +2509,11 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
   it('5) cambio de fr24Id: la estela anterior se borra y se pide la del nuevo avión', async () => {
     const other = { ...FB, fr24Id: '7a8b9c0d', fr24IdChanged: true };
     const { log } = await load({ radar: [FA, other], tracks: [track(), track('7a8b9c0d', { points: [[48, -2], [51.3, -0.7], [51.35, -0.65], [51.4, -0.6]] })] });
-    const first = trails(log)[0];
+    expect(trails(log)[0].coords[0]).toEqual([40.47, -3.56]);
     await refresh(log);
-    await until(() => trackCalls().length === 2 && trails(log)[0] !== first, 'estela nueva');
-    expect(first.live).toBe(false);
+    await until(() => trackCalls().length === 2 && trails(log)[0]?.coords[0]?.[0] === 48, 'estela nueva');
     expect(trails(log)).toHaveLength(1);
-    expect(trails(log)[0].coords[0]).toEqual([48, -2]);
+    expect(trails(log)[0].coords.some(c => c[0] === 40.47)).toBe(false); // nada de la estela del avión anterior
   });
 
   it('una estela de OTRO fr24Id que el de la lectura (respuesta cruzada) no se dibuja', async () => {
@@ -2580,7 +2551,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
       arrival: { airport: { iata: 'CGK' }, scheduledTime: { utc: utc(arr), local: fmt(arr, 7) } }, aircraft: { model: 'Boeing 777' } };
     const entry = { status: 'found', source: 'aerodatabox', number: 'GA89', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) };
     const { L, log } = trackLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const base = network({ flights: {}, schedule: { [`GA89|${d}`]: entry }, openMeteo: () => tooMany,
       radarAdb: () => ({ ...FA, callsign: 'GIA89', fr24Id: '4a4a4a4a', lat: 45.1, lon: 40.2, checked: new Date().toISOString() }) });
     await openApp(vi.fn((url, o) => {
@@ -2605,7 +2576,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     const entry = { status: 'found', source: 'aerodatabox', number: 'DE2282', date: d, fetchedAt: new Date().toISOString(), legs: normalizeFlights([raw]) };
     const takeoff = dep + 30 * 60000, landed = takeoff + 528 * 60000, sec = ms => Math.floor(ms / 1000);
     const { L, log } = trackLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const base = network({ flights: {}, schedule: { [`DE2282|${d}`]: entry }, openMeteo: () => tooMany });
     await openApp(vi.fn((url, o) => {
       const u = String(url);
@@ -2674,6 +2645,8 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
   });
 
   it('10) la estela llega mientras el avión se desplaza de A a B: nada por delante del avión (límite = hora de A) y acaba en B', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'], shouldAdvanceTime: true });
+    try {
     const t = held();
     const s0 = S();
     const fa = { ...FA, checked: new Date(s0).toISOString() }; // A: s0 − 2 s
@@ -2690,11 +2663,13 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     expect(mid.slice(0, 3)).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1]]);
     expect(mid.some(c => c[0] === between[0] || c[0] === 51.6)).toBe(false);
     expect(mid.at(-1)).toEqual(log.markers[0].ll); // la cabeza es el avión que se ve
+    await vi.advanceTimersByTimeAsync(PLANE_GLIDE_MS + 500);
     await until(() => log.markers[0].ll[0] === FB.lat, 'avión en B');
     expect(l.coords.at(-1)).toEqual([51.4, -0.6]);
     expect(l.coords.some(c => c[0] === 51.6)).toBe(false);
     expect(trackCalls()).toHaveLength(1);
-  });
+    } finally { vi.useRealTimers(); }
+  }, 30000);
 
   it('«Actualizar» sin lectura nueva aún (avión retenido): la estela se corta en la lectura que lo puso, no se pinta entera', async () => {
     const t = held(), r2 = held();
@@ -2753,9 +2728,10 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     const dep = Date.now() - 5 * 3600000;
     const d = dayOf(dep), sd = formatLocal(dep, MAD);
     const leg = { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, ac: 'A21N', ...flags };
-    const { log } = await load({ leg: { d, leg }, radar: [null] });
+    const { log } = await load({ leg: { d, leg }, radar: [null], map: false });
     await networkIdle();
-    expect(log.maps).toBe(1);
+    expect(log.maps).toBe(0); // cancelado o desviado: sin mapa
+    expect($('#map-slot')).toBeNull();
     expect(trackCalls()).toEqual([]);
   });
 });
@@ -2767,28 +2743,7 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
 // peticiones; un fallo no se pinta (la última posición real se queda quieta y caduca a los 180 s). Reloj y temporizadores
 // simulados (performance incluido: la antigüedad usa el reloj monotónico).
 describe('seguimiento en vivo con Flightradar24', () => {
-  function liveLeaflet() {
-    const log = { maps: 0, mapsRemoved: 0, markers: [], view: [], lines: [] };
-    const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() {} });
-    const L = {
-      map: () => { log.maps++; return { fitBounds() { log.view.push('fitBounds'); }, setView() { log.view.push('setView'); }, setZoom() { log.view.push('setZoom'); },
-        invalidateSize() {}, remove() { log.mapsRemoved++; } }; },
-      tileLayer: layer, polygon: layer, circleMarker: layer,
-      polyline: (coords, o = {}) => ({ coords, o, live: false, addTo() { this.live = true; log.lines.push(this); return this; }, bindTooltip() { return this; },
-        remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } }),
-      latLngBounds: () => ({ pad() { return this; } }),
-      divIcon: o => o,
-      marker: ll => {
-        const cls = new Set();
-        const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
-        const m = { ...layer(), ll, path: [ll], removed: false, rot, cls, setLatLng(p) { this.ll = p; this.path.push(p); return this; }, remove() { this.removed = true; },
-          getElement() { return { querySelector: () => rot }; } };
-        log.markers.push(m);
-        return m;
-      },
-    };
-    return { L, log };
-  }
+  const liveLeaflet = () => fakeMapLibre();
   const trails = log => log.lines.filter(l => l.live && !l.o.dashArray);
   const trackCalls = () => calls.filter(u => u.includes('/track/'));
   const deg = m => { const tr = m.rot.style.transform; return tr ? Number(tr.match(/rotate\((-?[\d.]+)deg\)/)[1]) : null; };
@@ -2811,7 +2766,7 @@ describe('seguimiento en vivo con Flightradar24', () => {
   // radar(k): la respuesta a la k-ésima petición a /radar (null = 404, sin respuesta). render: refresco de Aena opcional.
   async function load({ radar = k => reading(k), render = null, extraFlights = {}, openMeteo = () => tooMany } = {}) {
     const { L, log } = liveLeaflet();
-    vi.stubGlobal('L', L);
+    vi.stubGlobal('maplibregl', L);
     const { d, leg } = flyingLeg();
     const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] }, ...extraFlights }, openMeteo });
     let k = 0;
@@ -2927,19 +2882,27 @@ describe('seguimiento en vivo con Flightradar24', () => {
     } finally { vi.useRealTimers(); }
   }, 30000);
 
-  it('LIVE 9) 10) 11) cada lectura nueva antes de caducar: el avión sigue fresco más allá de 60 s, va de A a B y la estela llega hasta B', async () => {
+  it('LIVE 9) 10) 11) cada lectura nueva antes de caducar: el avión recorre A → B durante el intervalo (sin pasar de B), sigue B → C y la estela crece detrás', async () => {
     fakeAll();
     try {
       const { log } = await load();
       mark();
       await until(() => trails(log).length === 1, 'estela');
-      await to(46);
-      const B = reading(1);
-      await until(() => log.markers[0].ll[0] === B.lat && log.markers[0].ll[1] === B.lon, 'el avión en B');
-      const { path } = log.markers[0];
+      const A = reading(0), B = reading(1), C = reading(2);
+      await to(46); // llega B: empieza A → B
+      await to(68); // a mitad del intervalo: entre A y B, nunca en B ni más allá
+      const mid = log.markers[0].ll;
+      expect(mid[0]).toBeGreaterThan(A.lat);
+      expect(mid[0]).toBeLessThan(B.lat);
       expect(log.markers).toHaveLength(1); // el mismo marcador, sin recrearlo
-      expect(path.some(p => p[0] > 51 && p[0] < B.lat)).toBe(true); // pasa por posiciones intermedias (A → B animado)
-      expect(trails(log)[0].coords.at(-1)).toEqual([B.lat, B.lon]); // la estela, prolongada hasta B
+      expect(trails(log)[0].coords.at(-1)).toEqual(mid); // la estela acaba en el avión que se ve…
+      expect(trails(log)[0].coords.some(c => c[0] === B.lat && c[1] === B.lon)).toBe(false); // …y B aún no se dibuja
+      await to(88); // justo antes de la lectura C: como mucho en B
+      expect(log.markers[0].ll[0]).toBeLessThanOrEqual(B.lat);
+      await to(100); // llega C: sigue de B hacia C, sin pasar de C
+      expect(log.markers[0].ll[0]).toBeGreaterThanOrEqual(B.lat - 1e-9);
+      expect(log.markers[0].ll[0]).toBeLessThanOrEqual(C.lat);
+      expect(trails(log)[0].coords.some(c => c[0] === A.lat && c[1] === A.lon)).toBe(true); // A, vértice real de la estela
       await to(140); // 3 ciclos: más de 60 s desde la primera lectura
       expect(planeOnScreen(log)).toBe(true);
       expect(planeDimmed(log)).toBe(false); // siempre una lectura fresca: nunca atenuado
@@ -3191,7 +3154,7 @@ describe('seguimiento en vivo con Flightradar24', () => {
     fakeAll();
     try {
       const { L, log } = liveLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
       let k = 0, open = 0, maxOpen = 0, down = false;
@@ -3252,7 +3215,7 @@ describe('seguimiento en vivo con Flightradar24', () => {
     fakeAll();
     try {
       const { L, log } = liveLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
       let k = 0, open = 0, maxOpen = 0, release = null;
@@ -3381,7 +3344,7 @@ describe('seguimiento en vivo con Flightradar24', () => {
     fakeAll();
     try {
       const { L, log } = liveLeaflet();
-      vi.stubGlobal('L', L);
+      vi.stubGlobal('maplibregl', L);
       const { d, leg } = flyingLeg();
       const data = { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } };
       const base = network({ flights: data, openMeteo: () => tooMany });
@@ -3535,5 +3498,86 @@ describe('vuelo que solo encuentra Flightradar24 (EK2518)', () => {
     await networkIdle();
     expect($('#result .flight .status').textContent).not.toContain('Aterrizado');
     expect(fr24RadarCalls()).toEqual([]);
+  });
+});
+
+// Mapa del vuelo según la fase (rediseño del seguimiento en vuelo): antes de volar, nada; con la confirmación de
+// siempre de que vuela (estado del tramo o radar), el mapa protagonista dentro de la ficha, sin recargar; aterrizado,
+// el mismo mapa como «Ruta realizada».
+describe('mapa del vuelo según la fase', () => {
+  const legAt = (minAgo, over = {}) => {
+    const dep = Date.now() - minAgo * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD);
+    return { d, leg: { d, o: 'MAD', a: 'LHR', sd, ed: `${d}T${sd}`, st: 'BOR', std: 'BOR', ac: 'A21N', ...over } };
+  };
+  const FLYING = { ...RADAR_FLYING, source: 'fr24', match: 'fr24', fr24Id: '3c4d5e6f', posAgeS: 2, lat: 51, lon: -1, track: 45 };
+  async function open({ leg, d, radar }) {
+    const { L, log } = fakeMapLibre();
+    vi.stubGlobal('maplibregl', L);
+    const base = network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
+    let k = 0;
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); const r = radar(k++); return r instanceof Promise ? r.then(json) : Promise.resolve(r ? json(r) : notFound); }
+      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(notFound); }
+      return base(url, o);
+    }));
+    await search('IB715', d);
+    await until(() => $('#result .flight'), 'ficha');
+    return log;
+  }
+
+  it('A) programado (prevuelo): sin mapa, sin hueco y sin tarjeta del mapa', async () => {
+    const { d, leg } = legAt(-180, { st: 'SCH', std: 'SCH' }); // sale dentro de 3 h
+    const log = await open({ leg, d, radar: () => null });
+    await networkIdle();
+    expect($('#result .flight').dataset.phase).toBe('programado');
+    expect($('#map-slot')).toBeNull();
+    expect($('#map-card')).toBeNull();
+    expect(log.maps).toBe(0);
+  });
+
+  it('B) C) entra en vuelo con la ficha abierta: el mapa aparece en la ficha sin recargar, y no como tarjeta', async () => {
+    let release;
+    const first = new Promise(r => { release = r; });
+    const { d, leg } = legAt(20, { st: 'CER', std: 'CER' }); // puerta cerrada y la hora de salida ya pasó: eso NO es estar en el aire
+    const log = await open({ leg, d, radar: k => (k === 0 ? first : FLYING) });
+    await networkIdle();
+    expect($('#result .flight').dataset.phase).toBe('en-curso'); // «en curso» para la ficha (puerta cerrada)…
+    expect($('#map-slot')).toBeNull(); // …pero sin evidencia de vuelo: aún sin mapa
+    expect(log.maps).toBe(0);
+    release(FLYING); // el radar lo confirma en el aire
+    await until(() => $('.flight #map-slot > #map-card.map-hero') && log.maps === 1 && planeOnScreen(log), 'mapa en la ficha con el avión');
+    expect($('#result .flight').dataset.phase).toBe('en-curso');
+    expect($('#map-card .card-title').textContent).toBe('Radar');
+    expect($('.card.map-card')).toBeNull();
+    expect($('#map-card').closest('.card')).toBeNull(); // ni dentro de una tarjeta
+    expect(log.view).toEqual(['fitBounds']); // un solo encuadre, con la primera posición del avión
+  });
+
+  it('D) aterriza: el MISMO mapa se queda y pasa a «Ruta realizada», sin avión', async () => {
+    const { d, leg } = legAt(60);
+    const log = await open({ leg, d, radar: k => (k === 0 ? FLYING : { state: 'aterrizado', callsign: 'IBE715', seenS: 30, distanceKm: 2, source: 'fr24', fr24Id: '3c4d5e6f' }) });
+    await until(() => $('#map-card .map') && planeOnScreen(log), 'en vuelo con el mapa');
+    const node = $('#map-card');
+    $('#refresh').click();
+    await until(() => $('#result .flight')?.dataset.phase === 'finalizado', 'aterrizado');
+    await networkIdle();
+    expect($('#map-card')).toBe(node);
+    expect($('#map-card .card-title').textContent).toBe('Ruta realizada');
+    expect(log.maps).toBe(1);
+    expect(log.mapsRemoved).toBe(0);
+    expect(planeOnScreen(log)).toBe(false);
+  });
+
+  it('sin MapLibre (sin WebGL o sin conexión): la ficha en vuelo sigue completa y el hueco del mapa queda vacío', async () => {
+    const { d, leg } = legAt(60);
+    await openApp(network({ flights: { IB715: { name: 'Iberia', updated: new Date().toISOString(), legs: [leg] } }, radar: FLYING, openMeteo: () => tooMany }));
+    await search('IB715', d);
+    await until(() => $('.telemetry'), 'ficha en vuelo');
+    await networkIdle();
+    expect($('#map-slot')).not.toBeNull();
+    expect($('#map-slot').children).toHaveLength(0);
+    for (const t of ['830', '10.700', '300']) expect($('.telemetry').textContent).toContain(t);
   });
 });

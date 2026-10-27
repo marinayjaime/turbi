@@ -1,146 +1,316 @@
-// Tarjeta del mapa (js/map.js): título por fase, marcador del avión solo con posición real y Leaflet prescindible.
-// Leaflet se simula con un `L` falso en globalThis: se cuentan marcadores creados, movidos y quitados.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { routeLines, mapCardHtml, mapFactsHtml, createRouteMap } from '../js/map.js';
-
-function fakeLeaflet() {
-  const log = { markers: [], moved: [], removed: 0, invalidated: 0, tileOpts: null, mapRemoved: 0 };
-  const layer = () => ({ addTo() { return this; }, bindTooltip() { return this; }, remove() { log.removed++; } });
-  const L = {
-    map: () => ({
-      fitBounds() {}, invalidateSize() { log.invalidated++; }, remove() { log.mapRemoved++; },
-    }),
-    tileLayer: (_url, opts) => { log.tileOpts = opts; return layer(); },
-    polyline: layer, polygon: layer, circleMarker: layer,
-    latLngBounds: () => ({ pad() { return this; } }),
-    divIcon: o => o,
-    marker: (ll, o) => {
-      const rot = { style: {} };
-      const m = { ...layer(), ll, o, rot, setLatLng(p) { log.moved.push(p); this.ll = p; return this; },
-        getElement() { return { querySelector: () => rot }; } };
-      log.markers.push(m);
-      return m;
-    },
-  };
-  return { L, log };
-}
+// @vitest-environment jsdom
+// Mapa del vuelo (js/map.js, MapLibre): el bloque protagonista, el estilo aligerado, el avión solo con posiciones reales
+// (recorrido continuo A → B durante el intervalo del seguimiento, sin pasar nunca de la última), la estela real en dos
+// capas y la cámara. MapLibre se simula (tests/fixtures/fake-maplibre.js); el reloj y los fotogramas, también.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { routeLines, mapHeroHtml, mapTitle, createRouteMap, lightStyle, FALLBACK_STYLE, PLANE_GLIDE_MS } from '../js/map.js';
+import { LIVE_INTERVAL_MS } from '../js/live-tracker.js';
+import { fakeMapLibre } from './fixtures/fake-maplibre.js';
 
 const OPTS = {
-  origin: { iata: 'AAA', lat: 39, lon: 3 }, destination: { iata: 'BBB', lat: 41, lon: 2 },
-  route: [{ lat: 39, lon: 3 }, { lat: 41, lon: 2 }],
+  origin: { iata: 'AAA', lat: 39, lon: 0 }, destination: { iata: 'BBB', lat: 42, lon: 3 },
+  route: [{ lat: 39, lon: 0 }, { lat: 42, lon: 3 }],
 };
+let ctx, frames, t, reduced;
+// Reloj y fotogramas a mano: advance(ms) mueve el reloj y ejecuta los fotogramas pendientes (como el navegador).
+const clock = { raf: cb => { frames.push(cb); return frames.length; }, caf: id => { frames[id - 1] = null; }, now: () => t, reducedMotion: () => reduced };
+const advance = ms => { t += ms; const run = frames.splice(0); for (const f of run) f?.(t); };
+// Recorre `ms` en pasos de `step` (fotogramas sucesivos) y devuelve las posiciones mostradas.
+const run = (ms, step = 1000) => { const seen = []; for (let k = 0; k < ms; k += step) { advance(step); seen.push(shown()); } return seen; };
+const shown = () => ctx.log.markers.at(-1)?.ll;
+const trail = () => ctx.log.lines.find(l => l.id === 'track');
+const make = () => createRouteMap({ hidden: true }, OPTS, clock);
+const ID = 'v1|abc';
+beforeEach(() => {
+  ctx = fakeMapLibre();
+  vi.stubGlobal('maplibregl', ctx.L);
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }))); // sin el estilo de OpenFreeMap: fondo liso
+  frames = []; t = 1000; reduced = false;
+});
+afterEach(() => { vi.unstubAllGlobals(); });
 
-describe('mapCardHtml', () => {
-  it.each([['programado', 'Ruta prevista'], ['en-curso', 'Radar'], ['finalizado', 'Ruta realizada'], ['cancelado', 'Ruta prevista']])(
-    '%s -> %s', (fase, titulo) => {
-      const html = mapCardHtml(fase);
-      expect(html).toContain(titulo);
-      expect(html).toContain('<section class="card map-card" id="map-card">');
-      expect(html).toContain('<div id="map" class="map">');
-      expect(html).toContain('id="map-facts"');
-      expect(html).toContain('data-map="expand"');
-      expect(html).toContain('<svg');
-    });
+describe('bloque del mapa', () => {
+  it.each([['en-curso', 'Radar'], ['finalizado', 'Ruta realizada']])('%s → «%s», sin tarjeta, con ampliar, cerrar y créditos', (fase, titulo) => {
+    const html = mapHeroHtml(fase);
+    expect(html).toContain(`<span class="map-label card-title">${titulo}</span>`);
+    expect(html).toContain('<section class="map-hero" id="map-card"');
+    expect(html).not.toMatch(/class="card[ "]/);
+    expect(html).toContain('<div id="map" class="map">');
+    expect(html).toContain('data-map="expand"');
+    expect(html).toContain('data-map="close"');
+    for (const c of ['OpenFreeMap', 'OpenMapTiles', 'OpenStreetMap']) expect(html).toContain(c);
+  });
+  it('mapTitle por fase', () => {
+    expect(mapTitle('en-curso')).toBe('Radar');
+    expect(mapTitle('finalizado')).toBe('Ruta realizada');
+  });
+  it('el recorrido del avión dura lo mismo que el intervalo del seguimiento en vivo (la constante compartida)', () => {
+    expect(PLANE_GLIDE_MS).toBe(LIVE_INTERVAL_MS);
+  });
 });
 
-describe('mapFactsHtml (§5.8, datos bajo el mapa)', () => {
-  const flying = over => ({ phase: 'en-curso', status: { text: 'En vuelo', tone: 'ok' }, aircraft: 'Airbus A320',
-    radar: { state: 'volando', callsign: 'IBE123', match: 'indicativo', ...over } });
-  const facts = html => [...html.matchAll(/<span class="k">([^<]+)<\/span><span class="v">([^<]+)<\/span>/g)].map(m => [m[1], m[2]]);
-  it('en el aire con el radar volando: Indicativo, Avión e Identificación «Directa» (por indicativo)', () => {
-    expect(facts(mapFactsHtml(flying()))).toEqual([['Indicativo', 'IBE123'], ['Avión', 'Airbus A320'], ['Identificación', 'Directa']]);
+describe('lightStyle (estilo claro de OpenFreeMap, aligerado)', () => {
+  const layer = (id, type = 'line', extra = {}) => ({ id, type, source: 'openmaptiles', paint: {}, ...extra });
+  const style = { version: 8, sources: {}, layers: [layer('background', 'background'), layer('water', 'fill'), layer('building', 'fill'),
+    layer('highway_minor'), layer('highway_path'), layer('railway'), layer('highway_major_casing'), layer('highway_motorway_bridge_casing'), layer('boundary_2'), layer('highway_motorway_subtle'),
+    layer('label_village', 'symbol', { layout: { 'text-field': '{name}' } }), layer('label_city', 'symbol', { layout: { 'text-field': '{name}', 'text-size': 12 } }),
+    layer('airport', 'symbol', { layout: { 'text-field': '{name}' } })] };
+  it('quita lo que compite con el vuelo y deja fronteras, autopistas tenues, ciudades y aeropuertos', () => {
+    expect(lightStyle(style).layers.map(l => l.id)).toEqual(['background', 'water', 'boundary_2', 'highway_motorway_subtle', 'label_city', 'airport']);
   });
-  it('por ruta → «Por ruta»; por transpondedor → el texto de Detalles avanzados', () => {
-    expect(facts(mapFactsHtml(flying({ match: 'ruta' }))).at(-1)).toEqual(['Identificación', 'Por ruta']);
-    expect(facts(mapFactsHtml(flying({ match: 'transpondedor' }))).at(-1)).toEqual(['Identificación', 'Por transpondedor']);
+  it('agua azul grisácea suave, fondo claro y nombres en español (o latinos)', () => {
+    const s = lightStyle(style);
+    expect(s.layers.find(l => l.id === 'water').paint['fill-color']).toBe('#cbd9e4');
+    expect(s.layers.find(l => l.id === 'background').paint['background-color']).toBe('#f4f5f2');
+    const city = s.layers.find(l => l.id === 'label_city');
+    expect(city.layout['text-field']).toEqual(['coalesce', ['get', 'name:es'], ['get', 'name:latin'], ['get', 'name']]);
+    expect(city.layout['text-size']).toBe(12);
   });
-  it('solo los datos que existen (sin «—» ni valores por defecto) y escapados', () => {
-    expect(facts(mapFactsHtml({ ...flying({ callsign: null, match: undefined }), aircraft: null }))).toEqual([]);
-    expect(mapFactsHtml({ ...flying(), aircraft: '<b>' })).toContain('&lt;b&gt;');
-  });
-  it('vacío fuera del aire o sin radar «volando»', () => {
-    expect(mapFactsHtml(null)).toBe('');
-    expect(mapFactsHtml({ ...flying(), radar: { state: 'reciente', callsign: 'IBE123' } })).toBe('');
-    expect(mapFactsHtml({ ...flying(), radar: { state: 'localizando' } })).toBe('');
-    expect(mapFactsHtml({ phase: 'pendiente', status: { text: 'Programado' }, aircraft: 'Airbus A320' })).toBe('');
-    // Aterrizado (finalizado) aunque la última lectura fuera «volando»: sin datos bajo el mapa.
-    expect(mapFactsHtml({ ...flying(), status: { text: 'Aterrizado', landing: 'confirmed-landed' } })).toBe('');
+  it('un estilo no válido → null (se usa el fondo liso)', () => {
+    expect(lightStyle(null)).toBeNull();
+    expect(lightStyle({ layers: [] })).toBeNull();
+    expect(FALLBACK_STYLE.layers).toHaveLength(1);
   });
 });
 
 describe('createRouteMap', () => {
-  let ctx;
-  beforeEach(() => { ctx = fakeLeaflet(); globalThis.L = ctx.L; });
-  afterEach(() => { delete globalThis.L; });
-  const el = () => ({ hidden: true });
-
-  it('setPlane(null) no crea marcador', async () => {
-    const m = await createRouteMap(el(), OPTS);
-    m.setPlane(null);
+  it('ruta prevista y aeropuertos; sin el estilo de OpenFreeMap, sobre el fondo liso', async () => {
+    await make();
+    expect(ctx.log.map.opts.style).toBe(FALLBACK_STYLE);
+    expect(ctx.log.map.opts.cooperativeGestures).toBe(true); // en la ficha, el mapa no captura el desplazamiento de la página
+    expect(ctx.log.lines.find(l => l.id === 'route').live).toBe(true);
+    expect(ctx.log.airports.map(m => m.el.textContent)).toEqual(['AAA', 'BBB']);
     expect(ctx.log.markers).toHaveLength(0);
   });
-
-  it('crea el marcador, lo mueve sin crear otro y lo quita con null', async () => {
-    // Movimiento directo (prefers-reduced-motion) para comprobar solo el ciclo de vida del marcador; la animación tiene
-    // su propio bloque de tests.
-    const m = await createRouteMap(el(), OPTS, { raf: () => 0, caf: () => {}, now: () => 0, reducedMotion: () => true });
-    m.setPlane({ lat: 40, lon: 2.5, stale: false });
-    expect(ctx.log.markers).toHaveLength(1);
-    m.setPlane({ lat: 40.1, lon: 2.4 });
-    expect(ctx.log.markers).toHaveLength(1);
-    expect(ctx.log.moved).toEqual([[40.1, 2.4]]);
-    m.setPlane(null);
-    expect(ctx.log.removed).toBe(1);
-    m.setPlane(null);
-    expect(ctx.log.removed).toBe(1);
-    m.setPlane({ lat: 40, lon: 2 });
-    expect(ctx.log.markers).toHaveLength(2);
+  it('sin MapLibre (sin WebGL): rechaza; quien llama sigue sin mapa', async () => {
+    vi.stubGlobal('maplibregl', fakeMapLibre({ fail: true }).L);
+    await expect(make()).rejects.toBeTruthy();
   });
-
-  it('teselas suaves, invalidate y destroy', async () => {
-    const m = await createRouteMap(el(), OPTS);
-    expect(ctx.log.tileOpts.className).toBe('tiles-soft');
-    m.invalidate();
-    expect(ctx.log.invalidated).toBe(1);
-    m.destroy();
-    expect(ctx.log.mapRemoved).toBe(1);
-  });
-
-  it('setForecast acepta una vista sin aviación', async () => {
-    const m = await createRouteMap(el(), OPTS);
-    expect(() => m.setForecast({ route: OPTS.route })).not.toThrow();
-  });
-
-  it('clearForecast: vuelve a la ruta sin colorear, sin SIGMET ni PIREP, sin tocar la vista ni el avión', async () => {
-    // Capas vivas por tipo (con sus opciones): se quitan con remove().
-    const live = [];
-    let views = 0;
-    const track = kind => (coords, o = {}) => {
-      const l = { kind, o, addTo() { live.push(this); return this; }, bindTooltip() { return this; }, remove() { live.splice(live.indexOf(this), 1); } };
-      return l;
-    };
-    Object.assign(ctx.L, { polyline: track('line'), polygon: track('polygon'), circleMarker: track('circle'),
-      map: () => ({ fitBounds() { views++; }, setView() { views++; }, setZoom() { views++; }, invalidateSize() {}, remove() {} }) });
-    const m = await createRouteMap(el(), OPTS, { raf: () => 0, caf: () => {}, now: () => 0, reducedMotion: () => true });
-    m.setPlane({ lat: 40, lon: 2.5 });
-    const layers = () => live.map(l => `${l.kind} ${l.o.color}`).sort();
-    const fresh = layers();
-    m.setForecast({ route: [{ lat: 39, lon: 3, level: 3 }, { lat: 41, lon: 2, level: 3 }],
-      aviation: { sigmets: [{ coords: [{ lat: 39, lon: 2 }, { lat: 40, lon: 3 }, { lat: 41, lon: 2 }], label: 'S' }],
-        pireps: [{ lat: 40, lon: 2.5, label: 'P' }] } });
-    expect(live.some(l => l.kind === 'polygon')).toBe(true);
-    expect(live.some(l => l.o.color === '#ff3b30' && l.kind === 'line')).toBe(true);
-    const before = views;
+  it('setForecast y clearForecast: ruta coloreada, SIGMET y PIREP; clearForecast vuelve a la ruta sin colorear sin tocar la vista ni el avión', async () => {
+    reduced = true;
+    const m = await make();
+    m.setPlane({ lat: 40, lon: 1 }, { identity: ID });
+    const views = ctx.log.view.length;
+    m.setForecast({ route: [{ lat: 39, lon: 0, level: 3 }, { lat: 42, lon: 3, level: 3 }],
+      aviation: { sigmets: [{ coords: [{ lat: 39, lon: 0 }, { lat: 40, lon: 1 }, { lat: 41, lon: 0 }], label: 'S' }], pireps: [{ lat: 40, lon: 1, label: 'P' }] } });
+    expect(ctx.log.map.data.route.features[0].properties.level).toBe(3);
+    expect(ctx.log.map.data.sigmets.features).toHaveLength(1);
+    expect(ctx.log.map.data.pireps.features).toHaveLength(1);
     m.clearForecast();
-    expect(layers()).toEqual(fresh); // ruta gris y los dos aeropuertos, como recién creado
-    expect(views).toBe(before);
-    expect(ctx.log.markers).toHaveLength(1);
-    expect(ctx.log.removed).toBe(0); // el avión sigue
+    expect(ctx.log.map.data.route.features[0].properties.level).toBe(0);
+    expect(ctx.log.map.data.sigmets.features).toHaveLength(0);
+    expect(ctx.log.map.data.pireps.features).toHaveLength(0);
+    expect(ctx.log.view.length).toBe(views);
+    expect(ctx.log.markers[0].removed).toBe(false);
+  });
+  it('destroy quita el mapa', async () => {
+    const m = await make();
+    m.destroy();
+    expect(ctx.log.mapsRemoved).toBe(1);
+  });
+});
+
+// Movimiento continuo ENTRE POSICIONES REALES: A → B durante el intervalo del seguimiento, nunca más allá de la última
+// recibida; con la siguiente, sigue desde ahí (pasando por B, sin recortar).
+describe('createRouteMap: movimiento del avión', () => {
+  const A = { lat: 40, lon: 0 }, B = { lat: 40, lon: 1 }, C = { lat: 41, lon: 1 };
+
+  it('primera posición: directa, sin animación', async () => {
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    expect(shown()).toEqual([40, 0]);
+    expect(frames).toHaveLength(0);
   });
 
-  it('rechaza la promesa si Leaflet no carga', async () => {
-    delete globalThis.L;
-    await expect(createRouteMap(el(), OPTS)).rejects.toBeTruthy();
+  it('E) A → B: avanza poco a poco durante todo el intervalo y nunca pasa de B', async () => {
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    m.setPlane(B, { identity: ID });
+    const seen = run(PLANE_GLIDE_MS);
+    expect(ctx.log.markers).toHaveLength(1); // el mismo marcador
+    const lons = seen.map(p => p[1]);
+    for (let i = 1; i < lons.length; i++) expect(lons[i]).toBeGreaterThanOrEqual(lons[i - 1]); // siempre hacia delante
+    expect(lons.every(x => x <= 1)).toBe(true); // nunca más allá de B
+    const half = lons[Math.floor(lons.length / 2) - 1];
+    expect(half).toBeGreaterThan(0.35); // a mitad del intervalo, a medio camino (velocidad casi constante)
+    expect(half).toBeLessThan(0.65);
+    expect(lons.filter(x => x > 0 && x < 1).length).toBeGreaterThan(30); // continuo: decenas de posiciones intermedias
+    expect(shown()).toEqual([40, 1]); // termina exactamente en B
+  });
+
+  it('F) la lectura siguiente tarda: se queda en B (sin extrapolar) y sin más fotogramas', async () => {
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    m.setPlane(B, { identity: ID });
+    run(PLANE_GLIDE_MS + 1000);
+    const moves = ctx.log.markers[0].path.length;
+    advance(60000);
+    expect(shown()).toEqual([40, 1]);
+    expect(ctx.log.markers[0].path.length).toBe(moves);
+    expect(frames).toHaveLength(0);
+    expect(m.planeState().moving).toBe(false);
+  });
+
+  it('G) llega C: continúa B → C; si llega antes de acabar A → B, pasa por B (sin recortar) y no pasa de C', async () => {
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    m.setPlane(B, { identity: ID });
+    run(PLANE_GLIDE_MS / 2);
+    const mid = shown();
+    m.setPlane(C, { identity: ID });
+    advance(16);
+    expect(Math.abs(shown()[1] - mid[1])).toBeLessThan(0.05); // sin salto: parte de lo que se ve
+    const seen = run(PLANE_GLIDE_MS);
+    // Primero hacia el este hasta B (lat 40) y solo después hacia el norte: nunca en diagonal hacia C.
+    for (const [lat, lon] of seen) if (lat > 40) expect(lon).toBe(1);
+    expect(seen.every(([lat]) => lat <= 41)).toBe(true);
+    expect(shown()).toEqual([41, 1]);
+  });
+
+  it('H) prefers-reduced-motion: cada posición se coloca directamente, sin animación continua', async () => {
+    reduced = true;
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    m.setPlane(B, { identity: ID });
+    expect(shown()).toEqual([40, 1]);
+    expect(frames).toHaveLength(0);
+    expect(m.planeState().moving).toBe(false);
+  });
+
+  it('la misma lectura otra vez (repintado) no reinicia nada; null quita el avión y para el recorrido', async () => {
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    m.setPlane(A, { identity: ID });
+    expect(frames).toHaveLength(0);
+    m.setPlane(B, { identity: ID });
+    run(5000);
+    m.setPlane(null);
+    expect(ctx.log.markers[0].removed).toBe(true);
+    const moves = ctx.log.markers[0].path.length;
+    advance(5000);
+    expect(ctx.log.markers[0].path.length).toBe(moves);
+  });
+
+  it('otro avión u otro vuelo físico, o una posición que no es fresca: directa, nunca animada desde la anterior', async () => {
+    const m = await make();
+    m.setPlane(A, { identity: ID });
+    m.setPlane(B, { identity: 'v1|otro' });
+    expect(shown()).toEqual([40, 1]);
+    expect(frames).toHaveLength(0);
+    m.setPlane({ ...C, fresh: false }, { identity: 'v1|otro' });
+    expect(shown()).toEqual([41, 1]);
+    expect(frames).toHaveLength(0);
+    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(true); // última posición conocida: atenuada
+  });
+});
+
+describe('createRouteMap: orientación', () => {
+  const deg = () => Number(ctx.log.markers[0].rot.style.transform.match(/rotate\((-?[\d.]+)deg\)/)?.[1]);
+  it('el track real de FR24 manda (el icono apunta al este: rumbo − 90)', async () => {
+    const m = await make();
+    m.setPlane({ lat: 40, lon: 0, heading: 270 }, { identity: ID });
+    expect(Math.abs(deg())).toBe(180);
+  });
+  it('sin track, el rumbo entre dos posiciones reales; con una sola, sin rotación inventada', async () => {
+    const m = await make();
+    m.setPlane({ lat: 40, lon: 0 }, { identity: ID });
+    expect(ctx.log.markers[0].rot.style.transform).toBe('');
+    m.setPlane({ lat: 41, lon: 0 }, { identity: ID }); // hacia el norte → −90
+    expect(deg()).toBeCloseTo(-90, 0);
+  });
+  it('el giro va por el camino corto (260 → 280: 20°, no 340°)', async () => {
+    const m = await make();
+    m.setPlane({ lat: 40, lon: 0, heading: 260 }, { identity: ID });
+    m.setPlane({ lat: 40, lon: -0.1, heading: 280 }, { identity: ID });
+    expect(deg()).toBeCloseTo(190, 0);
+  });
+});
+
+describe('createRouteMap: estela real', () => {
+  const A = { lat: 40, lon: 0 }, B = { lat: 40, lon: 1 };
+  const PAST = [[39, -1], [39.5, -0.5], [40, 0]];
+
+  it('I) dos capas (halo ancho y semitransparente; línea de acento sólida) y la ruta prevista por debajo: fina, tenue y discontinua', async () => {
+    const m = await make();
+    m.setTrack(PAST, { identity: ID });
+    const [halo, core] = trail().o.layers;
+    expect(halo.width).toBeGreaterThan(core.width);
+    expect(halo.opacity).toBeLessThan(0.5);
+    expect(core).toMatchObject({ color: '#1A6FE0', opacity: 1 });
+    const route = ctx.log.lines.find(l => l.id === 'route');
+    expect(route.o.dashArray).toBeTruthy();
+    expect(route.o.layers[0].width).toBeLessThan(core.width);
+    expect(route.o.layers[0].opacity).toBeLessThan(1);
+    expect(trail().coords).toEqual(PAST);
+  });
+
+  it('I) una posición real nueva la prolonga y la línea crece DETRÁS del avión: B no se dibuja hasta que llega', async () => {
+    const m = await make();
+    m.setTrack(PAST, { identity: ID });
+    m.setPlane(A, { identity: ID });
+    m.setPlane(B, { identity: ID });
+    m.extendTrack([B.lat, B.lon], { identity: ID }); // lo que hace la app con cada posición fresca
+    run(PLANE_GLIDE_MS / 2);
+    const head = trail().coords.at(-1);
+    expect(head).toEqual(shown()); // la estela acaba en el avión que se ve
+    expect(trail().coords.some(c => c[0] === 40 && c[1] === 1)).toBe(false); // B aún no
+    run(PLANE_GLIDE_MS / 2 + 1000);
+    expect(trail().coords.at(-1)).toEqual([40, 1]);
+    expect(trail().coords.at(-2)).toEqual([40, 0]); // A, vértice real
+  });
+
+  it('J) una posición vieja (fresh: false) no la prolonga; tampoco repetir el último punto', async () => {
+    const m = await make();
+    m.setTrack(PAST, { identity: ID });
+    m.extendTrack([40.5, 0.5], { identity: ID, fresh: false });
+    m.extendTrack([40, 0], { identity: ID });
+    expect(trail().coords).toEqual(PAST);
+  });
+
+  it('K) otra identidad (otro fr24Id): no se mezcla; setTrack de otra identidad sustituye la estela; clearTrack la quita', async () => {
+    const m = await make();
+    m.setTrack(PAST, { identity: ID });
+    m.extendTrack([40.5, 0.5], { identity: 'v1|otro' });
+    expect(trail().coords).toEqual(PAST);
+    m.setTrack([[45, 5], [46, 6]], { identity: 'v1|otro' });
+    expect(trail().coords).toEqual([[45, 5], [46, 6]]);
+    expect(m.trackIdentity()).toBe('v1|otro');
+    m.clearTrack();
+    expect(trail().live).toBe(false);
+    expect(m.trackIdentity()).toBeNull();
+  });
+});
+
+describe('createRouteMap: cámara', () => {
+  it('en vuelo: la primera posición encuadra una vez; las lecturas siguientes no mueven la vista', async () => {
+    reduced = true;
+    const m = await make();
+    m.setPlane({ lat: 40, lon: 1 }, { identity: ID });
+    expect(ctx.log.view).toEqual(['fitBounds']);
+    m.setPlane({ lat: 40.2, lon: 1.2 }, { identity: ID });
+    m.setPlane({ lat: 40.4, lon: 1.4 }, { identity: ID });
+    expect(ctx.log.view).toEqual(['fitBounds']);
+  });
+  it('si el usuario ya ha movido el mapa, no se encuadra nada', async () => {
+    const m = await make();
+    ctx.log.map.fire('dragstart', { originalEvent: {} });
+    m.setPlane({ lat: 40, lon: 1 }, { identity: ID });
+    expect(ctx.log.view).toEqual([]);
+  });
+  it('aterrizado (sin avión): la estela encuadra la ruta realizada entera, una vez', async () => {
+    const m = await make();
+    m.setTrack([[39, 0], [41, 2], [42, 3]], { identity: ID });
+    m.setTrack([[39, 0], [41, 2], [42, 3]], { identity: ID });
+    expect(ctx.log.view).toEqual(['fitBounds']);
+  });
+  it('ampliado: la ruta entera y gestos normales; al cerrar, la vista y los gestos de antes', async () => {
+    const m = await make();
+    m.expanded(true);
+    expect(ctx.log.view).toEqual(['fitBounds']);
+    expect(ctx.log.map.cooperativeGestures.enabled).toBe(false);
+    m.expanded(false);
+    expect(ctx.log.view).toEqual(['fitBounds', 'jumpTo']);
+    expect(ctx.log.map.cooperativeGestures.enabled).toBe(true);
   });
 });
 
@@ -148,387 +318,5 @@ describe('routeLines', () => {
   it('agrupa tramos consecutivos del mismo nivel', () => {
     const r = [{ lat: 1, lon: 1, level: 0 }, { lat: 2, lon: 2, level: 0 }, { lat: 3, lon: 3, level: 2 }];
     expect(routeLines(r).map(l => l.level)).toEqual([0, 2]);
-  });
-});
-
-// Movimiento suave ENTRE POSICIONES REALES: de la que se ve a la nueva en ~2,5 s (requestAnimationFrame + setLatLng),
-// sin extrapolar más allá de la última, sin animar desde una posición perdida ni entre dos aviones distintos.
-describe('createRouteMap: movimiento suave del avión', () => {
-  let ctx, frames, t, reduced;
-  const clock = { raf: cb => { frames.push(cb); return frames.length; }, caf: id => { frames[id - 1] = null; }, now: () => t, reducedMotion: () => reduced };
-  // Avanza el reloj y ejecuta los fotogramas pendientes (como hace el navegador).
-  const advance = ms => { t += ms; const run = frames.splice(0); for (const f of run) f?.(t); };
-  const A = { lat: 40, lon: 0 }, B = { lat: 40, lon: 1 }, C = { lat: 41, lon: 1 };
-  const shown = () => ctx.log.markers.at(-1)?.ll;
-  beforeEach(() => { ctx = fakeLeaflet(); globalThis.L = ctx.L; frames = []; t = 1000; reduced = false; });
-  afterEach(() => { delete globalThis.L; });
-  const make = () => createRouteMap({ hidden: true }, OPTS, clock);
-
-  it('primera posición: el avión se coloca directamente, sin animación', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    expect(ctx.log.markers).toHaveLength(1);
-    expect(shown()).toEqual([40, 0]);
-    expect(frames).toHaveLength(0);
-  });
-
-  it('A → B: se desplaza en ~2,5 s por puntos intermedios y termina exactamente en B (nunca más allá)', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|abc' });
-    expect(ctx.log.markers).toHaveLength(1); // el mismo marcador, sin recrearlo
-    advance(1250);
-    const [lat, lon] = shown();
-    expect(lat).toBeCloseTo(40);
-    expect(lon).toBeGreaterThan(0);
-    expect(lon).toBeLessThan(1);
-    advance(1250);
-    expect(shown()).toEqual([40, 1]);
-    const moves = ctx.log.moved.length;
-    advance(5000); // sin lectura nueva: el avión se queda en B, no sigue avanzando
-    expect(shown()).toEqual([40, 1]);
-    expect(ctx.log.moved.length).toBe(moves);
-    expect(frames).toHaveLength(0);
-  });
-
-  it('el icono se orienta hacia la nueva posición (rumbo entre los dos puntos)', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|abc' }); // hacia el este: rumbo ≈ 90°, el icono ya apunta al este → ≈ 0°
-    const deg = Number(ctx.log.markers[0].rot.style.transform.match(/rotate\((-?[\d.]+)deg\)/)[1]);
-    expect(Math.abs(deg)).toBeLessThan(1);
-    advance(2500); // llega a B
-    m.setPlane(C, { identity: 'v1|abc' }); // de B hacia el norte: ≈ −90°
-    expect(Number(ctx.log.markers[0].rot.style.transform.match(/rotate\((-?[\d.]+)deg\)/)[1])).toBeCloseTo(-90, 0);
-  });
-
-  it('una nueva lectura a mitad de animación parte de la posición que se está mostrando (sin saltos)', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|abc' });
-    advance(1250);
-    const mid = shown();
-    m.setPlane(C, { identity: 'v1|abc' });
-    advance(16);
-    const next = shown();
-    expect(Math.abs(next[0] - mid[0]) + Math.abs(next[1] - mid[1])).toBeLessThan(0.05);
-    advance(2500);
-    expect(shown()).toEqual([41, 1]);
-  });
-
-  it('la misma posición otra vez (repintado de la ficha) no reinicia nada', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(A, { identity: 'v1|abc' });
-    expect(frames).toHaveLength(0);
-    expect(ctx.log.moved).toHaveLength(0);
-  });
-
-  it('posición de más de 60 s (null) durante la animación: se cancela y el avión desaparece', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|abc' });
-    advance(500);
-    m.setPlane(null);
-    expect(ctx.log.removed).toBeGreaterThan(0);
-    const moves = ctx.log.moved.length;
-    advance(3000);
-    expect(ctx.log.moved.length).toBe(moves); // ningún fotograma más
-  });
-
-  it('pérdida y recuperación: la nueva posición se coloca directamente (nunca animada desde la antigua)', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(null);
-    m.setPlane(C, { identity: 'v1|abc' });
-    expect(ctx.log.markers).toHaveLength(2);
-    expect(shown()).toEqual([41, 1]);
-    expect(frames).toHaveLength(0);
-  });
-
-  it('cambio de avión identificado o de vuelo físico: salto directo, sin animación entre ambos', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|def' });
-    expect(shown()).toEqual([40, 1]);
-    expect(frames).toHaveLength(0);
-    m.setPlane(C, { identity: 'v2|def' });
-    expect(shown()).toEqual([41, 1]);
-    expect(frames).toHaveLength(0);
-  });
-
-  it('prefers-reduced-motion: reduce → sin animación, el marcador va directo a la nueva posición', async () => {
-    reduced = true;
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|abc' });
-    expect(shown()).toEqual([40, 1]);
-    expect(frames).toHaveLength(0);
-  });
-
-  it('destroy cancela la animación en curso', async () => {
-    const m = await make();
-    m.setPlane(A, { identity: 'v1|abc' });
-    m.setPlane(B, { identity: 'v1|abc' });
-    m.destroy();
-    const moves = ctx.log.moved.length;
-    advance(3000);
-    expect(ctx.log.moved.length).toBe(moves);
-  });
-});
-
-// Estela real (FR24 Flight Tracks): una polilínea sólida y marcada (acento) encima de la ruta prevista, que pasa a ser
-// tenue y discontinua. Termina en el avión: mientras se anima A → B su último vértice sigue al avión (la MISMA polilínea,
-// setLatLngs), nunca más allá de B. Sin avión, se queda tal cual. Otra identidad: nunca se mezcla.
-describe('createRouteMap: estela real del vuelo', () => {
-  let lines, frames, t;
-  const clock = { raf: cb => { frames.push(cb); return frames.length; }, caf: id => { frames[id - 1] = null; }, now: () => t, reducedMotion: () => false };
-  const advance = ms => { t += ms; const run = frames.splice(0); for (const f of run) f?.(t); };
-  beforeEach(() => {
-    const ctx = fakeLeaflet();
-    lines = [];
-    ctx.L.polyline = (coords, o = {}) => {
-      const l = { coords, o, live: false, fronts: 0, sets: 0, addTo() { this.live = true; lines.push(this); return this; }, bindTooltip() { return this; },
-        remove() { this.live = false; }, setLatLngs(c) { this.coords = c; this.sets++; return this; }, bringToFront() { this.fronts++; return this; } };
-      return l;
-    };
-    globalThis.L = ctx.L;
-    frames = [];
-    t = 1000;
-  });
-  afterEach(() => { delete globalThis.L; });
-  const make = () => createRouteMap({ hidden: true }, OPTS, clock);
-  const live = () => lines.filter(l => l.live);
-  const trail = () => live().filter(l => !l.o.dashArray);
-  const route = () => live().filter(l => l.o.dashArray);
-  const ID = 'v1|3c4d5e6f';
-  const P = [[39, 3], [39.5, 2.8], [40, 2.5]];
-
-  it('la ruta prevista es siempre tenue y discontinua (también coloreada por setForecast)', async () => {
-    const m = await make();
-    expect(route()).toHaveLength(1);
-    expect(route()[0].o.opacity).toBeLessThanOrEqual(0.6);
-    m.setForecast({ route: [{ lat: 39, lon: 3, level: 0 }, { lat: 40, lon: 2.5, level: 2 }, { lat: 41, lon: 2, level: 2 }] });
-    expect(live().every(l => l.o.dashArray && l.o.opacity <= 0.6)).toBe(true);
-  });
-
-  it('1) setTrack dibuja una polilínea sólida, de acento y más gruesa, encima de la ruta (también tras setForecast)', async () => {
-    const m = await make();
-    m.setTrack(P, { identity: ID });
-    expect(trail()).toHaveLength(1);
-    const [l] = trail();
-    expect(l.coords).toEqual(P);
-    expect(l.o).toMatchObject({ color: '#1A6FE0', weight: 4 });
-    expect(l.o.opacity).toBeGreaterThan(0.8);
-    expect(m.trackIdentity()).toBe(ID);
-    const fronts = l.fronts;
-    m.setForecast({ route: OPTS.route });
-    expect(l.fronts).toBeGreaterThan(fronts); // la ruta redibujada no la tapa
-    m.clearForecast();
-    expect(trail()).toEqual([l]); // clearForecast no toca la estela
-  });
-
-  it('termina en el avión de la misma identidad; la de otra identidad no se une', async () => {
-    const m = await make();
-    m.setPlane({ lat: 40.2, lon: 2.4 }, { identity: ID });
-    m.setTrack(P, { identity: ID });
-    expect(trail()[0].coords).toEqual([...P, [40.2, 2.4]]);
-    const other = await make();
-    other.setPlane({ lat: 40.2, lon: 2.4 }, { identity: 'v1|otro' });
-    other.setTrack(P, { identity: ID });
-    expect(trail().at(-1).coords).toEqual(P);
-  });
-
-  it('6) extendTrack añade un punto real (sin duplicar el último); con otra identidad, nada', async () => {
-    const m = await make();
-    m.setTrack(P, { identity: ID });
-    m.extendTrack([40.3, 2.3], { identity: ID });
-    m.extendTrack([40.3, 2.3], { identity: ID });
-    m.extendTrack([41, 1], { identity: 'v1|otro' });
-    expect(trail()).toHaveLength(1);
-    expect(trail()[0].coords).toEqual([...P, [40.3, 2.3]]);
-  });
-
-  it('10) A → B: la cabeza sigue al avión en cada fotograma (la MISMA polilínea) y termina exactamente en B', async () => {
-    const m = await make();
-    const A = { lat: 40, lon: 2.5 }, B = { lat: 40.4, lon: 2.1 };
-    m.setPlane(A, { identity: ID });
-    m.setTrack(P, { identity: ID });
-    m.setPlane(B, { identity: ID });
-    m.extendTrack([B.lat, B.lon], { identity: ID }); // la lectura real B, recibida a la vez que empieza la animación
-    const [l] = trail();
-    expect(l.coords.at(-1)).toEqual([40, 2.5]); // aún en A: la estela no se adelanta al avión
-    advance(1250);
-    const head = l.coords.at(-1);
-    expect(head[0]).toBeGreaterThan(40);
-    expect(head[0]).toBeLessThan(40.4);
-    expect(l.coords.filter(c => c[0] === 40.4)).toHaveLength(0); // B todavía no es vértice
-    advance(1250);
-    expect(l.coords.at(-1)).toEqual([40.4, 2.1]);
-    expect(l.coords.filter(c => c[0] === 40.4 && c[1] === 2.1)).toHaveLength(1);
-    advance(5000);
-    expect(l.coords.at(-1)).toEqual([40.4, 2.1]); // nunca más allá de B
-    expect(trail()).toEqual([l]);
-    expect(lines.filter(x => !x.o.dashArray)).toHaveLength(1); // ninguna capa nueva: sin parpadeos
-  });
-
-  it('el avión desaparece (posición > 60 s): la estela se queda tal cual, sin cabeza', async () => {
-    const m = await make();
-    m.setPlane({ lat: 40.2, lon: 2.4 }, { identity: ID });
-    m.setTrack(P, { identity: ID });
-    m.extendTrack([40.2, 2.4], { identity: ID });
-    m.setPlane(null);
-    expect(trail()[0].coords).toEqual([...P, [40.2, 2.4]]);
-  });
-
-  it('5) setTrack de otra identidad sustituye la anterior; clearTrack la quita', async () => {
-    const m = await make();
-    m.setTrack(P, { identity: ID });
-    const first = trail()[0];
-    m.setTrack([[41, 1], [41.1, 1.1]], { identity: 'v1|7a8b9c0d' });
-    expect(first.live).toBe(false);
-    expect(trail()).toHaveLength(1);
-    expect(trail()[0].coords).toEqual([[41, 1], [41.1, 1.1]]);
-    m.clearTrack();
-    expect(trail()).toHaveLength(0);
-    expect(m.trackIdentity()).toBeNull();
-    m.extendTrack([41, 1], { identity: 'v1|7a8b9c0d' });
-    expect(trail()).toHaveLength(0);
-  });
-});
-
-// Orientación REAL del avión (track de Flightradar24, 0 = norte, 90 = este; el SVG apunta al este → rotación = rumbo − 90)
-// y «última posición conocida» (fresh: false: quieto, atenuado con .plane-old, sin animación ni estela).
-describe('createRouteMap: orientación real y última posición conocida', () => {
-  let ctx, frames, t, lines;
-  const clock = { raf: cb => { frames.push(cb); return frames.length; }, caf: id => { frames[id - 1] = null; }, now: () => t, reducedMotion: () => false };
-  const advance = ms => { t += ms; const run = frames.splice(0); for (const f of run) f?.(t); };
-  beforeEach(() => {
-    ctx = fakeLeaflet();
-    lines = [];
-    // Marcador con un .plane-rot de verdad (estilo y clases), para leer la rotación y el atenuado.
-    ctx.L.marker = (ll, o) => {
-      const cls = new Set();
-      const rot = { style: {}, classList: { toggle: (c, on) => { if (on) cls.add(c); else cls.delete(c); }, contains: c => cls.has(c) } };
-      const m = { addTo() { return this; }, remove() { ctx.log.removed++; }, ll, o, rot, cls,
-        setLatLng(p) { ctx.log.moved.push(p); this.ll = p; return this; }, getElement() { return { querySelector: () => rot }; } };
-      ctx.log.markers.push(m);
-      return m;
-    };
-    ctx.L.polyline = (coords, o = {}) => ({ coords, o, live: false, addTo() { this.live = true; lines.push(this); return this; }, bindTooltip() { return this; },
-      remove() { this.live = false; }, setLatLngs(c) { this.coords = c; return this; }, bringToFront() { return this; } });
-    globalThis.L = ctx.L;
-    frames = [];
-    t = 1000;
-  });
-  afterEach(() => { delete globalThis.L; });
-  const make = () => createRouteMap({ hidden: true }, OPTS, clock);
-  const deg = (m = ctx.log.markers.at(-1)) => {
-    const tr = m.rot.style.transform;
-    if (tr === '') return null;
-    return tr ? Number(tr.match(/rotate\((-?[\d.]+)deg\)/)[1]) : null;
-  };
-  const P = (over = {}) => ({ lat: 40, lon: 0, fresh: true, heading: null, ...over });
-  const ID = 'v1|3c4d5e6f';
-
-  it('ORIENTACIÓN 1) primera posición con track 270 → oeste (±180°), sin girar 360°', async () => {
-    const m = await make();
-    m.setPlane(P({ heading: 270 }), { identity: ID });
-    expect(Math.abs(deg())).toBe(180);
-    expect(frames).toHaveLength(0);
-  });
-  it('ORIENTACIÓN 2–4) track 90 → este (0°), 0 → norte (−90°), 180 → sur (90°), ya en la primera colocación', async () => {
-    for (const [heading, want] of [[90, 0], [0, -90], [180, 90]]) {
-      const m = await make();
-      m.setPlane(P({ heading }), { identity: ID });
-      expect(deg(), String(heading)).toBe(want);
-    }
-  });
-  it('ORIENTACIÓN 5) una lectura nueva cambia el rumbo sin recrear marcador ni mapa, también sin moverse', async () => {
-    const m = await make();
-    m.setPlane(P({ heading: 90 }), { identity: ID });
-    m.setPlane(P({ heading: 180 }), { identity: ID }); // misma posición, otro rumbo medido
-    expect(deg()).toBe(90);
-    m.setPlane(P({ lon: 1, heading: 0 }), { identity: ID }); // A → B con rumbo real: manda el track, no el bearing
-    expect(deg()).toBe(-90);
-    expect(ctx.log.markers).toHaveLength(1);
-    expect(ctx.log.mapRemoved).toBe(0);
-  });
-  it('el giro va por el camino corto: de 170° a −170° (rumbos 260 → 280) gira 20°, no 340°', async () => {
-    const m = await make();
-    m.setPlane(P({ heading: 260 }), { identity: ID });
-    expect(deg()).toBe(170);
-    m.setPlane(P({ heading: 280 }), { identity: ID });
-    expect(deg()).toBe(190); // equivalente a −170°, a 20° del anterior
-    m.setPlane(P({ heading: 90 }), { identity: ID });
-    expect(deg()).toBe(360); // 0° por el camino corto desde 190°
-  });
-  it('ORIENTACIÓN 6) sin track con A y B reales → rumbo A → B (como siempre)', async () => {
-    const m = await make();
-    m.setPlane(P(), { identity: ID });
-    m.setPlane(P({ lat: 41 }), { identity: ID }); // hacia el norte
-    expect(deg()).toBeCloseTo(-90, 0);
-  });
-  it('cambio de avión o de identidad sin track: no hereda la rotación del avión anterior', async () => {
-    const m = await make();
-    m.setPlane(P({ heading: 0 }), { identity: ID });
-    expect(deg()).toBe(-90);
-    m.setPlane(P({ lon: 1 }), { identity: 'v1|otro' }); // otro avión, sin track
-    expect(deg()).toBeNull();
-    m.setPlane(P({ lon: 1.2, heading: 180 }), { identity: 'v1|otro' });
-    expect(deg()).toBe(90); // y el primer rumbo del nuevo, normalizado desde cero
-  });
-  it('ORIENTACIÓN 7) primera posición sin track → sin rotación inventada (el icono se queda como está)', async () => {
-    const m = await make();
-    m.setPlane(P(), { identity: ID });
-    expect(deg()).toBeNull();
-    m.setPlane(P(), { identity: ID }); // repintado de la misma lectura, sin track: tampoco
-    expect(deg()).toBeNull();
-  });
-  it('última posición conocida (fresh: false): quieta y atenuada; NO anima aunque cambie, y vuelve a normal con una fresca', async () => {
-    const m = await make();
-    m.setPlane(P(), { identity: ID });
-    const [mk] = ctx.log.markers;
-    expect(mk.cls.has('plane-old')).toBe(false);
-    m.setPlane(P({ fresh: false }), { identity: ID }); // la misma lectura envejece (más de 60 s)
-    expect(mk.cls.has('plane-old')).toBe(true);
-    expect(frames).toHaveLength(0);
-    expect(ctx.log.moved).toHaveLength(0);
-    m.setPlane(P({ lon: 0.5, fresh: false }), { identity: ID }); // una lectura vieja con otra posición: directa, sin animar
-    expect(frames).toHaveLength(0);
-    expect(mk.ll).toEqual([40, 0.5]);
-    m.setPlane(P({ lon: 1 }), { identity: ID }); // fresca del mismo avión: anima desde lo que se ve
-    expect(mk.cls.has('plane-old')).toBe(false);
-    expect(frames.length).toBeGreaterThan(0);
-    advance(1250);
-    expect(mk.ll[1]).toBeGreaterThan(0.5);
-    expect(mk.ll[1]).toBeLessThan(1);
-    advance(1250);
-    expect(mk.ll).toEqual([40, 1]);
-    expect(ctx.log.markers).toHaveLength(1);
-  });
-  it('fresh: false con dim: false (seguimiento al día): quieta y SIN atenuar; tampoco anima', async () => {
-    const m = await make();
-    m.setPlane(P(), { identity: ID });
-    m.setPlane(P({ fresh: false, dim: false }), { identity: ID });
-    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(false);
-    m.setPlane(P({ lon: 0.4, fresh: false, dim: false }), { identity: ID });
-    expect(frames).toHaveLength(0);
-    m.setPlane(P({ lon: 0.4, fresh: false, dim: true }), { identity: ID });
-    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(true);
-  });
-  it('se crea ya atenuada si la primera posición es la última conocida', async () => {
-    const m = await make();
-    m.setPlane(P({ fresh: false, heading: 0 }), { identity: ID });
-    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(true);
-    expect(deg()).toBe(-90);
-  });
-  it('FALLOS 22) una posición vieja no prolonga la estela (extendTrack con fresh: false no añade nada)', async () => {
-    const m = await make();
-    m.setTrack([[39, 3], [40, 0]], { identity: ID });
-    m.setPlane(P(), { identity: ID });
-    m.extendTrack([40, 0.5], { identity: ID, fresh: false });
-    const trail = lines.filter(l => l.live && !l.o.dashArray)[0];
-    expect(trail.coords).toEqual([[39, 3], [40, 0]]);
   });
 });

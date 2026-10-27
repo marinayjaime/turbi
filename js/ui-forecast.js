@@ -3,8 +3,7 @@
 import { esc, kv, flightCardHtml, formatDuration, TURB_LEVELS, DISCLAIMER, turbCardHtml, turbPlainCardHtml, turbGeneralHtml,
   turbTimelineHtml, segListHtml } from './ui.js';
 import { icon } from './icons.js';
-import { roughestSpan, weatherAlerts, flightPhase, formatCountdown } from './card-model.js';
-import { mapCardHtml } from './map.js';
+import { roughestSpan, weatherAlerts, formatCountdown } from './card-model.js';
 import { advancedShellHtml } from './ui-advanced.js';
 import { CAUSE_LABELS } from './turbi-index.js';
 import { NO_PIREPS } from './aviation-weather.js';
@@ -256,12 +255,12 @@ export const forecastLoadingHtml = () => turbPlainCardHtml(`
 // compara con ENDED_ESTIMATED / NO_ARRIVAL_NOTE para sustituirlo.
 export const forecastNoteHtml = note => turbPlainCardHtml(`<p class="note">${esc(note)}</p>`);
 
-function headHtml(view, nowMs) {
+function headHtml(view, nowMs, { mapSlot = false } = {}) {
   // La puntualidad va dentro del «Horario» de la ficha (#punctuality): aquí solo su contenido inicial (situación de hoy).
   // El título «Turbulencias» ya no va aquí: lo lleva la propia tarjeta, dentro de #forecast-area.
   const punctualityBody = view.punctuality ? punctualityHtml(view.punctuality) : '';
   const head = view.flight
-    ? flightCardHtml(view.flight, { nowMs, punctualityBody })
+    ? flightCardHtml(view.flight, { nowMs, punctualityBody, mapSlot })
     : `<div class="card query-head"><p class="route">${esc(view.title)}</p><p class="sub">${esc(view.subtitle)} · ${esc(view.times)}</p>${view.sourceInfo ? `<p class="note-small source-info">${esc(view.sourceInfo)}</p>` : ''}</div>`;
   return `
     <div class="summary">
@@ -270,28 +269,26 @@ function headHtml(view, nowMs) {
     </div>`;
 }
 
-// Bloques que siguen a #forecast-area, en su orden fijo (§9 bis): la tarjeta del mapa (título según la fase),
-// «Detalles avanzados» y, al final de la ficha, el aviso legal (§5.7). Nunca cambian de sitio: un vuelo que pasa de
-// programado a en curso y a finalizado no recrea el nodo de Leaflet, y cuando una nota sustituye al pronóstico ni el
-// mapa, ni los detalles, ni el aviso legal desaparecen.
-const afterForecastHtml = (phase, { map = true } = {}) => `${map ? `
-    ${mapCardHtml(phase)}` : ''}${advancedShellHtml()}
+// Bloques que siguen a #forecast-area, en su orden fijo (§9 bis): «Detalles avanzados» y, al final de la ficha, el aviso
+// legal (§5.7). El mapa ya no va aquí: en el aire o aterrizado es parte de la propia ficha (#map-slot, flightCardHtml);
+// cuando una nota sustituye al pronóstico, ni los detalles ni el aviso legal desaparecen.
+const afterForecastHtml = () => `${advancedShellHtml()}
     ${DISCLAIMER}`;
 
-// Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar), puntualidad, la
-// tarjeta de turbulencias aún calculando, el mapa y Detalles avanzados.
+// Armazón que se pinta en cuanto se conoce el vuelo: ficha (Aena, horas, foto, estado, radar y, en el aire o aterrizado,
+// el hueco del mapa), puntualidad, la tarjeta de turbulencias aún calculando y Detalles avanzados.
 export function flightShellHtml({ flight, punctuality = null }) {
-  return `${headHtml({ flight, punctuality })}
+  return `${headHtml({ flight, punctuality }, undefined, { mapSlot: true })}
     <div id="forecast-area">${forecastLoadingHtml()}
-    </div>${afterForecastHtml(flightPhase(flight))}`;
+    </div>${afterForecastHtml()}`;
 }
 
 // Ficha con aviso (vuelo terminado, sin hora de llegada, cancelado, demasiado lejano…): no hay previsión que calcular,
 // pero la tarjeta Turbulencias está siempre y dice por qué.
 export function flightNoteHtml({ flight, punctuality = null, note }) {
-  return `${headHtml({ flight, punctuality })}
+  return `${headHtml({ flight, punctuality }, undefined, { mapSlot: true })}
     <div id="forecast-area">${forecastNoteHtml(note)}
-    </div>${afterForecastHtml(flightPhase(flight))}`;
+    </div>${afterForecastHtml()}`;
 }
 
 export function forecastUnavailableHtml(err) {
@@ -327,12 +324,11 @@ export function forecastSectionHtml(view, nowMs, { open = new Set() } = {}) {
   return turbCardHtml({ open, summary, body });
 }
 
-// Todo junto (pronóstico guardado sin conexión y consultas manuales), con el mismo orden de bloques que la ficha.
-// El guardado no lleva mapa: sin conexión no se pide nada a la red (ni Leaflet ni teselas), como antes.
+// Todo junto (pronóstico guardado sin conexión y consultas manuales), con el mismo orden de bloques que la ficha. Sin
+// mapa: el guardado no pide nada a la red y una consulta manual es siempre un vuelo aún por hacer.
 export function renderForecast(el, view, nowMs) {
   el.innerHTML = `${headHtml(view, nowMs)}
-    <div id="forecast-area">${forecastSectionHtml(view, nowMs)}</div>${
-  afterForecastHtml(view.flight ? flightPhase(view.flight) : 'programado', { map: !view.saved })}`;
+    <div id="forecast-area">${forecastSectionHtml(view, nowMs)}</div>${afterForecastHtml()}`;
 }
 
 export { formatDuration };

@@ -99,7 +99,7 @@ describe('zona horaria IANA del aeropuerto: siempre estática, nunca Open-Meteo'
   });
   it('la app ya no tiene ningún código que pida la zona horaria a Open-Meteo', () => {
     expect('fetchTimezone' in weather).toBe(false);
-    for (const f of readdirSync('js')) expect(readFileSync(`js/${f}`, 'utf8'), f).not.toMatch(/timezone['"]?\s*[:,]\s*['"]auto/);
+    for (const f of readdirSync('js').filter(n => n.endsWith('.js'))) expect(readFileSync(`js/${f}`, 'utf8'), f).not.toMatch(/timezone['"]?\s*[:,]\s*['"]auto/);
   });
   it('horario de verano e invierno con los identificadores (Intl hace el cambio)', () => {
     const tz = c => findAirport(db, c).tz;

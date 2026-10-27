@@ -23,7 +23,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
   weatherAlertsHtml, turbNowHtml, turbNowMarkHtml } from './ui-forecast.js';
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
-import { createRouteMap, wireMapCard, mapTitle, mapFactsHtml } from './map.js';
+import { createRouteMap, wireMapCard, mapTitle, mapHeroHtml } from './map.js';
 import { flightPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
 import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
@@ -859,7 +859,7 @@ async function run(q, handoff = null) {
   stopRadarPoll(); // la búsqueda anterior deja de sondear el radar
   stopStatusRefresh(); // y de refrescar el estado de Aena
   const same = handoff && handoff.key === physicalOf(q) ? handoff : null;
-  // El mapa se queda fuera de clearFicha y lo recoge mountMap con el armazón nuevo. Dos pulsaciones seguidas: la
+  // El mapa se queda fuera de clearFicha y lo recoge syncMap con el armazón nuevo. Dos pulsaciones seguidas: la
   // segunda hereda el que conservó la primera y aún no se montó (si no, clearFicha lo destruiría).
   const kept = same ? (keptMap ?? keepMap()) : null;
   if (kept) keptMap = null;
@@ -1065,21 +1065,23 @@ const safely = async fn => { try { await fn(); } catch { /* mejora opcional: si 
 // ---- Presentación de la ficha (rediseño, spec 2026-10-20 §9 bis, §10.2 y §10 bis) ----
 // Solo cómo se pinta: nada de aquí decide cuándo se consulta el radar o Aena, qué nota se muestra ni la ETA.
 let shownCard = null; // la tarjeta del vuelo que hay en pantalla (armazón, repaintFlight o pronóstico guardado)
-let routeMap = null; // el mapa Leaflet de la ficha: uno solo, sobre el #map de la ficha actual
+let routeMap = null; // el mapa (MapLibre) de la ficha: uno solo, sobre el #map del mapa protagonista (heroNode)
+let heroNode = null; // el #map-card del mapa: fuera del HTML que se repinta, colocado en el #map-slot de la ficha
+let mapFailed = false; // el mapa de esta ficha no se pudo crear (sin MapLibre, WebGL o red): no se reintenta en cada repintado
 let mapToken = 0; // un mapa que termina de crearse cuando su ficha ya no está se destruye en el acto
 let signalTimer = null;
 
-function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; }
+function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; heroNode?.remove(); heroNode = null; }
 // La ficha deja de estar (otra búsqueda, «Nueva consulta», pantalla de elección, pronóstico guardado): fuera su mapa
 // (también uno conservado por «Actualizar» que aún no se montó), el avión retenido y los desplegables pendientes.
 // No va en stopRadarPoll: applyAenaLeg para el radar con la llegada final y el mapa se queda («Ruta realizada»). También
 // el seguimiento en vivo y la última posición real conocida.
-function clearFicha() { destroyMap(); dropKeptMap(); stopPlaneTimer(); stopLive(); lastFix = null; reopen.clear(); stopSignal(); shownCard = null; }
+function clearFicha() { destroyMap(); mapFailed = false; dropKeptMap(); stopPlaneTimer(); stopLive(); lastFix = null; reopen.clear(); stopSignal(); shownCard = null; }
 
 // ---- «Actualizar» del mismo vuelo físico (decisión de 20/10/2026; solo presentación) ----
 // La consulta es la de siempre (submit → run: Aena, radar con su pollRadar, pronóstico, puntualidad); solo cambia cómo
 // se sustituye la ficha si es del MISMO vuelo físico (physicalFlightKey del tramo de Aena o adbKey de AeroDataBox):
-// el #map-card con su mapa Leaflet pasa a la ficha nueva (sin destruirlo, recentrarlo ni cambiar el zoom), los
+// el mapa (#map-card, MapLibre) pasa a la ficha nueva (sin destruirlo, recentrarlo ni cambiar el zoom), los
 // desplegables abiertos se vuelven a abrir, el scroll se restaura y no se muestra la pantalla de carga. Otra clave u
 // otra clase de consulta: como siempre.
 const physicalOf = q => (q?.kind === 'schedule' ? physicalFlightKey(q.leg) : q?.kind === 'adb' ? q.adbKey : q?.kind === 'fr24' ? q.fr24Key : null);
@@ -1093,27 +1095,28 @@ function restoreScroll(y) {
   if (scroller && scroller.scrollTop !== y) scroller.scrollTop = y;
 }
 // El mapa de la ficha en pantalla, con la tarjeta que lo pintó (su avión): routeMap queda libre para clearFicha. Sin
-// mapa (Leaflet no ha cargado o aún se está creando), nada: mountMap crea uno, como siempre.
+// mapa (MapLibre no ha cargado o aún se está creando), nada: mountMap crea uno, como siempre.
 let keptMap = null;
 function keepMap() {
-  const node = $in('map-card');
+  const node = heroNode;
   if (!routeMap || !node) return null;
   const kept = { node, map: routeMap, card: shownCard };
   routeMap = null;
+  heroNode = null; // sigue en pantalla hasta que se pinte la ficha nueva (no lo destruye clearFicha)
   return kept;
 }
 function dropKeptMap() { keptMap?.map.destroy(); keptMap = null; }
-// El #map-card recién pintado se sustituye por el conservado. Sus botones ya están cableados (wireMapCard busca
-// routeMap al pulsar): no se vuelven a cablear. Sin fitBounds ni otro L.map. El pronóstico anterior se quita (si el
-// nuevo falla, no queda coloreado con datos viejos) y lo vuelve a poner forecastExtras.
-function adoptMap(fresh) {
+// El mapa conservado va al #map-slot de la ficha nueva. Sus botones ya están cableados (wireMapCard busca routeMap al
+// pulsar): no se vuelven a cablear. Sin encuadrar ni otro mapa. El pronóstico anterior se quita (si el nuevo falla, no
+// queda coloreado con datos viejos) y lo vuelve a poner forecastExtras.
+function adoptMap(slot) {
   const { node, map, card: prev } = keptMap;
   keptMap = null;
-  fresh.replaceWith(node);
+  slot.replaceChildren(node);
+  heroNode = node;
   routeMap = map;
   const title = node.querySelector('.card-title');
   if (title) title.textContent = mapTitle(flightPhase(shownCard));
-  paintMapFacts(shownCard);
   map.invalidate();
   // Como recién creado: la ruta sin colorear, sin SIGMET ni PIREP; el pronóstico nuevo la colorea (forecastExtras).
   map.clearForecast();
@@ -1293,16 +1296,30 @@ function paintNow() {
   slot.hidden = false;
 }
 
-// Mapa de la ficha (Ruta prevista / Radar / Ruta realizada): se crea en cuanto se pinta el armazón, con la ruta en
-// círculo máximo (sin meteorología) y los aeropuertos; setForecast la colorea cuando hay pronóstico y setPlane pone o
-// quita el avión. Leaflet es prescindible: si no carga, la tarjeta se queda sin mapa y nada más cambia.
-function mountMap(q, stale) {
-  const card = $in('map-card'), el = $in('map');
-  if (!card || !el || !q?.origin || !q?.destination) { dropKeptMap(); return; } // sin hueco: el conservado, fuera
-  if (keptMap) { adoptMap(card); return; } // «Actualizar» del mismo vuelo físico: el mapa de antes, tal cual
+// Mapa del vuelo (Radar / Ruta realizada; js/map.js): SOLO en el aire o aterrizado con evidencia real (mapPhase,
+// js/card-model.js: nunca por haber pasado la hora de salida ni embarcando). La ficha deja el hueco #map-slot y aquí se pone el mapa: se crea al
+// pintarla en esa fase o al entrar en ella con la ficha abierta (repaintFlight), se conserva entre repintados y en
+// «Actualizar», y se quita si la ficha deja de tenerlo (cancelada o desviada). Antes de volar, ni mapa ni hueco. Ruta
+// en círculo máximo (sin meteorología) y aeropuertos; setForecast la colorea cuando hay pronóstico y setPlane pone o
+// quita el avión. MapLibre es prescindible: si no carga, el hueco queda vacío (no ocupa sitio) y nada más cambia.
+function syncMap(q, stale) {
+  const slot = $in('map-slot');
+  if (!slot || !q?.origin || !q?.destination) { destroyMap(); dropKeptMap(); return; } // sin hueco: sin mapa
+  if (heroNode) {
+    if (heroNode.parentNode !== slot) { slot.replaceChildren(heroNode); routeMap?.invalidate(); }
+    return;
+  }
+  if (keptMap) { adoptMap(slot); return; } // «Actualizar» del mismo vuelo físico: el mapa de antes, tal cual
+  if (!mapFailed) mountMap(q, stale, slot);
+}
+function mountMap(q, stale, slot) {
   destroyMap();
+  slot.innerHTML = mapHeroHtml(flightPhase(shownCard ?? {}));
+  heroNode = slot.firstElementChild;
+  const card = heroNode, el = heroNode.querySelector('#map');
   const token = mapToken;
-  wireMapCard(card, { invalidate: () => routeMap?.invalidate() }, loadTrackOnDemand); // el mapa aún se está creando: se busca al pulsar
+  // El mapa aún se está creando: se busca al pulsar.
+  wireMapCard(card, { expanded: on => routeMap?.expanded?.(on) }, loadTrackOnDemand);
   let route;
   try { route = buildRoute(q.origin, q.destination, 0).points; } catch { return; }
   createRouteMap(el, { origin: q.origin, destination: q.destination, route }).then(m => {
@@ -1310,7 +1327,12 @@ function mountMap(q, stale) {
     routeMap = m;
     if (currentView?.route) m.setForecast(currentView);
     showPlane(m, shownCard);
-  }).catch(() => {});
+  }).catch(() => {
+    // Sin mapa: fuera su nodo (el hueco vacío no ocupa sitio) y la ficha sigue igual, con todos los datos en texto.
+    if (token !== mapToken) return;
+    mapFailed = true;
+    destroyMap();
+  });
 }
 
 // Avión en el mapa: posición real de 60 s o menos (planeOnMap) y la identidad de esa lectura (vuelo físico + avión
@@ -1425,20 +1447,13 @@ async function requestTrack(map, card, fr24Id, asked, { load = false } = {}) {
   if (cur.radar?.fr24Id) syncTrack(map, cur); // hasta el avión, si está en el mapa
 }
 
-// Indicativo, Avión e Identificación bajo el mapa (mapFactsHtml): solo en el aire con el radar «volando».
-function paintMapFacts(card) {
-  const el = $in('map-facts');
-  if (el) el.innerHTML = mapFactsHtml(card);
-}
-
 // Lo común del armazón (ficha con pronóstico o con nota): Detalles avanzados y el mapa.
 function initFicha(q, flight, stale) {
   shownCard = flight;
   syncTurbArea(flight);
   paintAdvancedFlight(flight);
-  paintMapFacts(flight);
   paintHistory(null);
-  mountMap(q, stale);
+  syncMap(q, stale);
   startSignal(flight, stale);
 }
 
@@ -1453,16 +1468,17 @@ function repaintFlight(card, stale) {
   const top = scroller?.scrollTop ?? 0, resultTop = els.result.scrollTop;
   const punct = el.querySelector('#punctuality');
   punct?.remove();
-  el.outerHTML = flightCardHtml(withCalm(withTurbEstimate(card)), { open, nowMs: Date.now(), monoMs: monoNow() });
+  heroNode?.remove(); // el mapa se conserva (syncMap lo vuelve a poner en el hueco de la ficha nueva, si lo tiene)
+  el.outerHTML = flightCardHtml(withCalm(withTurbEstimate(card)), { open, nowMs: Date.now(), monoMs: monoNow(), mapSlot: true });
   const slot = els.result.querySelector('.flight #punctuality');
   if (punct && slot) slot.replaceWith(punct);
   shownCard = card;
   syncTurbArea(card);
   paintAdvancedFlight(card, open);
   paintHistory(currentView, open);
+  syncMap(lastQuery, stale);
   const title = $in('map-card')?.querySelector('.card-title');
   if (title) title.textContent = mapTitle(flightPhase(card));
-  paintMapFacts(card);
   showPlane(routeMap, card);
   paintNow();
   if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
@@ -1545,7 +1561,7 @@ async function showForecast(view, q, stale, saved = false) {
   if (fresh) fresh.innerHTML = freshnessHtml(view, Date.now());
   paintAviation(view);
   if (saved) return; // guardado: tal cual, sin pedir nada a la red (ni el mapa)
-  mountMap(q, stale);
+  syncMap(q, stale); // consulta manual: un vuelo aún por hacer, sin mapa
   await forecastExtras(view, q, stale);
 }
 
@@ -1584,7 +1600,7 @@ async function forecastExtras(view, q, stale) {
   ]);
   if (stale()) return;
   saveLast(view, view.queriedAt);
-  // El mapa ya está (se crea con el armazón): ahora la ruta coloreada por nivel y los avisos. Si Leaflet aún no ha
+  // El mapa ya está (si la ficha lo lleva): ahora la ruta coloreada por nivel y los avisos. Si MapLibre aún no ha
   // cargado, mountMap aplica currentView al crearlo.
   if (routeMap && view === currentView) safely(async () => routeMap.setForecast(view));
 }

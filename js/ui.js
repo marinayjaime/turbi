@@ -1,6 +1,6 @@
 import { LEVELS, CAUSES } from './turbulence.js';
 import { icon } from './icons.js';
-import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL, monoNow } from './card-model.js';
+import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL, monoNow, mapPhase } from './card-model.js';
 import { formatLocal } from './time.js';
 
 // dot: el punto de color que sustituye al emoji de antes (verde, ámbar, rojo = ligera, moderada, fuerte).
@@ -103,10 +103,10 @@ export function calmHtml(c, open = false) {
 
 // Hero: foto (si la hay), número grande, «Aerolínea · Modelo» y el chip del estado. El logotipo solo se ve sin foto
 // (CSS :has), así también aparece si la foto no carga y su figura se elimina.
-function heroHtml(c, open = new Set()) {
+function heroHtml(c, open = new Set(), { photo = true } = {}) {
   const sub = [c.airline, c.aircraft, c.operator && `Operado por ${c.operator}`].filter(Boolean).map(esc).join(' · ');
   return `
-      <header class="hero">${photoHtml(c)}
+      <header class="hero">${photo ? photoHtml(c) : ''}
         <div class="hero-head">
           <div class="hero-id">
             <div class="hero-num">
@@ -357,9 +357,26 @@ function turbEstimateHtml(t) {
 
 // card: el de buildFlight (app.js), con los campos de presentación de js/card-model.js. open: qué data-card van
 // abiertos (los conserva el repintado). punctualityBody: contenido inicial de #punctuality (situación de hoy).
-export function flightCardHtml(c, { nowMs = Date.now(), monoMs = monoNow(), open = new Set(), punctualityBody = '' } = {}) {
+// mapSlot: la ficha lleva el mapa del vuelo (js/app.js). En el aire o aterrizado (mapPhase), el vuelo y su mapa son lo
+// principal: cabecera (número, aerolínea, estado y ruta) sin tarjeta, el hueco #map-slot (el mapa a todo el ancho, que
+// js/app.js conserva entre repintados), debajo la hora principal y «Ahora» (altitud, velocidad, restante, señal) y
+// después, como tarjetas secundarias, fuente/confianza con la foto, el Horario y el Resumen del vuelo. Antes de volar o
+// cancelado, la ficha de siempre, sin mapa.
+export function flightCardHtml(c, { nowMs = Date.now(), monoMs = monoNow(), open = new Set(), punctualityBody = '', mapSlot = false } = {}) {
   const phase = flightPhase(c);
   const mt = mainTime(c, nowMs);
+  if (mapSlot && mapPhase(c)) {
+    return `
+    <section class="flight flight-live" data-phase="${phase}">
+      <div class="live-top">${heroHtml(c, open, { photo: false })}${routeHtml(c)}
+      </div>
+      <div id="map-slot" class="map-slot"></div>
+      <div class="live-data">${mainTimeHtml(c, mt)}${nowHtml(c, phase, monoMs, open)}
+      </div>
+      <div class="card flight-main live-more">${photoHtml(c)}${tilesHtml(c)}
+      </div>${scheduleHtml(c, mt, open, punctualityBody)}${phase === 'finalizado' ? flightSummaryHtml(c) : ''}
+    </section>`;
+  }
   return `
     <section class="flight" data-phase="${phase}">
       <div class="card flight-main">${heroHtml(c, open)}${routeHtml(c)}${mainTimeHtml(c, mt)}${tilesHtml(c)}

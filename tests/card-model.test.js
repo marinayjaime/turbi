@@ -419,3 +419,31 @@ describe('adbPhase (fase del card de AeroDataBox, traducción directa de su esta
     for (const s of ['Expected', 'Delayed', 'Boarding', null]) expect(adbPhase(s)).toBe('pendiente');
   });
 });
+
+import { mapPhase } from '../js/card-model.js';
+// Mapa del vuelo: solo con evidencia real de que ha despegado o aterrizado; nunca por la hora ni embarcando.
+describe('mapPhase', () => {
+  const card = over => ({ phase: 'en-curso', status: { text: 'Embarque cerrado', tone: 'info' }, radar: null, depFinal: false, arrFinal: false, source: 'aena', ...over });
+  it('en curso para la ficha (puerta cerrada, salida ya pasada) pero sin evidencia de vuelo → sin mapa', () => {
+    expect(mapPhase(card())).toBeNull();
+    expect(mapPhase(card({ phase: 'pendiente', status: { text: 'Programado' } }))).toBeNull();
+  });
+  it('en el aire: radar (volando, visto hace poco), Aena en el aire, salida real, AeroDataBox en ruta o FR24', () => {
+    expect(mapPhase(card({ radar: { state: 'volando' } }))).toBe('en-curso');
+    expect(mapPhase(card({ radar: { state: 'reciente', ageMin: 3 } }))).toBe('en-curso');
+    expect(mapPhase(card({ status: { text: 'Volando', flying: true } }))).toBe('en-curso');
+    expect(mapPhase(card({ depFinal: true }))).toBe('en-curso');
+    expect(mapPhase(card({ source: 'aerodatabox' }))).toBe('en-curso');
+    expect(mapPhase(card({ source: 'fr24' }))).toBe('en-curso');
+  });
+  it('aterrizado: confirmado, llegada real o AeroDataBox «Arrived»; «terminado» solo por la hora → sin mapa', () => {
+    expect(mapPhase(card({ phase: 'terminado', status: { text: 'Aterrizado', landing: 'confirmed-landed' } }))).toBe('finalizado');
+    expect(mapPhase(card({ phase: 'terminado', arrFinal: true, status: { text: 'En tierra' } }))).toBe('finalizado');
+    expect(mapPhase(card({ phase: 'terminado', source: 'aerodatabox', status: { text: 'Aterrizado' } }))).toBe('finalizado');
+    expect(mapPhase(card({ phase: 'terminado', status: { text: 'Ha llegado' } }))).toBeNull();
+  });
+  it('cancelado o desviado → sin mapa', () => {
+    expect(mapPhase(card({ phase: 'cancelado', radar: { state: 'volando' } }))).toBeNull();
+    expect(mapPhase(card({ status: { text: 'Desviado' }, radar: { state: 'volando' } }))).toBeNull();
+  });
+});

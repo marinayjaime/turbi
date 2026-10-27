@@ -1,23 +1,69 @@
-// Mapa sencillo con Leaflet + OpenStreetMap. Se carga después del resultado y es prescindible:
-// si falla, la app sigue igual (la timeline es la visualización principal).
+// Mapa del vuelo: MapLibre GL JS (copia local en js/vendor/maplibre, sin CDN ni clave) con el estilo claro «positron»
+// de OpenFreeMap, aligerado (lightStyle). Solo en el aire o ya aterrizado (js/app.js); se carga después de la ficha y es
+// prescindible: si MapLibre, WebGL o la red fallan, la ficha sigue igual (el hueco del mapa no ocupa sitio). Sin
+// conexión, con MapLibre en la caché pero sin el estilo, se pinta sobre un fondo liso (FALLBACK_STYLE): ruta, estela y
+// avión siguen siendo los mismos datos.
 
 import { esc } from './ui.js';
 import { icon } from './icons.js';
-import { flightPhase } from './card-model.js';
-import { MATCH } from './ui-advanced.js';
+import { LIVE_INTERVAL_MS } from './live-tracker.js';
 
-const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
-const SRI = {
-  js: 'sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==',
-  css: 'sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==',
-};
+export const MAPLIBRE_VERSION = '6.11.2';
+// Relativa a este módulo: MapLibre carga su worker junto a sí mismo (maplibre-gl-worker.mjs).
+const MAPLIBRE = './vendor/maplibre/maplibre-gl.mjs';
+export const STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
+const STYLE_TIMEOUT_MS = 8000;
+const LOAD_MS = 15000;
+
+const ACCENT = '#1A6FE0';
 const COLORS = ['#8e8e93', '#e6b800', '#ff9f0a', '#ff3b30'];
-// Ruta prevista (círculo máximo o coloreada por turbulencias): siempre tenue y discontinua, para que la estela real
-// (trayectoria medida por Flightradar24, color de acento) se lea encima como lo que de verdad ha hecho el avión.
-const ROUTE_STYLE = { weight: 4, opacity: 0.5, dashArray: '6 8' };
-const TRACK_STYLE = { color: '#1A6FE0', weight: 4, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false };
 
-// Tramos consecutivos del mismo nivel (un punto sin datos continúa el tramo anterior).
+// ---- Estilo base ----
+// Positron sin lo que compite con el vuelo: edificios, parques y usos del suelo, caminos y carreteras menores, el borde
+// gris de las principales (su relleno blanco apenas se ve), sus nombres y escudos, ferrocarril, muelles, túneles y las etiquetas de pueblos y lugares menores. Agua azul grisácea
+// suave y tierra casi blanca. Se quedan fronteras, autopistas tenues, aeropuertos y ciudades, con su nombre en español
+// (o el latino): un solo nombre por lugar, sin pedir las tipografías de otros alfabetos.
+const DROP = /^(building|park|landuse_|landcover_wood|highway_path|highway_minor|highway_\w*casing|highway-name|highway-shield|road_shield|road_area_pier|road_pier|railway|tunnel_|waterway_line_label|label_village|label_other|aeroway-taxiway)/;
+const PAINT = {
+  background: { 'background-color': '#f4f5f2' },
+  water: { 'fill-color': '#cbd9e4' },
+  waterway: { 'line-color': '#cbd9e4' },
+};
+const NAME = ['coalesce', ['get', 'name:es'], ['get', 'name:latin'], ['get', 'name']];
+export function lightStyle(style) {
+  if (!Array.isArray(style?.layers) || !style.layers.length) return null;
+  const layers = style.layers.filter(l => !DROP.test(l.id)).map(l => {
+    const out = PAINT[l.id] ? { ...l, paint: { ...l.paint, ...PAINT[l.id] } } : l;
+    return out.type === 'symbol' && out.layout?.['text-field'] ? { ...out, layout: { ...out.layout, 'text-field': NAME } } : out;
+  });
+  return { ...style, layers };
+}
+// Sin el estilo (sin conexión, OpenFreeMap caído): fondo liso. Nada remoto que esperar.
+export const FALLBACK_STYLE = { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#eef2f6' } }] };
+
+let styleLoading = null;
+function loadStyle() {
+  styleLoading ??= fetch(STYLE_URL, { signal: AbortSignal.timeout(STYLE_TIMEOUT_MS) })
+    .then(r => (r.ok ? r.json() : null)).then(lightStyle).catch(() => null)
+    .then(s => { if (!s) styleLoading = null; return s ?? FALLBACK_STYLE; }); // sin estilo, se reintenta en el siguiente mapa
+  return styleLoading;
+}
+
+let loading = null;
+function loadMapLibre() {
+  if (globalThis.maplibregl) return Promise.resolve(globalThis.maplibregl);
+  loading ??= (async () => {
+    if (globalThis.document && !document.querySelector('link[data-maplibre]')) {
+      const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: new URL('./vendor/maplibre/maplibre-gl.css', import.meta.url).href });
+      css.dataset.maplibre = MAPLIBRE_VERSION;
+      document.head.append(css);
+    }
+    return import(MAPLIBRE);
+  })().catch(err => { loading = null; throw err; });
+  return loading;
+}
+
+// Tramos consecutivos del mismo nivel (un punto sin datos continúa el tramo anterior). Coordenadas [lat, lon].
 export function routeLines(route) {
   const lines = [];
   let prev = null;
@@ -34,80 +80,60 @@ export function routeLines(route) {
   return lines;
 }
 
-let loading = null;
-function loadLeaflet() {
-  if (globalThis.L) return Promise.resolve(globalThis.L);
-  loading ??= new Promise((resolve, reject) => {
-    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: `${LEAFLET}leaflet.min.css`, integrity: SRI.css, crossOrigin: 'anonymous' });
-    const js = Object.assign(document.createElement('script'), { src: `${LEAFLET}leaflet.min.js`, integrity: SRI.js, crossOrigin: 'anonymous' });
-    js.onload = () => resolve(globalThis.L);
-    js.onerror = () => { loading = null; reject(new Error('Leaflet no disponible')); };
-    document.head.append(css, js);
-  });
-  return loading;
-}
-
-// Título de la tarjeta según la fase de la ficha (la misma agrupación de card-model.js): antes de volar y si se
-// cancela, la ruta prevista; en vuelo, el radar; ya aterrizado, la ruta realizada.
+// ---- Bloque del mapa en la ficha ----
+// Título según la fase de la ficha (la misma agrupación de card-model.js): en vuelo, el radar; ya aterrizado, la ruta
+// realizada. Antes de volar o cancelado no hay mapa (mapPhase, js/card-model.js).
 const TITLES = { programado: 'Ruta prevista', cancelado: 'Ruta prevista', 'en-curso': 'Radar', finalizado: 'Ruta realizada' };
-
-// Tarjeta del mapa, independiente del pronóstico. #map-facts nace vacío (lo rellena repintado de la ficha con
-// mapFactsHtml); el botón de cerrar solo se ve ampliada (CSS) y ocupa el sitio del de ampliar.
 export const mapTitle = phase => TITLES[phase] ?? TITLES.programado;
 
-// Identificación debajo del mapa (§5.8): «Directa» si el radar lo encontró por su indicativo; por ruta o por
-// transpondedor, el mismo texto que en Detalles avanzados. Otro valor (o ninguno): sin fila.
-const IDENTIFICATION = { ...MATCH, indicativo: 'Directa' };
+// Créditos del mapa (OpenFreeMap, OpenMapTiles y OpenStreetMap): una línea pequeña y siempre visible en lugar del
+// control de MapLibre, que en el móvil ocuparía el pie del mapa.
+const ATTRIBUTION = ['<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>',
+  '<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>',
+  '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a>'].join(' ');
 
-// Datos bajo el mapa (§5.8), solo en el aire con el radar «volando»: Indicativo (radar.callsign), Avión (modelo) e
-// Identificación. Cada dato solo si existe; en cualquier otro caso, vacío (#map-facts se oculta con :empty).
-export function mapFactsHtml(card) {
-  const r = card?.radar;
-  if (!card || r?.state !== 'volando' || flightPhase(card) !== 'en-curso') return '';
-  const facts = [
-    r.callsign && ['Indicativo', r.callsign],
-    card.aircraft && ['Avión', card.aircraft],
-    IDENTIFICATION[r.match] && ['Identificación', IDENTIFICATION[r.match]],
-  ].filter(Boolean);
-  return facts.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
-}
-
-export function mapCardHtml(phase) {
-  const title = mapTitle(phase);
-  return `<section class="card map-card" id="map-card">
-  <h3 class="card-head"><span class="card-title">${esc(title)}</span>
-    <button type="button" class="map-btn" data-map="expand" aria-label="Ampliar el mapa">${icon('expand')}</button>
-    <button type="button" class="map-btn map-close" data-map="close" aria-label="Cerrar el mapa ampliado">${icon('close')}</button>
-  </h3>
+// El mapa protagonista: sin tarjeta, a todo el ancho, con el título como etiqueta discreta y el botón de ampliar en su
+// esquina. Lo coloca js/app.js en el hueco #map-slot de la ficha y lo conserva entre repintados.
+export function mapHeroHtml(phase) {
+  return `<section class="map-hero" id="map-card" aria-label="Mapa del vuelo">
   <div id="map" class="map"></div>
-  <div id="map-facts"></div>
+  <span class="map-label card-title">${esc(mapTitle(phase))}</span>
+  <p class="map-attrib">${ATTRIBUTION}</p>
+  <button type="button" class="map-btn" data-map="expand" aria-label="Ampliar el mapa">${icon('expand')}</button>
+  <button type="button" class="map-btn map-close" data-map="close" aria-label="Cerrar el mapa ampliado">${icon('close')}</button>
 </section>`;
 }
 
-// Ampliar / cerrar: la tarjeta pasa a pantalla completa (.expanded) y Leaflet recalcula el tamaño al terminar.
-// onExpand: al ampliar (p. ej. pedir la ruta realizada de un vuelo histórico, que solo se descarga si se quiere ver).
+// Ampliar / cerrar: el mapa pasa a pantalla completa (.expanded); routeMap.expanded encuadra la ruta entera al ampliar y
+// vuelve a la vista de antes al cerrar. onExpand: al ampliar (p. ej. pedir la ruta realizada de un vuelo histórico).
 export function wireMapCard(card, routeMap, onExpand = null) {
-  const toggle = on => { card.classList.toggle('expanded', on); routeMap?.invalidate(); };
+  const toggle = on => { card.classList.toggle('expanded', on); routeMap?.expanded?.(on); };
   card.querySelector('[data-map="expand"]')?.addEventListener('click', () => { toggle(true); onExpand?.(); });
   card.querySelector('[data-map="close"]')?.addEventListener('click', () => toggle(false));
 }
 
-// Movimiento del avión ENTRE POSICIONES REALES (solo presentación): de la posición que se ve a la nueva lectura en
-// PLANE_GLIDE_MS, con suavizado; nunca más allá de la última posición recibida ni hacia donde «irá».
+// ---- Movimiento del avión ENTRE POSICIONES REALES (solo presentación) ----
+// Continuo y nunca por delante de lo medido: con A en pantalla y B recibida, el avión recorre A → B durante el intervalo
+// del seguimiento en vivo (PLANE_GLIDE_MS = LIVE_INTERVAL_MS), justo hasta cuando debería llegar C; con C, sigue B → C.
+// Va una lectura por detrás de la posición real y nunca pasa de la última recibida: si C tarda, se queda en B. Si C
+// llega antes de acabar A → B, el recorrido sigue por B (nunca recorta hacia C). Suavizado ligero (glide: velocidad
+// casi constante, un 15 % más suave en los extremos), sin acelerar y frenar en cada tramo.
 // Orientación: el icono (SVG) apunta al ESTE, así que la rotación es rumbo − 90. Rumbo = el `track` medido de la lectura
-// (Flightradar24, 0 = norte); sin él, con A y B reales, el rumbo aproximado A → B; con una sola posición y sin track, el
-// icono no se gira (no se inventa una orientación). Cada giro va por el camino corto desde el anterior (la rotación tiene
-// transición CSS): nunca una vuelta de 360° ni de 180° por un salto de −180 a 180.
-export const PLANE_GLIDE_MS = 2500;
-const ease = x => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+// (Flightradar24, 0 = norte); sin él, con dos posiciones reales, el rumbo entre ellas; con una sola y sin track, el
+// icono no se gira. Cada giro va por el camino corto (transición CSS): nunca una vuelta de 360°.
+export const PLANE_GLIDE_MS = LIVE_INTERVAL_MS;
+const glide = k => 0.85 * k + 0.15 * k * k * (3 - 2 * k);
 const RAD = Math.PI / 180;
 function bearing(a, b) {
   const y = Math.sin((b.lon - a.lon) * RAD) * Math.cos(b.lat * RAD);
   const x = Math.cos(a.lat * RAD) * Math.sin(b.lat * RAD) - Math.sin(a.lat * RAD) * Math.cos(b.lat * RAD) * Math.cos((b.lon - a.lon) * RAD);
   return Math.atan2(y, x) / RAD; // 0 = norte, 90 = este
 }
+// Distancia plana aproximada (solo para repartir el tiempo entre tramos de pocos km).
+const flatKm = (a, b) => Math.hypot((b.lat - a.lat) * 111, (b.lon - a.lon) * 111 * Math.cos(((a.lat + b.lat) / 2) * RAD));
 // Ángulo equivalente a deg en [-180, 180).
 const wrap = deg => ((((deg + 180) % 360) + 360) % 360) - 180;
+const FRAME_MS = 50; // ~20 fotogramas por segundo bastan para un avión que se mueve unos píxeles por segundo
 const defaultClock = {
   raf: cb => globalThis.requestAnimationFrame?.(cb) ?? setTimeout(() => cb(Date.now()), 16),
   caf: id => (globalThis.cancelAnimationFrame ? globalThis.cancelAnimationFrame(id) : clearTimeout(id)),
@@ -115,86 +141,182 @@ const defaultClock = {
   reducedMotion: () => Boolean(globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches),
 };
 
-// Crea el mapa con la ruta inicial (sin meteorología) y los aeropuertos. Rechaza si Leaflet no carga: el mapa es
-// prescindible y quien llama lo envuelve en safely. El avión y el pronóstico se añaden después con setPlane/setForecast.
+// ---- Cámara ----
+// En vuelo, al recibir la primera posición: el avión, lo que le queda (hasta el destino) y un poco de lo ya volado
+// (BEHIND_KM hacia el origen, o el origen si está más cerca), sin acercarse más que LIVE_MAX_ZOOM. Aterrizado: la ruta realizada entera al llegar la estela. Antes de eso, la ruta prevista entera. Nunca
+// se sigue al avión ni se recentra con cada lectura, y nada de eso si el usuario ya ha movido el mapa. Ampliado: la
+// ruta entera (prevista, realizada y avión); al cerrar, la vista de antes.
+const LIVE_MAX_ZOOM = 7;
+const BEHIND_KM = 400;
+// Arriba, la etiqueta y el botón de ampliar; abajo, el código del aeropuerto y los créditos.
+const PAD = { top: 64, bottom: 56, left: 36, right: 36 };
+const lngLat = ([lat, lon]) => [lon, lat];
+function boundsOf(points) {
+  const ok = points.filter(p => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]));
+  if (!ok.length) return null;
+  let s = Infinity, w = Infinity, n = -Infinity, e = -Infinity;
+  for (const [lat, lon] of ok) { s = Math.min(s, lat); n = Math.max(n, lat); w = Math.min(w, lon); e = Math.max(e, lon); }
+  return [[w, s], [e, n]];
+}
+
+const lineFeature = coords => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords.map(lngLat) } });
+const EMPTY = { type: 'FeatureCollection', features: [] };
+
+// Crea el mapa con la ruta prevista (sin meteorología) y los aeropuertos. Rechaza si MapLibre no carga o no hay WebGL:
+// quien llama lo envuelve (el mapa es prescindible). El avión y el pronóstico se añaden después con setPlane/setForecast.
 // clock: requestAnimationFrame, reloj y prefers-reduced-motion (inyectables en los tests).
 export async function createRouteMap(el, { origin, destination, route }, clock = defaultClock) {
-  const L = await loadLeaflet();
+  const [ml, style] = await Promise.all([loadMapLibre(), loadStyle()]);
   el.hidden = false;
-  const map = L.map(el, { zoomControl: false, attributionControl: true, scrollWheelZoom: false });
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 12, className: 'tiles-soft', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(map);
-  const lineLayers = [];
-  const forecastLayers = [];
-  let plane = null;
+  const routeBounds = boundsOf(route.map(p => [p.lat, p.lon]));
+  const map = new ml.Map({
+    container: el, style, bounds: routeBounds, fitBoundsOptions: { padding: PAD }, attributionControl: false,
+    dragRotate: false, pitchWithRotate: false, touchPitch: false, renderWorldCopies: false, cooperativeGestures: true,
+    locale: {
+      'CooperativeGesturesHandler.WindowsHelpText': 'Usa Ctrl + rueda para acercar o alejar el mapa',
+      'CooperativeGesturesHandler.MacHelpText': 'Usa ⌘ + rueda para acercar o alejar el mapa',
+      'CooperativeGesturesHandler.MobileHelpText': 'Usa dos dedos para mover el mapa',
+    },
+  });
+  map.touchZoomRotate?.disableRotation?.();
+  // Una tesela que falla no impide el mapa (se ve sin ella); solo un mapa que no llega a cargarse en LOAD_MS.
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Mapa no disponible')), LOAD_MS);
+    map.once('load', () => { clearTimeout(timer); resolve(); });
+  }).catch(err => { map.remove(); throw err; });
+
+  // Fuentes y capas (de abajo arriba): ruta prevista (fina, tenue y discontinua, por nivel), SIGMET, PIREP y la estela
+  // real en dos capas (halo ancho y semitransparente que la separa del mapa; línea de acento sólida y redondeada).
+  map.addSource('route', { type: 'geojson', data: EMPTY });
+  map.addLayer({ id: 'route', type: 'line', source: 'route', layout: { 'line-cap': 'round' },
+    paint: { 'line-color': ['match', ['get', 'level'], 1, COLORS[1], 2, COLORS[2], 3, COLORS[3], COLORS[0]], 'line-width': 2, 'line-opacity': 0.55, 'line-dasharray': [2, 2] } });
+  map.addSource('sigmets', { type: 'geojson', data: EMPTY });
+  map.addLayer({ id: 'sigmets-fill', type: 'fill', source: 'sigmets', paint: { 'fill-color': '#ff3b30', 'fill-opacity': 0.08 } });
+  map.addLayer({ id: 'sigmets-line', type: 'line', source: 'sigmets', paint: { 'line-color': '#ff3b30', 'line-width': 1, 'line-dasharray': [3, 3] } });
+  map.addSource('pireps', { type: 'geojson', data: EMPTY });
+  map.addLayer({ id: 'pireps', type: 'circle', source: 'pireps', paint: { 'circle-radius': 4, 'circle-color': '#5856d6', 'circle-opacity': 0.8 } });
+  map.addSource('track', { type: 'geojson', data: EMPTY });
+  map.addLayer({ id: 'track-halo', type: 'line', source: 'track', layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': ACCENT, 'line-width': 11, 'line-opacity': 0.22, 'line-blur': 1 } });
+  map.addLayer({ id: 'track', type: 'line', source: 'track', layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': ACCENT, 'line-width': 3.5 } });
+
+  // Aeropuertos: marcadores HTML (no dependen de las fuentes tipográficas del estilo).
+  for (const a of [origin, destination]) {
+    const node = document.createElement('div');
+    node.className = 'map-airport';
+    node.innerHTML = `<span class="map-airport-dot"></span><span class="map-airport-code">${esc(a.iata)}</span>`;
+    new ml.Marker({ element: node, anchor: 'center' }).setLngLat([a.lon, a.lat]).addTo(map);
+  }
+
+  let userMoved = false;
+  const moved = e => { if (e?.originalEvent) userMoved = true; };
+  map.on('dragstart', moved);
+  map.on('zoomstart', moved);
+  let framedPlane = false, framedTrack = false, savedView = null, isExpanded = false;
+  const fit = (points, maxZoom) => {
+    const b = boundsOf(points);
+    if (b) map.fitBounds(b, { padding: PAD, maxZoom, animate: false });
+  };
+
+  const drawRoute = r => map.getSource('route')?.setData({ type: 'FeatureCollection',
+    features: routeLines(r).map(l => ({ ...lineFeature(l.coords), properties: { level: l.level } })) });
+  drawRoute(route);
+
+  let plane = null, rotEl = null;
   let shown = null; // posición que se está pintando ahora mismo ({ lat, lon })
   let target = null; // última posición real recibida
   let identity = null; // avión y vuelo físico de esa posición
-  let frame = null;
+  let anim = null; // { pts: [desde, …objetivos], cum: [km acumulados], total, t0, dur }
+  let pending = []; // posiciones reales recibidas a las que el avión aún no ha llegado
+  let frame = null, lastFrame = -Infinity, lastTrackDraw = -Infinity;
   let angle = null; // rotación aplicada al icono (grados CSS), null si aún no se ha orientado
   // Estela real: puntos reales recibidos (setTrack + extendTrack) de UNA identidad (trackId, la misma que el avión).
-  let trackLine = null, trackPts = [], trackId = null;
+  let trackPts = [], trackId = null, trackOn = false;
   const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
+  const isPending = p => pending.some(q => q.lat === p[0] && q.lon === p[1]);
   // Lo que se dibuja: los puntos reales y, si el avión de la misma identidad está en el mapa, su posición mostrada como
-  // último vértice. Mientras se anima hacia B (ya recibido como punto), B aún no se dibuja: la estela acaba en el avión.
+  // último vértice. Los puntos ya recibidos a los que el avión aún no ha llegado no se dibujan: la estela acaba en él.
   const drawTrack = () => {
-    if (!trackLine) return;
+    if (!trackOn) { map.getSource('track')?.setData(EMPTY); return; }
     const pts = trackPts.slice();
     if (plane && shown && identity === trackId) {
-      if (frame !== null && target && same(pts.at(-1), [target.lat, target.lon])) pts.pop();
+      while (pts.length && isPending(pts.at(-1))) pts.pop();
       if (!same(pts.at(-1), [shown.lat, shown.lon])) pts.push([shown.lat, shown.lon]);
     }
-    trackLine.setLatLngs?.(pts);
+    map.getSource('track')?.setData(pts.length >= 2 ? lineFeature(pts) : EMPTY);
   };
-  const stop = () => { if (frame !== null) clock.caf(frame); frame = null; };
-  const put = p => { shown = p; plane.setLatLng([p.lat, p.lon]); drawTrack(); };
-  const rotEl = () => plane?.getElement?.()?.querySelector?.('.plane-rot');
+  const stop = () => { if (frame !== null) clock.caf(frame); frame = null; anim = null; pending = []; };
+  const put = (p, { track = true } = {}) => { shown = p; plane.setLngLat([p.lon, p.lat]); if (track) drawTrack(); };
   // Gira el icono a `heading` (rumbo, 0 = norte) por el camino corto; la primera vez, en [-180, 180).
   const turn = heading => {
     if (!Number.isFinite(heading)) return;
-    const target = heading - 90;
-    angle = angle === null ? wrap(target) : angle + wrap(target - angle);
-    const r = rotEl();
-    if (r) r.style.transform = `rotate(${angle}deg)`;
+    const goal = heading - 90;
+    angle = angle === null ? wrap(goal) : angle + wrap(goal - angle);
+    if (rotEl) rotEl.style.transform = `rotate(${angle}deg)`;
   };
   // Atenuado (.plane-old): falta la lectura esperada y lo que se ve es solo la última posición conocida.
-  const age = dimmed => rotEl()?.classList?.toggle?.('plane-old', dimmed === true);
-  const drawRoute = r => {
-    lineLayers.splice(0).forEach(l => l.remove());
-    for (const l of routeLines(r)) lineLayers.push(L.polyline(l.coords, { color: COLORS[l.level], ...ROUTE_STYLE }).addTo(map));
-    trackLine?.bringToFront?.(); // la estela, siempre encima de la ruta prevista
+  const age = dimmed => rotEl?.classList.toggle('plane-old', dimmed === true);
+
+  // Un fotograma del recorrido: dónde está el avión a esta hora, sin pasar nunca del último punto real.
+  const step = () => {
+    frame = null;
+    if (!anim) return;
+    const t = clock.now();
+    const k = Math.min(1, Math.max(0, (t - anim.t0) / anim.dur));
+    if (k < 1 && t - lastFrame < FRAME_MS) { frame = clock.raf(step); return; }
+    lastFrame = t;
+    const d = glide(k) * anim.total;
+    let i = 1;
+    while (i < anim.pts.length - 1 && anim.cum[i] < d) i++;
+    const a = anim.pts[i - 1], b = anim.pts[i];
+    const seg = anim.cum[i] - anim.cum[i - 1];
+    const f = k >= 1 ? 1 : seg > 0 ? Math.min(1, (d - anim.cum[i - 1]) / seg) : 1;
+    pending = k >= 1 ? [] : anim.pts.slice(f >= 1 ? i + 1 : i);
+    const pos = k >= 1 ? anim.pts.at(-1) : { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
+    // La estela, como mucho ~5 veces por segundo (y siempre al terminar): crece detrás del avión.
+    const track = k >= 1 || t - lastTrackDraw >= 200;
+    if (track) lastTrackDraw = t;
+    put(pos, { track });
+    if (k >= 1) anim = null;
+    else frame = clock.raf(step);
   };
-  drawRoute(route);
-  for (const a of [origin, destination]) {
-    L.circleMarker([a.lat, a.lon], { radius: 6, color: '#007aff', fillOpacity: 1 })
-      .bindTooltip(esc(a.iata), { permanent: true, direction: 'top' }).addTo(map);
-  }
-  map.fitBounds(L.latLngBounds(route.map(p => [p.lat, p.lon])).pad(0.15));
-  return {
+  // De lo que se ve hasta `next` pasando por lo que aún queda por recorrer (sin recortar), en PLANE_GLIDE_MS.
+  const glideTo = next => {
+    const pts = [shown, ...pending, next];
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + flatKm(pts[i - 1], pts[i]));
+    if (frame !== null) clock.caf(frame);
+    frame = null;
+    const total = cum.at(-1);
+    if (!(total > 0)) { anim = null; pending = []; put(next); return; }
+    anim = { pts, cum, total, t0: clock.now(), dur: PLANE_GLIDE_MS };
+    pending = pts.slice(1);
+    lastFrame = -Infinity;
+    frame = clock.raf(step);
+    drawTrack();
+  };
+
+  const self = {
     // Colorea la ruta por nivel y añade SIGMET y PIREP; se puede llamar de nuevo y sustituye lo anterior.
     setForecast(view) {
-      forecastLayers.splice(0).forEach(l => l.remove());
       if (view.route) drawRoute(view.route);
-      for (const s of view.aviation?.sigmets ?? []) {
-        forecastLayers.push(L.polygon(s.coords.map(c => [c.lat, c.lon]), { color: '#ff3b30', weight: 1, dashArray: '4 4', fillOpacity: 0.08 }).bindTooltip(esc(s.label)).addTo(map));
-      }
-      for (const p of view.aviation?.pireps ?? []) {
-        forecastLayers.push(L.circleMarker([p.lat, p.lon], { radius: 5, color: '#5856d6', fillOpacity: 0.8 }).bindTooltip(`Informe de piloto: ${esc(p.label)}`).addTo(map));
-      }
+      map.getSource('sigmets')?.setData({ type: 'FeatureCollection', features: (view.aviation?.sigmets ?? []).map(s => ({ type: 'Feature',
+        properties: { label: s.label }, geometry: { type: 'Polygon', coordinates: [s.coords.map(c => [c.lon, c.lat])] } })) });
+      map.getSource('pireps')?.setData({ type: 'FeatureCollection', features: (view.aviation?.pireps ?? []).map(p => ({ type: 'Feature',
+        properties: { label: p.label }, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } })) });
     },
-    // Recibe planeOnMap(): { lat, lon, heading, fresh } (posición real de 180 s o menos) o null; identity: avión y vuelo
-    // físico de esa lectura. Con null no hay marcador: se cancela cualquier movimiento. La primera posición, la que llega
-    // tras perderla y la de otro avión o vuelo se colocan directamente; una lectura FRESCA nueva del mismo avión se
-    // desplaza desde lo que se ve hasta ella (sin pasarse ni seguir después), o directa con prefers-reduced-motion. Una
-    // lectura vieja (fresh: false, la última posición conocida) nunca anima: se coloca o se queda quieta y, salvo
-    // dim: false (el seguimiento en vivo va al día y la lectura siguiente está al llegar), atenuada (.plane-old). El rumbo real (heading) se aplica en cada lectura, también si la posición no cambia. Nunca recentra
-    // ni cambia el zoom.
+    // Recibe planeOnMap(): { lat, lon, heading, fresh, dim? } (posición real de 180 s o menos) o null; identity: avión y
+    // vuelo físico de esa lectura. Con null no hay marcador. La primera posición, la que llega tras perderla y la de otro
+    // avión o vuelo se colocan directamente; una lectura FRESCA nueva del mismo avión se recorre desde lo que se ve
+    // (glideTo), o directa con prefers-reduced-motion. Una lectura vieja (fresh: false) nunca anima y, salvo dim: false,
+    // se atenúa (.plane-old). El rumbo real se aplica en cada lectura. Solo la primera posición encuadra la vista.
     setPlane(pos, { identity: id = null } = {}) {
-      if (!pos) { stop(); plane?.remove(); plane = null; shown = target = identity = null; angle = null; drawTrack(); return; }
+      if (!pos) {
+        stop(); plane?.remove(); plane = rotEl = null; shown = target = identity = null; angle = null; drawTrack(); return;
+      }
       const next = { lat: pos.lat, lon: pos.lon };
       const fresh = pos.fresh !== false;
-      // dim (lo decide quien llama): con fresh: false, si se atenúa; por defecto, siempre que no sea fresca.
       const dim = typeof pos.dim === 'boolean' ? pos.dim : !fresh;
       const heading = Number.isFinite(pos.heading) ? pos.heading : null;
       if (plane && id === identity && target && next.lat === target.lat && next.lon === target.lon) { // misma lectura
@@ -203,68 +325,82 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
         return;
       }
       if (!plane) {
-        plane = L.marker([next.lat, next.lon], {
-          icon: L.divIcon({ className: 'plane-marker', html: `<span class="plane-rot">${icon('plane', { size: 26 })}</span>`,
-            iconSize: [26, 26], iconAnchor: [13, 13] }),
-          interactive: false, keyboard: false,
-        }).addTo(map);
+        const node = document.createElement('div');
+        node.className = 'plane-marker';
+        node.innerHTML = `<span class="plane-rot">${icon('plane', { size: 28 })}</span>`;
+        rotEl = node.querySelector('.plane-rot');
+        plane = new ml.Marker({ element: node, anchor: 'center' }).setLngLat([next.lon, next.lat]).addTo(map);
         shown = target = next;
         identity = id;
         angle = null;
         turn(heading);
         age(dim);
         drawTrack();
+        if (!framedPlane && !userMoved && !isExpanded) {
+          framedPlane = true;
+          const d = flatKm(origin, next), f = d > BEHIND_KM ? 1 - BEHIND_KM / d : 0;
+          const behind = [origin.lat + (next.lat - origin.lat) * f, origin.lon + (next.lon - origin.lon) * f];
+          fit([[next.lat, next.lon], [destination.lat, destination.lon], behind], LIVE_MAX_ZOOM);
+        }
         return;
       }
-      stop();
       const sameAircraft = id === identity;
       identity = id;
       target = next;
       // Otro avión u otro vuelo físico: su orientación empieza de cero (sin track, sin rotar; nunca la del anterior).
-      if (!sameAircraft) { angle = null; const r = rotEl(); if (r) r.style.transform = ''; }
+      if (!sameAircraft) { angle = null; if (rotEl) rotEl.style.transform = ''; }
       age(dim);
-      if (!sameAircraft || !fresh || clock.reducedMotion()) { turn(heading); put(next); return; }
-      const from = shown;
-      turn(heading ?? bearing(from, next));
-      const t0 = clock.now();
-      // Siempre el reloj de clock.now (no la marca de requestAnimationFrame): un solo reloj para t0 y cada fotograma.
-      const step = () => {
-        const k = Math.min(1, Math.max(0, (clock.now() - t0) / PLANE_GLIDE_MS));
-        const e = ease(k);
-        put(k >= 1 ? next : { lat: from.lat + (next.lat - from.lat) * e, lon: from.lon + (next.lon - from.lon) * e });
-        frame = k >= 1 ? null : clock.raf(step);
-      };
-      frame = clock.raf(step);
-      drawTrack();
+      if (!sameAircraft || !fresh || clock.reducedMotion()) { stop(); turn(heading); put(next); return; }
+      turn(heading ?? bearing(pending.at(-1) ?? shown, next));
+      glideTo(next);
     },
     // Estela real del vuelo (Flight Tracks de FR24, solo posiciones medidas): sustituye la anterior. identity: la del
-    // avión (vuelo físico + fr24Id); extendTrack solo acepta puntos de esa misma identidad. Nunca recentra ni cambia el zoom.
+    // avión (vuelo físico + fr24Id); extendTrack solo acepta puntos de esa misma identidad. Sin avión en el mapa
+    // (aterrizado), la primera estela encuadra la ruta realizada entera.
     setTrack(points, { identity: id = null } = {}) {
-      trackLine?.remove();
       trackPts = (points ?? []).filter(p => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1])).map(p => [p[0], p[1]]);
       trackId = id;
-      trackLine = L.polyline(trackPts, TRACK_STYLE).addTo(map);
-      trackLine.bringToFront?.();
+      trackOn = true;
       drawTrack();
+      if (!plane && !framedTrack && !userMoved && !isExpanded && trackPts.length >= 2) {
+        framedTrack = true;
+        fit([...trackPts, [origin.lat, origin.lon], [destination.lat, destination.lon]]);
+      }
     },
     // Una posición real FRESCA nueva del mismo avión (planeOnMap): la estela se prolonga hasta ella (sin duplicar el
     // último). Una posición vieja (fresh: false) nunca la prolonga.
     extendTrack(point, { identity: id = null, fresh = true } = {}) {
-      if (!trackLine || id !== trackId || fresh === false || !Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])) return;
+      if (!trackOn || id !== trackId || fresh === false || !Number.isFinite(point?.[0]) || !Number.isFinite(point?.[1])) return;
       if (!same(trackPts.at(-1), point)) trackPts.push([point[0], point[1]]);
       drawTrack();
     },
-    clearTrack() { trackLine?.remove(); trackLine = null; trackPts = []; trackId = null; },
+    clearTrack() { trackOn = false; trackPts = []; trackId = null; drawTrack(); },
     // El avión en pantalla: si está, si se está desplazando hacia la última lectura y de qué identidad es.
-    planeState: () => ({ shown: Boolean(plane), moving: frame !== null, identity }),
-    trackIdentity: () => (trackLine ? trackId : null),
-    // Quita lo que puso setForecast: la ruta inicial sin colorear (círculo máximo), sin SIGMET ni PIREP, como recién
-    // creado. No toca la vista (ni centro ni zoom) ni el avión.
+    planeState: () => ({ shown: Boolean(plane), moving: anim !== null, identity }),
+    trackIdentity: () => (trackOn ? trackId : null),
+    // Quita lo que puso setForecast: la ruta inicial sin colorear, sin SIGMET ni PIREP. No toca la vista ni el avión.
     clearForecast() {
-      forecastLayers.splice(0).forEach(l => l.remove());
+      map.getSource('sigmets')?.setData(EMPTY);
+      map.getSource('pireps')?.setData(EMPTY);
       drawRoute(route);
     },
-    invalidate() { map.invalidateSize(); },
+    // Ampliado: la ruta entera (prevista, realizada y avión) y gestos normales; al cerrar, la vista y los gestos de antes.
+    expanded(on) {
+      map.resize();
+      if (on === isExpanded) return;
+      isExpanded = on;
+      if (on) {
+        savedView = { center: map.getCenter(), zoom: map.getZoom() };
+        map.cooperativeGestures?.disable?.();
+        fit([...route.map(p => [p.lat, p.lon]), ...trackPts, ...(shown ? [[shown.lat, shown.lon]] : [])]);
+      } else {
+        map.cooperativeGestures?.enable?.();
+        if (savedView) map.jumpTo(savedView);
+        savedView = null;
+      }
+    },
+    invalidate() { map.resize(); },
     destroy() { stop(); map.remove(); },
   };
+  return self;
 }

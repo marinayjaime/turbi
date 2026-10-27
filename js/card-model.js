@@ -20,6 +20,23 @@ export const PLANE_LAST_KNOWN_S = 180;
 export const monoNow = () => globalThis.performance?.now?.() ?? Date.now();
 const PENDING = '--:--';
 
+// Mapa del vuelo (js/map.js, js/app.js): solo con EVIDENCIA real de que ha despegado o aterrizado, nunca por la hora.
+// flightPhase dice «en curso» también embarcando (Aena BOR o en puerta) y «finalizado» cuando la llegada queda muy atrás
+// aunque nadie lo confirme; para el mapa no basta. → 'en-curso' | 'finalizado' | null (sin mapa).
+//   En el aire: el radar lo ve (volando, visto hace poco o ya aterrizado), Aena lo da en el aire (FLY/FNL), hay hora
+//   real de salida, AeroDataBox lo da salido o en ruta, o lo encontró Flightradar24 volando.
+//   Aterrizado: aterrizaje confirmado (radar o Flightradar24), hora real de llegada o AeroDataBox «Arrived».
+export function mapPhase(card) {
+  const phase = flightPhase(card);
+  if (phase === 'finalizado') {
+    return card.status?.landing || card.arrFinal || (card.source === 'aerodatabox' && card.phase === 'terminado') ? 'finalizado' : null;
+  }
+  if (phase !== 'en-curso') return null;
+  const airborne = ['volando', 'reciente', 'aterrizado'].includes(card.radar?.state) || card.status?.flying || card.depFinal
+    || (['aerodatabox', 'fr24'].includes(card.source) && card.phase === 'en-curso');
+  return airborne ? 'en-curso' : null;
+}
+
 // 'programado' | 'en-curso' | 'finalizado' | 'cancelado'. Solo agrupa lo que ya dicen la fase del tramo (legPhase o
 // adbPhase), el estado mostrado (Desviado) y el radar (withRadar / withLanding); el orden es el de prioridad.
 export function flightPhase(card) {
