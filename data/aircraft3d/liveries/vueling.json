@@ -1,17 +1,22 @@
 {
  "id": "vueling",
  "name": "Vueling",
+ "basis": "Colores de marca gris (#4C4C4B) y amarillo (#FCCC04): nombre «vueling» en minúsculas en gris, deriva y winglets amarillos. Sin el logotipo. Panza y góndolas sin contrastar: blanco y gris neutros.",
  "paint": {
   "fuselage": "#ffffff",
-  "belly": {
-   "color": "#5b5b5f",
-   "from": 0.37
+  "title": {
+   "text": "vueling",
+   "color": "#4c4c4b",
+   "u": 0.12,
+   "height": 0.25,
+   "weight": 700
   },
   "tail": {
-   "color": "#ffcc00"
+   "color": "#fccc04"
   },
   "wings": "#c3c8cf",
-  "engines": "#d9dde2",
-  "winglets": "#ffcc00"
+  "engines": "#e6e9ed",
+  "engineLip": "#c9ced6",
+  "winglets": "#fccc04"
  }
 }

@@ -1,17 +1,15 @@
 {
  "id": "ryanair",
  "name": "Ryanair",
+ "basis": "Parte superior blanca, inferior y deriva azules, nombre «RYANAIR» en azul en mayúsculas. Sin el arpa (logotipo). Góndolas en blanco neutro: su decoración no está contrastada.",
  "paint": {
   "fuselage": "#ffffff",
-  "belly": {
-   "color": "#073590",
-   "from": 0.33
-  },
-  "tail": {
-   "color": "#073590"
-  },
+  "belly": { "color": "#073590", "from": 0.6 },
+  "title": { "text": "RYANAIR", "color": "#073590", "u": 0.13, "height": 0.22, "weight": 800 },
+  "tail": { "color": "#073590" },
   "wings": "#c3c8cf",
-  "engines": "#d9dde2",
+  "engines": "#e6e9ed",
+  "engineLip": "#c9ced6",
   "winglets": "#073590"
  }
 }

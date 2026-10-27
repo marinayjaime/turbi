@@ -48,7 +48,7 @@ export function resolveAircraft(index, ident) {
 }
 
 // Decoración neutra (modelo conocido sin la de su operadora) y la del genérico (gris, sin nada de ninguna aerolínea).
-export const NEUTRAL_PAINT = { fuselage: '#f4f5f7', belly: { color: '#c9ced6', from: 0.38 }, tail: { color: '#dfe3e8' }, wings: '#c3c8cf', engines: '#d4d8de', winglets: '#dfe3e8' };
+export const NEUTRAL_PAINT = { fuselage: '#f4f5f7', belly: { color: '#c9ced6', from: 0.76 }, tail: { color: '#dfe3e8' }, wings: '#c3c8cf', engines: '#d4d8de', winglets: '#dfe3e8' };
 // Avión genérico: un bimotor medio que no es ningún modelo concreto. Va en el código (no en el catálogo) para que haya
 // avión aunque el catálogo no cargue. Siempre gris y rotulado «Avión genérico».
 export const GENERIC_SPEC = { id: 'generic', name: 'Avión genérico', length: 38, span: 35.8, width: 3.76, fuselage: { nose: 0.1, tail: 0.27 },
@@ -61,30 +61,73 @@ export const GENERIC_PAINT = { fuselage: '#b9c0c9', tail: { color: '#a3abb6' }, 
 // ---- Textura de la decoración ----
 // Una sola textura por avión, con zonas fijas (las coordenadas UV de buildAircraftGeometry), así cualquier decoración
 // sirve a cualquier modelo sin tocar la geometría:
-//   v 0–0,5   fuselaje: u = del morro (0) a la cola (1); v = del techo (0) a la panza (0,5), igual a los dos lados;
-//   v 0,5–0,75 u 0–0,5 deriva (u: de la raíz a la punta; v: del borde de ataque al de salida); u 0,5–1 alas y estabilizador;
-//   v 0,75–1  u 0–0,5 motores (u 0–0,06: la toma de aire, oscura); u 0,5–1 winglets.
-export const TEXTURE_SIZE = [512, 256];
+//   fuselageL / fuselageR: cada costado (izquierdo, derecho) por separado, para que un nombre se lea bien desde los dos
+//     lados; u = del morro (0) a la cola (1), v = del techo (0) a la panza (1) pasando por el costado (0,5);
+//   fin: deriva (u: de la raíz a la punta; v: del borde de ataque al de salida); wings: alas y estabilizador;
+//   engines: góndolas (u: de la toma de aire a la tobera; u 0–0,06: la toma, oscura); winglets.
+export const TEXTURE_SIZE = [1024, 512];
 export const UV = {
-  fuselage: [0, 0, 1, 0.5], fin: [0, 0.5, 0.5, 0.75], wings: [0.5, 0.5, 1, 0.75], engines: [0, 0.75, 0.5, 1], winglets: [0.5, 0.75, 1, 1],
+  fuselageL: [0, 0, 1, 0.3], fuselageR: [0, 0.3, 1, 0.6],
+  fin: [0, 0.6, 0.5, 0.8], wings: [0.5, 0.6, 1, 0.8], engines: [0, 0.8, 0.5, 1], winglets: [0.5, 0.8, 1, 1],
 };
-export function paintLivery(ctx, paint, [w, h] = TEXTURE_SIZE) {
+const FONT = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
+// paint (data/aircraft3d/liveries/*.json → paint), todo opcional salvo los colores base:
+//   fuselage, belly { color, from }: panza desde `from` (0 techo, 0,5 costado, 1 panza);
+//   stripes [{ color, from, to, u0?, u1? }]: franjas a lo largo (entre dos alturas, y entre dos puntos del largo);
+//   nose { color, to }: el morro hasta `to` del largo; title { text, color, u, height, weight?, style? }: el nombre,
+//     desde `u` del largo, centrado en `at` (por defecto 0,24) y de `height` de alto (fracción de media circunferencia);
+//   tail { color, bands [{ from, to, color }], polys [{ color, points [[u, v]…] }] }: deriva (coordenadas de su zona);
+//   wings, engines, engineLip (borde de la toma), winglets.
+// dims { length, width } (metros): para que el nombre no salga estirado (la textura no tiene la misma escala a lo largo
+// que alrededor del fuselaje).
+export function paintLivery(ctx, paint, [w, h] = TEXTURE_SIZE, dims = { length: 38, width: 3.9 }) {
   const rect = ([u0, v0, u1, v1], color) => { ctx.fillStyle = color; ctx.fillRect(u0 * w, v0 * h, (u1 - u0) * w, (v1 - v0) * h); };
-  const [fu0, fv0, fu1, fv1] = UV.fuselage;
-  rect(UV.fuselage, paint.fuselage);
-  if (paint.belly) rect([fu0, fv0 + (fv1 - fv0) * paint.belly.from * 2, fu1, fv1], paint.belly.color);
-  // Ventanillas y cabina: una línea de ventanas a cada lado y el parabrisas (no son de ninguna aerolínea).
-  ctx.fillStyle = '#26303b';
-  const winV = (fv1 - fv0) * 0.36, step = 0.0105;
-  for (let u = 0.16; u < 0.8; u += step) ctx.fillRect(u * w, winV * h, step * w * 0.5, 0.012 * h);
-  ctx.fillRect(0.025 * w, (fv1 - fv0) * 0.27 * h, 0.03 * w, 0.03 * h);
+  const sub = ([u0, v0, u1, v1], a, b, c, d) => [u0 + (u1 - u0) * a, v0 + (v1 - v0) * b, u0 + (u1 - u0) * c, v0 + (v1 - v0) * d];
+  const side = (r, mirror) => {
+    rect(r, paint.fuselage);
+    if (paint.nose) rect(sub(r, 0, 0, paint.nose.to, 1), paint.nose.color);
+    if (paint.belly) rect(sub(r, 0, paint.belly.from, 1, 1), paint.belly.color);
+    for (const st of paint.stripes ?? []) rect(sub(r, st.u0 ?? 0, st.from, st.u1 ?? 1, st.to), st.color);
+    // Ventanillas, puertas no: una línea de ventanas y el parabrisas (no son de ninguna aerolínea).
+    ctx.fillStyle = '#26303b';
+    const [u0, v0, u1, v1] = r, H = (v1 - v0) * h, W = (u1 - u0) * w;
+    const winV = v0 * h + 0.4 * H, step = 0.0105;
+    for (let u = 0.15; u < 0.82; u += step) ctx.fillRect(u0 * w + u * W, winV, step * W * 0.5, 0.035 * H);
+    ctx.fillRect(u0 * w + 0.024 * W, v0 * h + 0.33 * H, 0.032 * W, 0.06 * H);
+    const t = paint.title;
+    if (t?.text) {
+      // Píxeles por metro a lo largo y alrededor (media circunferencia en la altura de la zona).
+      const sx = (W / dims.length) / (H / (Math.PI * dims.width / 2));
+      const px = t.height * H;
+      ctx.save();
+      ctx.font = `${t.style ?? 'normal'} ${t.weight ?? 700} ${px}px ${FONT}`;
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = t.color;
+      const width = ctx.measureText(t.text).width * sx;
+      const x = u0 * w + t.u * W, y = v0 * h + (t.at ?? 0.24) * H;
+      // Costado derecho: mismas letras en el mismo sitio, invertidas en la textura para leerse bien desde fuera.
+      ctx.translate(mirror ? x + width : x, y);
+      ctx.scale(mirror ? -sx : sx, 1);
+      ctx.fillText(t.text, 0, 0);
+      ctx.restore();
+    }
+  };
+  side(UV.fuselageL, false);
+  side(UV.fuselageR, true);
   rect(UV.fin, paint.tail.color);
-  const [tu0, tv0, tu1, tv1] = UV.fin;
-  for (const b of paint.tail.bands ?? []) rect([tu0 + (tu1 - tu0) * b.from, tv0, tu0 + (tu1 - tu0) * b.to, tv1], b.color);
+  for (const b of paint.tail.bands ?? []) rect(sub(UV.fin, b.from, 0, b.to, 1), b.color);
+  for (const poly of paint.tail.polys ?? []) {
+    const [u0, v0, u1, v1] = UV.fin;
+    ctx.fillStyle = poly.color;
+    ctx.beginPath();
+    poly.points.forEach(([u, v], i) => ctx[i ? 'lineTo' : 'moveTo']((u0 + (u1 - u0) * u) * w, (v0 + (v1 - v0) * v) * h));
+    ctx.closePath();
+    ctx.fill();
+  }
   rect(UV.wings, paint.wings);
   rect(UV.engines, paint.engines);
-  const [eu0, ev0, , ev1] = UV.engines;
-  rect([eu0, ev0, eu0 + 0.03, ev1], '#3a434e');
+  if (paint.engineLip) rect(sub(UV.engines, 0.06, 0, 0.16, 1), paint.engineLip);
+  rect(sub(UV.engines, 0, 0, 0.06, 1), '#3a434e');
   rect(UV.winglets, paint.winglets);
 }
 
@@ -146,28 +189,34 @@ function surface(m, { root, sDir, cDir, tDir, span, rootChord, tipChord, sweep, 
 
 // Cuerpo de revolución a lo largo de Y (fuselaje, góndolas): `stations` [{ y, r, z }] del morro a la cola, sección
 // elíptica (ancho r, alto r·k). UV: u a lo largo, v alrededor (0 arriba, 0,5 abajo, simétrico).
-function lathe(m, stations, { x = 0, k = 1, n = 16, uv, capEnd = true }) {
+function lathe(m, stations, { x = 0, k = 1, n = 16, uv, sides = null, capEnd = true }) {
+  // sides [izquierdo, derecho]: cada costado en su zona de la textura (el vértice del techo, duplicado).
   const ring = [];
-  const yMax = stations[0].y, yMin = stations.at(-1).y;
+  const yMax = stations[0].y, yMin = stations.at(-1).y, mid = n / 2;
   for (const s of stations) {
     const row = [];
+    const u = (yMax - s.y) / (yMax - yMin || 1);
     for (let j = 0; j <= n; j++) {
       const th = -Math.PI + (2 * Math.PI * j) / n;
       const p = [x + s.r * Math.sin(th), s.y, s.z + s.r * k * Math.cos(th)];
       const nn = normalize([Math.sin(th) / 1, 0, Math.cos(th) / k]);
-      row.push(m.vert(p, nn, lerpUv(uv, (yMax - s.y) / (yMax - yMin || 1), Math.abs(th) / Math.PI)));
+      if (!sides) { const id = m.vert(p, nn, lerpUv(uv, u, Math.abs(th) / Math.PI)); row.push({ L: id, R: id }); continue; }
+      const L = j <= mid ? m.vert(p, nn, lerpUv(sides[0], u, Math.abs(th) / Math.PI)) : null;
+      const R = j >= mid ? m.vert(p, nn, lerpUv(sides[1], u, Math.abs(th) / Math.PI)) : null;
+      row.push({ L: L ?? R, R: R ?? L });
     }
     ring.push(row);
   }
   for (let i = 0; i < ring.length - 1; i++) {
     for (let j = 0; j < n; j++) {
-      const a = ring[i][j], b = ring[i][j + 1], c = ring[i + 1][j + 1], d = ring[i + 1][j];
+      const sd = j < mid ? 'L' : 'R';
+      const a = ring[i][j][sd], b = ring[i][j + 1][sd], c = ring[i + 1][j + 1][sd], d = ring[i + 1][j][sd];
       m.tri(a, d, c); m.tri(a, c, b);
     }
   }
   if (capEnd) {
-    const last = stations.at(-1), c = m.vert([x, last.y, last.z], [0, -1, 0], lerpUv(uv, 1, 0.5));
-    for (let j = 0; j < n; j++) m.tri(c, ring.at(-1)[j + 1], ring.at(-1)[j]);
+    const last = stations.at(-1), c = m.vert([x, last.y, last.z], [0, -1, 0], lerpUv(sides?.[0] ?? uv, 1, 0.5));
+    for (let j = 0; j < n; j++) { const sd = j < mid ? 'L' : 'R'; m.tri(c, ring.at(-1)[j + 1][sd], ring.at(-1)[j][sd]); }
   }
 }
 
@@ -199,7 +248,7 @@ export function buildAircraftGeometry(spec) {
     if (t > 1 - tailF) { const s = (t - (1 - tailF)) / tailF; r = R * (1 - 0.86 * s ** 1.1); z = (R - r) * 0.82; }
     stations.push({ y: half - t * L, r: Math.max(r, 0.02), z });
   }
-  lathe(m, stations, { k: 1.04, n: 18, uv: UV.fuselage });
+  lathe(m, stations, { k: 1.04, n: 18, sides: [UV.fuselageL, UV.fuselageR] });
 
   // Alas: borde de ataque de la raíz en `wing.at` del largo; baja (por debajo del eje) o alta (encima del fuselaje).
   const w = spec.wing, semi = spec.span / 2, rootY = half - w.at * L;

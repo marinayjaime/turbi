@@ -43,6 +43,16 @@ describe('avión 3D: modelo y decoración', () => {
     for (const n of names) expect(index.types[n], n).toBeTruthy();
   });
 
+  it('Ryanair, Iberia y Vueling: nombre, procedencia de cada rasgo y combinaciones que no se confunden entre sí', () => {
+    const liv = id => JSON.parse(readFileSync(`data/aircraft3d/liveries/${id}.json`, 'utf8'));
+    const [ryr, ibe, vlg] = ['ryanair', 'iberia', 'vueling'].map(liv);
+    for (const l of [ryr, ibe, vlg]) { expect(l.paint.title.text).toBeTruthy(); expect(l.basis).toMatch(/\S/); }
+    // Más allá del color de la cola: nombre (texto y color), panza y winglets distintos.
+    const key = l => JSON.stringify([l.paint.title.text, l.paint.title.color, l.paint.belly?.color ?? null, l.paint.tail.color, l.paint.winglets]);
+    expect(new Set([ryr, ibe, vlg].map(key)).size).toBe(3);
+    expect(new Set([ryr, ibe, vlg].map(l => l.paint.title.color)).size).toBe(3);
+  });
+
   it('geometría de cada modelo: índices válidos, normales unitarias, UV en [0, 1] y del largo real', () => {
     for (const id of modelIds) {
       const spec = JSON.parse(readFileSync(`data/aircraft3d/models/${id}.json`, 'utf8'));

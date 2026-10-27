@@ -630,7 +630,7 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 /* 2D / 3D (js/map.js) junto al botón de ampliar, con el mismo fondo; el activo, oscuro. */
 .map-mode { position: absolute; z-index: 2; top: 8px; right: calc(max(8px, env(safe-area-inset-right)) + 48px); display: flex; height: 40px; padding: 2px;
   box-sizing: border-box; border-radius: 12px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
-.map-mode button, .map3d-views button, .map3d-follow { border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.map-mode button, .map3d-views button, .map3d-follow, .map3d-reset { border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .map-mode button { min-width: 36px; padding: 0 8px; }
 .map-mode button[aria-pressed="true"], .map3d-views button[aria-pressed="true"], .map3d-follow[aria-pressed="true"] { background: var(--text); color: #fff; }
 .map-mode button:disabled { opacity: .4; cursor: not-allowed; }
@@ -639,19 +639,21 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
    la derecha, perspectivas y «Seguir avión» abajo. Mismo fondo blanco que el resto de controles del mapa. */
 .map-hero.is-3d .plane-marker { display: none; }
 .map3d-ui > * { position: absolute; z-index: 2; }
-.map3d-info { top: 54px; left: max(10px, env(safe-area-inset-left)); max-width: min(300px, calc(100% - 76px)); margin: 0; padding: 5px 9px; border-radius: 10px;
+.map3d-info { top: 54px; left: max(10px, env(safe-area-inset-left)); max-width: min(300px, calc(100% - 112px)); margin: 0; padding: 5px 9px; border-radius: 10px;
   background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); font-size: 11.5px; line-height: 1.35; color: var(--text); }
 .map3d-info > span { display: block; }
 .map3d-model { font-weight: 600; }
 .map3d-note { color: var(--muted); }
-.map3d-zoom { top: 56px; right: max(8px, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: 6px; }
+.map3d-zoom { top: 56px; right: max(8px, env(safe-area-inset-right)); display: grid; grid-template-columns: repeat(2, 40px); gap: 6px; }
 .map3d-zoom .map-btn { width: 40px; height: 40px; border-radius: 12px; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); font-size: 18px; line-height: 1; }
 .map3d-bar { left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); bottom: 24px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
-.map3d-views, .map3d-follow { pointer-events: auto; height: 36px; box-sizing: border-box; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
+.map3d-views, .map3d-follow, .map3d-reset { pointer-events: auto; height: 36px; box-sizing: border-box; background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 40, 80, 0.15); }
 .map3d-views { display: flex; padding: 2px; border-radius: 12px; }
 .map3d-views button { padding: 0 8px; font-size: 12.5px; }
 .map3d-follow { padding: 0 12px; border-radius: 12px; font-size: 12.5px; }
-@media (max-width: 359px) { .map3d-views button { padding: 0 5px; font-size: 12px; } .map3d-follow { padding: 0 8px; font-size: 12px; } .map3d-bar { gap: 4px; } }
+.map3d-reset { padding: 0 12px; border: 0; border-radius: 12px; color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.map3d-zoom .icon { width: 20px; height: 20px; }
+@media (max-width: 359px) { .map3d-views button { padding: 0 5px; font-size: 12px; } .map3d-follow, .map3d-reset { padding: 0 8px; font-size: 12px; } .map3d-bar { gap: 4px; } }
 .map-hero.expanded .map3d-info { top: calc(env(safe-area-inset-top) + 54px); }
 .map-hero.expanded .map3d-zoom { top: calc(env(safe-area-inset-top) + 56px); }
 .map-hero.expanded .map3d-bar { bottom: calc(env(safe-area-inset-bottom) + 24px); }

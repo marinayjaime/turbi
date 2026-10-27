@@ -48,7 +48,14 @@ Con decoración de la operadora (modelo y operadora cubiertos): 64,1 % de esos v
 Sin modelo 3D (salen como genérico): A220-100, A380, 757, 767-300, 777-200, 737-400, Embraer 175, Dash 8-400,
 helicópteros y cualquier código que Turbi no conozca.
 
-Decoraciones (11): Ryanair, easyJet, Vueling, Iberia, Iberia Express, Air Nostrum (Iberia Regional), Jet2,
+Decoraciones detalladas (3, ronda del 27/10/2026): Ryanair, Iberia y Vueling llevan nombre de la compañía en el
+fuselaje (tipografía del sistema, no la suya), panza, deriva y winglets propios. Solo con rasgos contrastados en fuentes
+públicas (el campo `basis` de cada JSON lo dice): Ryanair, parte inferior y deriva azules y «RYANAIR» en azul; Iberia,
+deriva roja y amarilla (reparto simplificado, no su emblema) y «IBERIA» en rojo; Vueling, gris #4C4C4B y amarillo
+#FCCC04 de su marca, «vueling» en minúsculas, deriva y winglets amarillos. Ningún logotipo. Lo no contrastado (góndolas,
+panza de Vueling) queda en colores neutros.
+
+Resto de decoraciones (8, solo colores): easyJet, Iberia Express, Air Nostrum (Iberia Regional), Jet2,
 Eurowings, Wizz Air, Lufthansa y TUI. Sin decoración (salen con colores neutros): las demás; en particular Binter,
 Volotea, Norwegian (colas con retratos distintos), Transavia y Air Europa (decoraciones en transición o que no se
 pueden simplificar sin inventar).
@@ -83,6 +90,31 @@ Nunca se presenta como exacta una decoración especial ni la configuración de u
   posiciones y altitudes no se exageran.
 - **Estela**: la misma estela real del 2D, a la altitud de cada punto (cinta con la escala de color de FR24 y una
   cortina tenue hasta el suelo). Un tramo sin altitud no se dibuja en 3D (en 2D sigue en el suelo, en neutro).
+
+## Cámara y gestos
+
+- Perspectivas Detrás (78°), Lado (90°: a la altura del avión), Diagonal (66°) y Arriba (0°). Cada una encuadra el avión
+  entero con su largo, envergadura y alto reales y el hueco libre entre la etiqueta y la barra; después se puede
+  acercar más. «Restablecer vista» vuelve a ese encuadre.
+- Dentro de la ficha, sin ampliar: un dedo en horizontal gira alrededor del avión y en vertical desplaza la página;
+  pellizcar acerca o aleja sobre el avión; dos dedos giran e inclinan. Botones de zoom, giro e inclinación. Ninguno
+  desactiva «Seguir avión». En pantalla táctil no se arrastra el mapa; con ratón sí, y entonces deja de seguir. La rueda
+  desplaza la página; con Ctrl/⌘ (o pellizco en el panel táctil), acerca. Con el mapa ampliado, un dedo en vertical
+  inclina.
+
+### Límites reales del motor (MapLibre GL JS 6.11.2), medidos
+
+- La inclinación llega a 180° en MapLibre 6, pero Turbi la limita a 90° (cámara a la altura del avión): por encima se
+  mira el avión desde abajo. No hay relieve ni nubes; el cielo es un degradado (`setSky`) y la niebla funde el borde
+  lejano del suelo, donde MapLibre deja de dibujar teselas.
+- Sin cielo, a partir de ~85° queda una franja vacía sobre el suelo: por eso el 3D activa el cielo y lo quita al salir.
+- Con la cámara centrada en el avión (6–11 km sobre el suelo) y zoom alto, MapLibre pedía miles de teselas del suelo
+  (16 647 a 45°, 1 fps en el banco) y llegaba a pedir teselas de nivel 26 (error «outside of bounds» y desbordamiento
+  de pila en la capa `background`). Correcciones: el mapa base no se trocea por encima de su nivel 14
+  (`zoomLevelsToOverscale`), la ruta y la estela GeoJSON llegan a nivel 12, el detalle de las fuentes se acota en 3D y,
+  en 3D, la capa `background` se sustituye por un polígono del mismo color. Resultado medido: 15–43 teselas en
+  cualquier inclinación y sin errores.
+- El rendimiento en móvil no está validado: las medidas son de Chrome con WebGL por software en el Mac.
 
 ## Rendimiento y alternativa 2D
 

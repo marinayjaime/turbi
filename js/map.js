@@ -13,6 +13,8 @@ export const MAPLIBRE_VERSION = '6.11.2';
 const MAPLIBRE = './vendor/maplibre/maplibre-gl.mjs';
 export const STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
 const STYLE_TIMEOUT_MS = 8000;
+const GEOJSON_MAXZOOM = 12;
+const MAX_ZOOM = 22, BASE_MAXZOOM = 14;
 const LOAD_MS = 15000;
 
 // ---- Colores del mapa: un solo significado para cada uno ----
@@ -225,6 +227,10 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   const map = new ml.Map({
     container: el, style, bounds: routeBounds, fitBoundsOptions: { padding: PAD }, attributionControl: false,
     dragRotate: false, pitchWithRotate: false, touchPitch: false, renderWorldCopies: false, cooperativeGestures: true,
+    // Teselas del mapa base: como mucho de nivel 14 (el máximo de OpenFreeMap), ampliadas por encima. MapLibre 6 las
+    // trocea hasta max(14, maxZoom − zoomLevelsToOverscale) = 18 por defecto: en el primer plano del avión en 3D (zoom ≈ 19
+    // sobre un suelo 6–11 km más abajo) eran miles de teselas de nivel 18 (5 559 a 45°, medido; 1 fps).
+    maxZoom: MAX_ZOOM, zoomLevelsToOverscale: MAX_ZOOM - BASE_MAXZOOM,
     locale: {
       'CooperativeGesturesHandler.WindowsHelpText': 'Usa Ctrl + rueda para acercar o alejar el mapa',
       'CooperativeGesturesHandler.MacHelpText': 'Usa ⌘ + rueda para acercar o alejar el mapa',
@@ -241,10 +247,13 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   // Fuentes y capas (de abajo arriba): ruta prevista (gris, fina, tenue y discontinua) y la estela real: un contorno
   // oscuro, fino y neutro (separa del mapa claro los tramos blancos y amarillos sin teñirlos) y encima la línea con el
   // color de la altitud de cada segmento (una sola capa, color por segmento con TRACK_COLOR).
-  map.addSource('route', { type: 'geojson', data: EMPTY });
+  // maxzoom 12 en las dos fuentes GeoJSON: con el valor por defecto (18), el primer plano del avión en 3D (zoom ≈ 19 sobre
+  // un suelo 6–11 km más abajo) las teselaba en miles de trozos vacíos (11 153 teselas a 45°, medido; 1–3 fps). A nivel 12
+  // la línea conserva una precisión de alrededor de un metro.
+  map.addSource('route', { type: 'geojson', data: EMPTY, maxzoom: GEOJSON_MAXZOOM });
   map.addLayer({ id: 'route', type: 'line', source: 'route', layout: { 'line-cap': 'round' },
     paint: { 'line-color': ROUTE_COLOR, 'line-width': 2, 'line-opacity': 0.6, 'line-dasharray': [2, 2] } });
-  map.addSource('track', { type: 'geojson', data: EMPTY });
+  map.addSource('track', { type: 'geojson', data: EMPTY, maxzoom: GEOJSON_MAXZOOM });
   map.addLayer({ id: 'track-halo', type: 'line', source: 'track', layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': 'rgba(20, 30, 45, 0.45)', 'line-width': 5.5 } });
   map.addLayer({ id: 'track', type: 'line', source: 'track', layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -450,7 +459,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       map.resize();
       if (on === isExpanded) return;
       isExpanded = on;
-      if (mode === '3d') { if (on) map.cooperativeGestures?.disable?.(); else map.cooperativeGestures?.enable?.(); return; }
+      if (mode === '3d') { ext3d?.setExpanded(on); return; } // los gestos y el encuadre del 3D los lleva js/map3d.js
       if (on) {
         savedView = { center: map.getCenter(), zoom: map.getZoom() };
         map.cooperativeGestures?.disable?.();

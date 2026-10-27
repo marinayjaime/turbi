@@ -5,7 +5,7 @@
   "fuselage": "#ffffff",
   "belly": {
    "color": "#70cbf4",
-   "from": 0.36
+   "from": 0.72
   },
   "tail": {
    "color": "#70cbf4"

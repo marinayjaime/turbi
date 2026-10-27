@@ -1,20 +1,14 @@
 {
  "id": "iberia",
  "name": "Iberia",
+ "basis": "Fuselaje blanco, nombre «IBERIA» en rojo en mayúsculas redondeadas y deriva roja y amarilla (decoración de 2013). La deriva es un reparto simplificado de esos colores, no el emblema. Góndolas en blanco neutro: su decoración no está contrastada.",
  "paint": {
   "fuselage": "#ffffff",
-  "tail": {
-   "color": "#d7192d",
-   "bands": [
-    {
-     "from": 0,
-     "to": 0.32,
-     "color": "#ffc72c"
-    }
-   ]
-  },
+  "title": { "text": "IBERIA", "color": "#d7192d", "u": 0.12, "height": 0.21, "weight": 700 },
+  "tail": { "color": "#d7192d", "polys": [{ "color": "#ffc72c", "points": [[0, 0], [0.62, 0], [0, 0.78]] }] },
   "wings": "#c3c8cf",
-  "engines": "#d9dde2",
+  "engines": "#e6e9ed",
+  "engineLip": "#c9ced6",
   "winglets": "#d7192d"
  }
 }
