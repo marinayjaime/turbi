@@ -1111,8 +1111,7 @@ function keepMap() {
 }
 function dropKeptMap() { keptMap?.map.destroy(); keptMap = null; }
 // El mapa conservado va al #map-slot de la ficha nueva. Sus botones ya están cableados (wireMapCard busca routeMap al
-// pulsar): no se vuelven a cablear. Sin encuadrar ni otro mapa. El pronóstico anterior se quita (si el nuevo falla, no
-// queda coloreado con datos viejos) y lo vuelve a poner forecastExtras.
+// pulsar): no se vuelven a cablear. Sin encuadrar ni otro mapa.
 function adoptMap(slot) {
   const { node, map, card: prev } = keptMap;
   keptMap = null;
@@ -1122,8 +1121,6 @@ function adoptMap(slot) {
   const title = node.querySelector('.card-title');
   if (title) title.textContent = mapTitle(mapPhase(shownCard) ?? flightPhase(shownCard));
   map.invalidate();
-  // Como recién creado: la ruta sin colorear, sin SIGMET ni PIREP; el pronóstico nuevo la colorea (forecastExtras).
-  map.clearForecast();
   // El avión de antes se queda con su última posición real (lastFix, conservada por run) mientras siga vigente.
   if (!lastFix && planeOnMap(prev?.radar, prev?.radarReceivedMono, monoNow())) lastFix = prev;
   showPlane(map, shownCard);
@@ -1304,8 +1301,8 @@ function paintNow() {
 // js/card-model.js: nunca por haber pasado la hora de salida ni embarcando). La ficha deja el hueco #map-slot y aquí se pone el mapa: se crea al
 // pintarla en esa fase o al entrar en ella con la ficha abierta (repaintFlight), se conserva entre repintados y en
 // «Actualizar», y se quita si la ficha deja de tenerlo (cancelada o desviada). Antes de volar, ni mapa ni hueco. Ruta
-// en círculo máximo (sin meteorología) y aeropuertos; setForecast la colorea cuando hay pronóstico y setPlane pone o
-// quita el avión. MapLibre es prescindible: si no carga, el hueco queda vacío (no ocupa sitio) y nada más cambia.
+// en círculo máximo y aeropuertos; setPlane pone o quita el avión y setTrack/extendTrack dibujan la estela por altitud.
+// El pronóstico (turbulencias, SIGMET) no se pinta en el mapa: su rojo se confundiría con el de la altitud (js/map.js). MapLibre es prescindible: si no carga, el hueco queda vacío (no ocupa sitio) y nada más cambia.
 function syncMap(q, stale) {
   const slot = $in('map-slot');
   if (!slot || !q?.origin || !q?.destination) { destroyMap(); dropKeptMap(); return; } // sin hueco: sin mapa
@@ -1329,7 +1326,6 @@ function mountMap(q, stale, slot) {
   createRouteMap(el, { origin: q.origin, destination: q.destination, route }).then(m => {
     if (token !== mapToken || stale()) { m.destroy(); return; }
     routeMap = m;
-    if (currentView?.route) m.setForecast(currentView);
     showPlane(m, shownCard);
   }).catch(() => {
     // Sin mapa: fuera su nodo (el hueco vacío no ocupa sitio) y la ficha sigue igual, con todos los datos en texto.
@@ -1406,7 +1402,9 @@ function syncTrack(map, card) {
   if (map.trackIdentity() === identity) {
     // Solo una posición FRESCA (≤ 60 s) y real de esta identidad la prolonga; una vieja, nunca.
     const pos = planeOnMap(card.radar, card.radarReceivedMono, monoNow()), ms = readingUtc(card.radar);
-    if (pos?.fresh && Number.isFinite(ms) && trackLast?.map === map && ms > trackLast.ms) { map.extendTrack([pos.lat, pos.lon], { identity, fresh: true }); trackLast.ms = ms; }
+    // Con SU altitud real (altFt de esa lectura); sin ella, null (segmento neutro), nunca la de otra lectura.
+    const alt = Number.isFinite(card.radar.altFt) ? card.radar.altFt : null;
+    if (pos?.fresh && Number.isFinite(ms) && trackLast?.map === map && ms > trackLast.ms) { map.extendTrack([pos.lat, pos.lon, alt], { identity, fresh: true }); trackLast.ms = ms; }
     return;
   }
   if (map.trackIdentity() !== null) map.clearTrack(); // otro avión u otro vuelo físico: nunca se mezclan
@@ -1443,7 +1441,11 @@ async function requestTrack(map, card, fr24Id, asked, { load = false } = {}) {
   if (cur.radar?.fr24Id && planeIdentity(cur) !== identity) return; // la ficha ya va con otro avión
   const limit = trailLimit(map, identity);
   if (limit === null) return;
-  const kept = r.points.map((p, i) => [p, r.times[i] * 1000]).filter(([p, ms]) => Array.isArray(p) && Number.isFinite(ms) && ms <= limit);
+  // La altitud de cada punto (alts, pies o null), si la trae y va alineada; una estela guardada antes no la tiene: sin
+  // altitud, en color neutro (nunca se vuelve a pedir para colorearla).
+  const alts = Array.isArray(r.alts) && r.alts.length === r.points.length ? r.alts : null;
+  const kept = r.points.map((p, i) => [Array.isArray(p) ? [p[0], p[1], alts ? alts[i] : null] : p, r.times[i] * 1000])
+    .filter(([p, ms]) => Array.isArray(p) && Number.isFinite(ms) && ms <= limit);
   if (!kept.length) return;
   asked.failed = false;
   map.setTrack(kept.map(([p]) => p), { identity });
@@ -1604,9 +1606,6 @@ async function forecastExtras(view, q, stale) {
   ]);
   if (stale()) return;
   saveLast(view, view.queriedAt);
-  // El mapa ya está (si la ficha lo lleva): ahora la ruta coloreada por nivel y los avisos. Si MapLibre aún no ha
-  // cargado, mountMap aplica currentView al crearlo.
-  if (routeMap && view === currentView) safely(async () => routeMap.setForecast(view));
 }
 
 // handoff: el traspaso de «Actualizar» (refreshHandoff), que llega hasta run; sin él, la búsqueda de siempre.

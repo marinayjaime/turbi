@@ -123,13 +123,19 @@ export const REAL_SOURCES = new Set(['ADSB', 'MLAT', 'SATELLITE', 'UAT', 'FLARM'
 // fr24Id: identificador corto alfanumérico (hexadecimal en la práctica). Nada más entra en la URL de Flight Tracks.
 export const FR24_ID_RE = /^[A-Za-z0-9]{4,16}$/;
 const TRACK_MAX_POINTS = 600;
+const MIN_ALT_FT = -2000, MAX_ALT_FT = 70000; // presión estándar: algo negativa en tierra con presión alta; nada vuela más alto
+const altFt = v => (typeof v === 'number' && Number.isFinite(v) && v >= MIN_ALT_FT && v <= MAX_ALT_FT ? Math.round(v) : null);
 const FUTURE_TOLERANCE_MS = 30000;
 const round4 = v => Math.round(v * 1e4) / 1e4;
 
 // Estela real de un vuelo de FR24 (Flight Tracks) por su fr24Id, que SOLO viene de la asociación del radar
 // (server/fr24-track.mjs). Una llamada, sin reintentos, timeout de 10 s. → { state: 'found', fr24Id, points: [[lat, lon]…],
-// times: [s…] (hora de cada punto, epoch en segundos), lastAt } | { state: 'not-found' } | { state: 'unavailable', reason,
-// httpStatus? }. Solo posiciones de fuente real con lat/lon finitos y hora válida (no del futuro), ordenadas por tiempo y,
+// times: [s…] (hora de cada punto, epoch en segundos), alts: [ft | null…] (altitud de cada punto), lastAt } |
+// { state: 'not-found' } | { state: 'unavailable', reason, httpStatus? }. points, times y alts van siempre alineados.
+// Altitud: `alt` de cada punto, que según la especificación de la API (Flightradar24-API.yaml, FlightTracks.tracks[].alt)
+// es la altitud de presión barométrica sobre el nivel del mar con presión estándar, entera y EN PIES; tal cual, sin
+// convertir. Fuera de [MIN_ALT_FT, MAX_ALT_FT] o no numérica → null (desconocida): la posición se conserva y la altitud
+// nunca se interpola ni se toma de otro punto. Solo posiciones de fuente real con lat/lon finitos y hora válida (no del futuro), ordenadas por tiempo y,
 // si pasan de 600, un submuestreo uniforme que conserva el primero y el último (sin interpolar ni inventar nada). Una
 // respuesta de otro fr24_id (o sin él) no se acepta: nunca se mezclan vuelos.
 export async function fr24Track(fr24Id, { fetchFn = fetch, env = process.env, timeoutMs = TIMEOUT_MS, nowMs = Date.now() } = {}) {
@@ -156,7 +162,7 @@ export async function fr24Track(fr24Id, { fetchFn = fetch, env = process.env, ti
     if (!REAL_SOURCES.has(String(p?.source ?? '').toUpperCase()) || !Number.isFinite(ms) || ms > nowMs + FUTURE_TOLERANCE_MS) continue;
     if (typeof p.lat !== 'number' || typeof p.lon !== 'number' || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)
       || Math.abs(p.lat) > 90 || Math.abs(p.lon) > 180) continue;
-    real.push({ ms, lat: round4(p.lat), lon: round4(p.lon) });
+    real.push({ ms, lat: round4(p.lat), lon: round4(p.lon), alt: altFt(p.alt) });
   }
   real.sort((a, b) => a.ms - b.ms);
   const unique = real.filter((p, i) => i === 0 || p.ms !== real[i - 1].ms);
@@ -164,5 +170,5 @@ export async function fr24Track(fr24Id, { fetchFn = fetch, env = process.env, ti
   const kept = unique.length <= TRACK_MAX_POINTS ? unique
     : Array.from({ length: TRACK_MAX_POINTS }, (_, i) => unique[Math.round((i * (unique.length - 1)) / (TRACK_MAX_POINTS - 1))]);
   return { state: 'found', fr24Id, points: kept.map(p => [p.lat, p.lon]), times: kept.map(p => Math.round(p.ms / 1000)),
-    lastAt: new Date(kept.at(-1).ms).toISOString() };
+    alts: kept.map(p => p.alt), lastAt: new Date(kept.at(-1).ms).toISOString() };
 }

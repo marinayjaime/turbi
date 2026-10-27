@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { forecastView, aviationView } from '../js/forecast.js';
-import { routeLines } from '../js/map.js';
 import { buildProfile } from '../js/altitude.js';
 
 const PMI = { iata: 'PMI', city: 'Palma de Mallorca', lat: 39.5517, lon: 2.7388 };
@@ -50,16 +49,6 @@ describe('aviationView', () => {
   });
   it('sin ningún dato → null', () => {
     expect(aviationView({ metar: null, taf: null, sigmet: null, pirep: null, icao: null }, { originIata: 'PMI', destinationIata: 'MAD', route: [] }, NOW)).toBeNull();
-  });
-});
-
-describe('routeLines (mapa)', () => {
-  it('agrupa puntos consecutivos del mismo nivel, uniendo los tramos', () => {
-    const r = [{ lat: 0, lon: 0, level: 0 }, { lat: 0, lon: 1, level: 0 }, { lat: 0, lon: 2, level: 2 }, { lat: 0, lon: 3, level: null }];
-    expect(routeLines(r)).toEqual([
-      { level: 0, coords: [[0, 0], [0, 1], [0, 2]] },
-      { level: 2, coords: [[0, 2], [0, 3]] },
-    ]);
   });
 });
 

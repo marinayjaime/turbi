@@ -64,7 +64,7 @@ async function finishedTrack(state, fr24Id, { load, ...opts }) {
   if (!load) return { state: 'on-demand' };
   const r = await cachedTrack(state, fr24Id, opts);
   if (store && r.state === 'found') {
-    const data = { state: 'found', fr24Id: r.fr24Id, points: r.points, times: r.times, lastAt: r.lastAt };
+    const data = { state: 'found', fr24Id: r.fr24Id, points: r.points, times: r.times, alts: r.alts, lastAt: r.lastAt };
     const q = state.historyWrites ?? Promise.resolve();
     state.historyWrites = q.then(() => store.update(path, cur => (cur ? null : data))).catch(() => {});
     await state.historyWrites;
@@ -96,7 +96,10 @@ export async function fr24TrackResponse(state, path, { fetchFn = fetch, nowMs = 
   const load = url.searchParams.get('load') === '1';
   const r = live ? await cachedTrack(state, live, { fetchFn, env, nowMs }) : await finishedTrack(state, history, { fetchFn, env, nowMs, load });
   if (r.state === 'on-demand') return reply(nowMs, { state: 'on-demand' }, NO_STORE);
-  if (r.state === 'found') return reply(nowMs, { state: 'found', fr24Id: r.fr24Id, points: r.points, times: r.times, lastAt: r.lastAt }, CACHED);
+  // alts (altitud en pies de cada punto, o null): solo si va alineada con points. Una estela guardada antes de conservarse
+  // la altitud no la tiene y se sirve igual, sin ella (la app la pinta en un color neutro; no se vuelve a descargar).
+  const alts = Array.isArray(r.alts) && r.alts.length === r.points?.length ? { alts: r.alts } : {};
+  if (r.state === 'found') return reply(nowMs, { state: 'found', fr24Id: r.fr24Id, points: r.points, times: r.times, ...alts, lastAt: r.lastAt }, CACHED);
   if (r.state === 'not-found') return reply(nowMs, { state: 'not-found' }, CACHED);
   return reply(nowMs, { state: 'unavailable', reason: typeof r.reason === 'string' ? r.reason : 'error' }, NO_STORE);
 }

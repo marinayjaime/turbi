@@ -74,7 +74,15 @@ describe('fr24Track (Flight Tracks)', () => {
   it('1) puntos reales ordenados por tiempo, redondeados, con su hora y la del último', async () => {
     const r = await call(trackBody([pt(2), pt(0), pt(1)]));
     expect(r).toEqual({ state: 'found', fr24Id: '3c4d5e6f', points: [[40.5, -3.6], [40.6, -3.57], [40.7, -3.54]],
-      times: [T('08:05') / 1000, T('08:06') / 1000, T('08:07') / 1000], lastAt: new Date(T('08:07')).toISOString() });
+      times: [T('08:05') / 1000, T('08:06') / 1000, T('08:07') / 1000], alts: [0, 1000, 2000], lastAt: new Date(T('08:07')).toISOString() });
+  });
+  it('altitud: `alt` de FR24 (pies, según la especificación) tal cual; no válida → null sin inventar y la posición se queda; ESTIMATED sigue fuera', async () => {
+    const r = await call(trackBody([pt(0, { alt: 0 }), pt(1, { alt: null }), pt(2, { alt: '35000' }), pt(3, { alt: 999999 }), pt(4, { alt: 37012 }),
+      pt(5, { alt: 36000, source: 'ESTIMATED' }), pt(6, {})]));
+    expect(r.alts).toEqual([0, null, null, null, 37012, 6000]); // ESTIMATED (5) fuera, también su altitud
+    expect(r.points).toHaveLength(6);
+    expect(r.times).toHaveLength(6);
+    expect((await call(trackBody([pt(0, { alt: undefined }), pt(1, { alt: -150 })]))).alts).toEqual([null, -150]); // bajo cero: presión estándar
   });
   it('acepta también la respuesta como lista (el cliente oficial la tipa así)', async () => {
     expect((await call([trackBody()])).points).toHaveLength(3);
@@ -91,7 +99,7 @@ describe('fr24Track (Flight Tracks)', () => {
     expect(await call({ tracks: [pt(0)] })).toEqual({ state: 'not-found' });
   });
   it('simplifica a como mucho 600 puntos, conservando el primero y el último, sin interpolar', async () => {
-    const many = Array.from({ length: 2000 }, (_, i) => ({ ...pt(0), timestamp: new Date(T('05:00') + i * 5000).toISOString(), lat: 40 + i * 0.001, lon: -3 }));
+    const many = Array.from({ length: 2000 }, (_, i) => ({ ...pt(0), timestamp: new Date(T('05:00') + i * 5000).toISOString(), lat: 40 + i * 0.001, lon: -3, alt: i * 10 }));
     const r = await call(trackBody(many));
     expect(r.points.length).toBeLessThanOrEqual(600);
     expect(r.points.length).toBeGreaterThan(500);
@@ -100,6 +108,9 @@ describe('fr24Track (Flight Tracks)', () => {
     const all = new Set(many.map(p => `${Math.round(p.lat * 1e4) / 1e4}`));
     expect(r.points.every(([lat]) => all.has(String(lat)))).toBe(true); // todos son puntos reales recibidos
     expect(r.times).toHaveLength(r.points.length);
+    // Cada punto conserva SU altitud (la del mismo punto físico): alt = índice × 10 y lat = 40 + índice × 0,001.
+    expect(r.alts).toHaveLength(r.points.length);
+    expect(r.points.every(([lat], k) => r.alts[k] === Math.round((lat - 40) / 0.001) * 10)).toBe(true);
   });
   it('18) 401/403/429/5xx, red, tiempo agotado y JSON inválido → unavailable (sin reintentos); 404 → not-found', async () => {
     for (const [status, reason] of [[401, 'autorizacion'], [403, 'autorizacion'], [429, 'limite'], [500, 'servidor'], [503, 'servidor']]) {
@@ -130,7 +141,8 @@ describe('/track/AL/N.json?leg=: solo el fr24Id asociado a ese vuelo físico', (
     const s = server();
     expect((await s.radar()).fr24Id).toBe('3c4d5e6f');
     const r = await s.track();
-    expect(r).toMatchObject({ state: 'found', fr24Id: '3c4d5e6f', source: 'fr24', points: [[40.5, -3.6], [40.6, -3.57], [40.7, -3.54]] });
+    expect(r).toMatchObject({ state: 'found', fr24Id: '3c4d5e6f', source: 'fr24', points: [[40.5, -3.6], [40.6, -3.57], [40.7, -3.54]],
+      alts: [0, 1000, 2000] }); // la altitud de cada punto llega a la app, alineada con points y times
     expect(s.trackCalls()).toEqual([`${FR24_BASE}/flight-tracks?flight_id=3c4d5e6f`]);
     expect(s.liveCalls()).toHaveLength(1); // /track no vuelve a pedir posiciones en vivo
   });

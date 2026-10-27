@@ -582,11 +582,11 @@ h3.section { margin: 32px 0 12px; padding-top: 18px; border-top: 1px solid var(-
 details.raw summary { font-size: 12px; color: var(--accent); cursor: pointer; }
 details.raw code { display: block; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--field); padding: 8px; border-radius: 8px; margin-top: 4px; }
 /* ---- Mapa del vuelo (js/map.js, MapLibre): solo en el aire o aterrizado ----
-   Avión: el icono apunta al este y el mapa lo gira hacia su rumbo real (solo presentación), con un contorno blanco que
-   lo separa del mapa y de la estela. */
-.plane-marker { color: var(--accent); line-height: 0; pointer-events: none;
-  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff) drop-shadow(0 1px 3px rgba(15, 40, 80, .35)); }
-.plane-marker .icon { display: block; }
+   Avión: la posición actual, AMARILLO FIJO (PLANE_COLOR en js/map.js; no es la altitud: esa la dice la estela), relleno
+   con un contorno oscuro fino y una sombra pequeña, para verse sobre tierra, mar y cualquier tramo de la estela (también
+   los blancos y amarillos). El icono apunta al este y el mapa lo gira hacia su rumbo real (solo presentación). */
+.plane-marker { --plane: #FFD400; color: #1e2833; line-height: 0; pointer-events: none; filter: drop-shadow(0 1px 1.5px rgba(10, 20, 35, .45)); }
+.plane-marker .icon { display: block; fill: var(--plane); stroke: currentColor; stroke-width: 1.3; }
 .plane-marker .plane-rot { display: block; transition: transform var(--ease); }
 /* Última posición conocida (60–180 s, js/map.js): quieta y atenuada, para no presentarla como una medición nueva. */
 .plane-marker .plane-rot.plane-old { opacity: .5; }

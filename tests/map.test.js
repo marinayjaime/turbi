@@ -3,7 +3,9 @@
 // (recorrido continuo A → B durante el intervalo del seguimiento, sin pasar nunca de la última), la estela real en dos
 // capas y la cámara. MapLibre se simula (tests/fixtures/fake-maplibre.js); el reloj y los fotogramas, también.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { routeLines, mapHeroHtml, mapTitle, createRouteMap, lightStyle, FALLBACK_STYLE, PLANE_GLIDE_MS } from '../js/map.js';
+import { readFileSync } from 'node:fs';
+import { mapHeroHtml, mapTitle, createRouteMap, lightStyle, FALLBACK_STYLE, PLANE_GLIDE_MS, trackSegments, altitudeColor, ALTITUDE_STOPS_M,
+  NEUTRAL_TRACK, PLANE_COLOR } from '../js/map.js';
 import { LIVE_INTERVAL_MS } from '../js/live-tracker.js';
 import { fakeMapLibre } from './fixtures/fake-maplibre.js';
 
@@ -86,22 +88,13 @@ describe('createRouteMap', () => {
     vi.stubGlobal('maplibregl', fakeMapLibre({ fail: true }).L);
     await expect(make()).rejects.toBeTruthy();
   });
-  it('setForecast y clearForecast: ruta coloreada, SIGMET y PIREP; clearForecast vuelve a la ruta sin colorear sin tocar la vista ni el avión', async () => {
-    reduced = true;
+  it('ni turbulencias ni SIGMET en el mapa (su rojo se confundiría con el de la altitud): la ruta prevista, siempre gris', async () => {
     const m = await make();
-    m.setPlane({ lat: 40, lon: 1 }, { identity: ID });
-    const views = ctx.log.view.length;
-    m.setForecast({ route: [{ lat: 39, lon: 0, level: 3 }, { lat: 42, lon: 3, level: 3 }],
-      aviation: { sigmets: [{ coords: [{ lat: 39, lon: 0 }, { lat: 40, lon: 1 }, { lat: 41, lon: 0 }], label: 'S' }], pireps: [{ lat: 40, lon: 1, label: 'P' }] } });
-    expect(ctx.log.map.data.route.features[0].properties.level).toBe(3);
-    expect(ctx.log.map.data.sigmets.features).toHaveLength(1);
-    expect(ctx.log.map.data.pireps.features).toHaveLength(1);
-    m.clearForecast();
-    expect(ctx.log.map.data.route.features[0].properties.level).toBe(0);
-    expect(ctx.log.map.data.sigmets.features).toHaveLength(0);
-    expect(ctx.log.map.data.pireps.features).toHaveLength(0);
-    expect(ctx.log.view.length).toBe(views);
-    expect(ctx.log.markers[0].removed).toBe(false);
+    expect(m.setForecast).toBeUndefined();
+    expect(ctx.log.map.data.sigmets).toBeUndefined();
+    const route = ctx.log.lines.find(l => l.id === 'route');
+    expect(route.o.color).toBe('#8a94a3');
+    expect(route.coords).toEqual([[39, 0], [42, 3]]);
   });
   it('destroy quita el mapa', async () => {
     const m = await make();
@@ -226,58 +219,149 @@ describe('createRouteMap: orientación', () => {
   });
 });
 
-describe('createRouteMap: estela real', () => {
-  const A = { lat: 40, lon: 0 }, B = { lat: 40, lon: 1 };
-  const PAST = [[39, -1], [39.5, -0.5], [40, 0]];
+// Estela por ALTITUD (la escala oficial de Flightradar24): cada segmento, con la altitud real de su punto final.
+describe('escala de altitud (Flightradar24)', () => {
+  const ft = m => m / 0.3048;
+  it('los valores oficiales: blanco por debajo de 100 m y, en cada altitud de la tabla, su color exacto', () => {
+    expect(ALTITUDE_STOPS_M).toHaveLength(32);
+    expect(altitudeColor(ft(50))).toBe('rgb(255, 255, 255)');
+    for (const [m, color] of ALTITUDE_STOPS_M) expect(altitudeColor(ft(m)), `${m} m`).toBe(color);
+    expect(ALTITUDE_STOPS_M.map(([m]) => m)).toEqual([...ALTITUDE_STOPS_M.map(([m]) => m)].sort((a, b) => a - b));
+  });
+  it('A) cotas bajas → blanco y amarillo; B) ascenso → verde, azul claro, azul, morado; C) crucero alto → rojo', () => {
+    expect(altitudeColor(0)).toBe('rgb(255, 255, 255)');
+    expect(altitudeColor(ft(200))).toBe('rgb(255, 234, 0)'); // amarillo
+    expect(altitudeColor(700)).toBe('rgb(253, 237, 0)'); // ≈ 213 m: entre 200 y 300 m, interpolado (decisión de Turbi)
+    expect(altitudeColor(ft(1200))).toBe('rgb(0, 255, 54)'); // verde
+    expect(altitudeColor(ft(3500))).toBe('rgb(0, 234, 255)'); // azul claro
+    expect(altitudeColor(ft(7500))).toBe('rgb(0, 0, 255)'); // azul
+    expect(altitudeColor(ft(11000))).toBe('rgb(150, 0, 255)'); // morado
+    expect(altitudeColor(43000)).toBe('rgb(255, 0, 0)'); // ≈ 13 100 m: rojo
+  });
+  it('E) sin altitud → gris azulado neutro, nunca un color de la escala', () => {
+    for (const v of [null, undefined, NaN, '35000']) expect(altitudeColor(v)).toBe(NEUTRAL_TRACK);
+    expect([[0, 'x'], ...ALTITUDE_STOPS_M].some(([, c]) => c === NEUTRAL_TRACK)).toBe(false);
+  });
+});
 
-  it('I) dos capas (halo ancho y semitransparente; línea de acento sólida) y la ruta prevista por debajo: fina, tenue y discontinua', async () => {
+describe('createRouteMap: estela real por altitud', () => {
+  const A = { lat: 40, lon: 0 }, B = { lat: 40, lon: 1 };
+  const PAST = [[39, -1, 2000], [39.5, -0.5, 20000], [40, 0, 36000]];
+  const alts = () => trail().segments.map(sg => sg.alt);
+
+  it('una sola capa de color por segmento (expresión de MapLibre) sobre un contorno oscuro neutro; nada azul de marca', async () => {
     const m = await make();
     m.setTrack(PAST, { identity: ID });
     const [halo, core] = trail().o.layers;
+    expect(trail().o.layers).toHaveLength(2);
+    expect(halo.color).toMatch(/^rgba\(20, 30, 45, /);
     expect(halo.width).toBeGreaterThan(core.width);
-    expect(halo.opacity).toBeLessThan(0.5);
-    expect(core).toMatchObject({ color: '#1A6FE0', opacity: 1 });
+    expect(core.color[0]).toBe('case'); // data-driven: el color sale de la altitud de cada segmento
+    expect(JSON.stringify(core.color)).toContain('"interpolate"');
+    expect(JSON.stringify(trail().o)).not.toContain('#1A6FE0');
     const route = ctx.log.lines.find(l => l.id === 'route');
     expect(route.o.dashArray).toBeTruthy();
     expect(route.o.layers[0].width).toBeLessThan(core.width);
     expect(route.o.layers[0].opacity).toBeLessThan(1);
-    expect(trail().coords).toEqual(PAST);
   });
 
-  it('I) una posición real nueva la prolonga y la línea crece DETRÁS del avión: B no se dibuja hasta que llega', async () => {
+  it('B) C) D) cada segmento conserva la altitud de SU punto: ascenso, crucero y descenso se leen en la línea', async () => {
+    const m = await make();
+    const profile = [0, 2000, 12000, 25000, 38000, 41000, 41000, 30000, 15000, 3000, 200];
+    m.setTrack(profile.map((alt, i) => [38 + i * 0.3, -2 + i * 0.4, alt]), { identity: ID });
+    expect(alts()).toEqual(profile.slice(1)); // segmento i → altitud del punto i (el punto final)
+    const colors = alts().map(altitudeColor);
+    expect(colors[0]).toBe(altitudeColor(2000)); // ascenso: amarillo/verde
+    expect(colors[4]).toBe('rgb(255, 0, 228)'); // 41 000 ft ≈ 12 500 m
+    expect(colors.at(-1)).toBe('rgb(255, 255, 255)'); // 200 ft ≈ 61 m: blanco al llegar
+    expect(new Set(colors).size).toBeGreaterThan(6); // no un solo color para toda la ruta
+  });
+
+  it('E) F) punto sin altitud → segmento neutro; estela antigua [lat, lon] (guardada sin altitud) → se pinta entera en neutro', async () => {
+    const m = await make();
+    m.setTrack([[39, -1, 2000], [39.5, -0.5, null], [40, 0, 36000]], { identity: ID });
+    expect(alts()).toEqual([undefined, 36000]);
+    m.setTrack([[39, -1], [39.5, -0.5], [40, 0]], { identity: 'v1|antigua' });
+    expect(trail().live).toBe(true);
+    expect(trail().coords).toEqual([[39, -1], [39.5, -0.5], [40, 0]]);
+    expect(alts()).toEqual([undefined, undefined]); // sin escala: nunca presentada como coloreada por altitud
+  });
+
+  it('G) una posición nueva prolonga la estela con SU altitud; durante el recorrido, el tramo hasta el avión ya lleva la de B, y B no se dibuja antes', async () => {
     const m = await make();
     m.setTrack(PAST, { identity: ID });
     m.setPlane(A, { identity: ID });
     m.setPlane(B, { identity: ID });
-    m.extendTrack([B.lat, B.lon], { identity: ID }); // lo que hace la app con cada posición fresca
+    m.extendTrack([B.lat, B.lon, 37000], { identity: ID }); // lo que hace la app con cada posición fresca (altFt)
     run(PLANE_GLIDE_MS / 2);
-    const head = trail().coords.at(-1);
-    expect(head).toEqual(shown()); // la estela acaba en el avión que se ve
-    expect(trail().coords.some(c => c[0] === 40 && c[1] === 1)).toBe(false); // B aún no
+    expect(trail().coords.at(-1)).toEqual(shown()); // la estela acaba en el avión que se ve…
+    expect(trail().coords.some(c => c[0] === 40 && c[1] === 1)).toBe(false); // …B aún no
+    expect(alts().at(-1)).toBe(37000); // el tramo hasta el avión: la altitud real de B, no una intermedia
     run(PLANE_GLIDE_MS / 2 + 1000);
     expect(trail().coords.at(-1)).toEqual([40, 1]);
-    expect(trail().coords.at(-2)).toEqual([40, 0]); // A, vértice real
+    expect(alts().at(-1)).toBe(37000);
   });
 
-  it('J) una posición vieja (fresh: false) no la prolonga; tampoco repetir el último punto', async () => {
+  it('H) una posición nueva sin altitud prolonga en neutro, sin heredar la anterior', async () => {
     const m = await make();
     m.setTrack(PAST, { identity: ID });
-    m.extendTrack([40.5, 0.5], { identity: ID, fresh: false });
-    m.extendTrack([40, 0], { identity: ID });
-    expect(trail().coords).toEqual(PAST);
+    m.extendTrack([40.5, 0.5], { identity: ID });
+    m.extendTrack([41, 1, null], { identity: ID });
+    expect(alts().slice(-2)).toEqual([undefined, undefined]);
   });
 
-  it('K) otra identidad (otro fr24Id): no se mezcla; setTrack de otra identidad sustituye la estela; clearTrack la quita', async () => {
+  it('una posición vieja (fresh: false) no la prolonga; tampoco repetir el último punto', async () => {
     const m = await make();
     m.setTrack(PAST, { identity: ID });
-    m.extendTrack([40.5, 0.5], { identity: 'v1|otro' });
-    expect(trail().coords).toEqual(PAST);
-    m.setTrack([[45, 5], [46, 6]], { identity: 'v1|otro' });
+    m.extendTrack([40.5, 0.5, 36000], { identity: ID, fresh: false });
+    m.extendTrack([40, 0, 36000], { identity: ID });
+    expect(trail().coords).toEqual(PAST.map(([la, lo]) => [la, lo]));
+  });
+
+  it('I) otra identidad (otro fr24Id): no se mezcla; setTrack de otra identidad sustituye la estela; clearTrack la quita', async () => {
+    const m = await make();
+    m.setTrack(PAST, { identity: ID });
+    m.extendTrack([40.5, 0.5, 36000], { identity: 'v1|otro' });
+    expect(trail().coords).toHaveLength(3);
+    m.setTrack([[45, 5, 1000], [46, 6, 2000]], { identity: 'v1|otro' });
     expect(trail().coords).toEqual([[45, 5], [46, 6]]);
-    expect(m.trackIdentity()).toBe('v1|otro');
+    expect(alts()).toEqual([2000]);
     m.clearTrack();
     expect(trail().live).toBe(false);
     expect(m.trackIdentity()).toBeNull();
+  });
+
+  it('trackSegments: un segmento por par de puntos consecutivos, con la altitud del punto final o sin ella', () => {
+    expect(trackSegments([[1, 2, 100], [3, 4, 200], [5, 6, null]]).features.map(f => [f.geometry.coordinates, f.properties]))
+      .toEqual([[[[2, 1], [4, 3]], { alt: 200 }], [[[4, 3], [6, 5]], {}]]);
+  });
+});
+
+// El avión: la posición actual, amarillo fijo; la altitud solo la dice la estela.
+describe('createRouteMap: avión amarillo', () => {
+  const plane = () => ctx.log.markers[0].el;
+  it('J) amarillo fijo (#FFD400) a cualquier altitud y con cualquier lectura', async () => {
+    const m = await make();
+    expect(PLANE_COLOR).toBe('#FFD400');
+    m.setTrack([[39, -1, 1000], [40, 0, 2000]], { identity: ID });
+    m.setPlane({ lat: 40, lon: 0, heading: 90 }, { identity: ID });
+    expect(plane().style.getPropertyValue('--plane')).toBe('#FFD400');
+    m.extendTrack([40.2, 0.3, 39000], { identity: ID });
+    m.setPlane({ lat: 40.2, lon: 0.3, heading: 80 }, { identity: ID });
+    expect(plane().style.getPropertyValue('--plane')).toBe('#FFD400');
+    const css = readFileSync('css/style.css', 'utf8');
+    expect(css).toMatch(/\.plane-marker \{ --plane: #FFD400; color: #1e2833;/); // contorno oscuro (currentColor)
+    expect(css).toMatch(/\.plane-marker \.icon \{[^}]*fill: var\(--plane\); stroke: currentColor;/);
+    expect(css).not.toMatch(/\.plane-marker \{[^}]*var\(--accent\)/);
+  });
+  it('K) posición antigua (.plane-old): el mismo amarillo, solo atenuado; quieto', async () => {
+    const m = await make();
+    m.setPlane({ lat: 40, lon: 0 }, { identity: ID });
+    m.setPlane({ lat: 40.3, lon: 0.3, fresh: false }, { identity: ID });
+    expect(ctx.log.markers[0].cls.has('plane-old')).toBe(true);
+    expect(plane().style.getPropertyValue('--plane')).toBe('#FFD400');
+    expect(frames).toHaveLength(0); // sin moverse hacia ella
+    expect(readFileSync('css/style.css', 'utf8')).toContain('.plane-marker .plane-rot.plane-old { opacity: .5; }');
   });
 });
 
@@ -311,12 +395,5 @@ describe('createRouteMap: cámara', () => {
     m.expanded(false);
     expect(ctx.log.view).toEqual(['fitBounds', 'jumpTo']);
     expect(ctx.log.map.cooperativeGestures.enabled).toBe(true);
-  });
-});
-
-describe('routeLines', () => {
-  it('agrupa tramos consecutivos del mismo nivel', () => {
-    const r = [{ lat: 1, lon: 1, level: 0 }, { lat: 2, lon: 2, level: 0 }, { lat: 3, lon: 3, level: 2 }];
-    expect(routeLines(r).map(l => l.level)).toEqual([0, 2]);
   });
 });

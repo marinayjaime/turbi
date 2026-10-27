@@ -2473,10 +2473,19 @@ describe('estela real del vuelo en el mapa (FR24 Flight Tracks)', () => {
     const { log, leg } = await load({ radar: [FA] });
     expect(trackCalls()).toEqual([`${LIVE_BASE}/track/IB/715.json?leg=${encodeURIComponent(physicalFlightKey(leg))}`]);
     const [l] = trails(log);
-    expect(l.o.color).toBe('#1A6FE0');
+    expect(l.o.color[0]).toBe('case'); // color por altitud de cada segmento, no un azul de marca
     // Los puntos reales hasta la posición del avión (el de «ahora» es posterior: fuera) y el avión como último vértice.
     expect(l.coords).toEqual([[40.47, -3.56], [45, -2], [50.9, -1.1], [51, -1]]);
+    // Esta estela no trae altitud (como una guardada antes): neutra; el tramo hasta el avión, con la de su lectura en vivo.
+    expect(l.segments.map(sg => sg.alt)).toEqual([undefined, undefined, 35000]);
     expect(log.lines.filter(x => x.live && x.o.dashArray).length).toBeGreaterThan(0); // la ruta prevista sigue (discontinua)
+  });
+
+  it('con altitud: cada segmento de la estela lleva la de su punto (alts de /track) y la lectura en vivo, la suya (altFt)', async () => {
+    const { log } = await load({ radar: [FA], tracks: [track('3c4d5e6f', { alts: [1200, 21000, 34000, 36000] })] });
+    const [l] = trails(log);
+    expect(l.segments.map(sg => sg.alt)).toEqual([21000, 34000, 35000]); // el cuarto punto (posterior al avión) no se pinta
+    expect(trackCalls()).toHaveLength(1); // ninguna llamada más para colorearla
   });
 
   it('2) sin fr24Id (lectura de adsb.lol) → ninguna petición a Flight Tracks ni estela', async () => {

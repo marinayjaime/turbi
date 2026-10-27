@@ -158,6 +158,28 @@ describe('Flight Tracks con el fr24Id que verificó el histórico: solo bajo dem
   });
 });
 
+describe('estela guardada con altitud y estelas guardadas antes (sin ella)', () => {
+  const withAlt = () => res(200, { fr24_id: '4249d4dd', tracks: [{ timestamp: '2026-10-25T19:20:00Z', lat: 50.05, lon: 8.57, alt: 1200, source: 'ADSB' },
+    { timestamp: '2026-10-26T04:05:00Z', lat: -6.22, lon: 39.22, alt: 900, source: 'ADSB' }] });
+  it('la estela nueva se guarda con su altitud (alts) y se sirve con ella', async () => {
+    const s = setup({ f: fake({ tracks: withAlt }) });
+    await s.history();
+    expect(await s.track(NOW, true)).toMatchObject({ state: 'found', alts: [1200, 900] });
+    const saved = [...s.store.files].find(([k]) => k === 'fr24/track-4249d4dd.json')[1].data;
+    expect(saved).toMatchObject({ points: [[50.05, 8.57], [-6.22, 39.22]], times: [Date.parse('2026-10-25T19:20:00Z') / 1000, Date.parse('2026-10-26T04:05:00Z') / 1000], alts: [1200, 900] });
+  });
+  it('una guardada antes de conservar la altitud: se sirve igual (sin alts), sin volver a descargarla', async () => {
+    const store = createMemoryStore({ [entryPath('DE2282', '2026-10-25')]: ENTRY,
+      'fr24/track-4249d4dd.json': { state: 'found', fr24Id: '4249d4dd', points: [[50.05, 8.57], [-6.22, 39.22]], times: [1, 2], lastAt: '2026-10-26T04:05:00.000Z' } });
+    const s = setup({ store });
+    await s.history();
+    const r = await s.track(NOW, true);
+    expect(r).toMatchObject({ state: 'found', points: [[50.05, 8.57], [-6.22, 39.22]], times: [1, 2] });
+    expect(r).not.toHaveProperty('alts');
+    expect(s.f.trackCalls()).toEqual([]); // 0 créditos: no se descarga otra vez para colorearla
+  });
+});
+
 describe('número del vuelo para FR24: el del tramo de AeroDataBox, nunca una conversión inventada', () => {
   // AFR132 (búsqueda con código OACI): AeroDataBox da para ESE vuelo number AF132, que es como lo indexa FR24.
   const AF = { ...LEG, number: 'AF132', callSign: 'AFR132', reg: null, modeS: null, o: 'CDG', a: 'LOS',

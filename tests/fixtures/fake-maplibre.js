@@ -6,14 +6,20 @@
 //     cls.has(clase) de ese .plane-rot; log.airports: los de los aeropuertos;
 //   log.lines: una por fuente GeoJSON dibujada como línea, con coords, o.dashArray (ruta prevista, SIGMET) y live (con
 //     algún punto y su mapa sin destruir), o.color (el de la última capa) y o.layers (cada capa: id, color, ancho,
-//     opacidad). La estela es la línea sin dashArray.
+//     opacidad). La estela es la línea sin dashArray. Una colección de segmentos (la estela por altitud) se lee como una
+//     sola línea (coords, sin repetir las uniones) y además l.segments: [{ coords, alt }] (alt: pies o undefined).
 // fail: el constructor falla como sin WebGL (el mapa no se crea).
 export function fakeMapLibre({ fail = false } = {}) {
   const log = { maps: 0, mapsRemoved: 0, markers: [], airports: [], view: [], lines: [] };
+  const lines = d => (d?.type === 'Feature' ? [d] : d?.features ?? []).filter(f => f.geometry?.type === 'LineString');
   const coordsOf = d => {
-    const g = d?.type === 'Feature' ? d.geometry : d?.features?.[0]?.geometry;
-    return g?.type === 'LineString' ? g.coordinates.map(([lon, lat]) => [lat, lon]) : [];
+    const out = [];
+    for (const f of lines(d)) {
+      for (const [lon, lat] of f.geometry.coordinates) if (!(out.at(-1)?.[0] === lat && out.at(-1)?.[1] === lon)) out.push([lat, lon]);
+    }
+    return out;
   };
+  const segmentsOf = d => lines(d).map(f => ({ coords: f.geometry.coordinates.map(([lon, lat]) => [lat, lon]), alt: f.properties?.alt }));
   class Map {
     constructor(opts) {
       if (fail) throw new Error('WebGL no disponible');
@@ -36,22 +42,23 @@ export function fakeMapLibre({ fail = false } = {}) {
     addSource(id, src) {
       const self = this;
       this.data[id] = src.data;
-      this[`src_${id}`] = { setData(d) { self.data[id] = d; const l = self.lines[id]; if (l) { l.coords = coordsOf(d); l.live = !self.removed && l.coords.length > 0; } } };
+      this[`src_${id}`] = { setData(d) { self.data[id] = d; const l = self.lines[id]; if (l) { l.coords = coordsOf(d); l.segments = segmentsOf(d); l.live = !self.removed && l.coords.length > 0; } } };
     }
     getSource(id) { return this[`src_${id}`]; }
     addLayer(layer) {
       if (layer.type !== 'line') return;
       let l = this.lines[layer.source];
       if (!l) {
-        l = this.lines[layer.source] = { id: layer.source, coords: coordsOf(this.data[layer.source]), o: { layers: [] }, live: false };
+        l = this.lines[layer.source] = { id: layer.source, coords: coordsOf(this.data[layer.source]), segments: segmentsOf(this.data[layer.source]), o: { layers: [] }, live: false };
         l.live = l.coords.length > 0;
         log.lines.push(l);
       }
       if (layer.paint?.['line-dasharray']) l.o.dashArray = layer.paint['line-dasharray'];
-      if (typeof layer.paint?.['line-color'] === 'string') l.o.color = layer.paint['line-color'];
+      if (layer.paint?.['line-color']) l.o.color = layer.paint['line-color']; // texto o expresión de MapLibre
       l.o.layers.push({ id: layer.id, color: layer.paint?.['line-color'], width: layer.paint?.['line-width'], opacity: layer.paint?.['line-opacity'] ?? 1 });
     }
-    fitBounds() { log.view.push('fitBounds'); }
+    // Como MapLibre: un maxZoom presente pero no numérico (p. ej. undefined) hace fallar el encuadre.
+    fitBounds(_b, o = {}) { if ('maxZoom' in o && !Number.isFinite(o.maxZoom)) throw new Error('Invalid LngLat object: (NaN, NaN)'); log.view.push('fitBounds'); }
     jumpTo(v) { log.view.push('jumpTo'); if (v?.center) this.center = v.center; if (Number.isFinite(v?.zoom)) this.zoom = v.zoom; }
     getCenter() { return this.center; }
     getZoom() { return this.zoom; }
