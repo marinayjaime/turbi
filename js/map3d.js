@@ -328,26 +328,16 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
   let view = 'diagonal', offset = VIEWS.diagonal.offset, follow = true, interacting = false, easing = false;
   // autoFrame: el encuadre es el de la vista elegida (si llega el modelo real, se reajusta); un zoom manual lo deja.
   let shownHeading = null, targetHeading = null, frame = null, lastT = null, autoFrame = true;
-  // Gestos del 3D, también dentro de la ficha (sin ampliar el mapa): sin los «gestos cooperativos» del 2D. Un dedo en
-  // horizontal gira alrededor del avión y en vertical desplaza la página (touch-action: pan-y; ampliado, inclina);
-  // pellizcar acerca o aleja SOBRE el avión; dos dedos giran e inclinan. En pantalla táctil no se arrastra el mapa (no
-  // hay forma de hacerlo sin chocar con el desplazamiento de la página); con ratón, arrastrar sí lo mueve y deja de
-  // seguir. La rueda desplaza la página; con Ctrl/⌘ (o pellizco en el panel táctil), acerca.
-  const coarse = Boolean(globalThis.matchMedia?.('(pointer: coarse)').matches);
-  const box = map.getCanvasContainer?.() ?? null;
-  const prevTouch = box?.style.touchAction ?? '';
+  // Gestos del 3D (los del 2D más giro e inclinación), también dentro de la ficha sin ampliar: un dedo mueve el mapa
+  // (y deja de seguir al avión); pellizcar o la rueda acercan y alejan sobre el centro (el avión, si se sigue); dos dedos
+  // giran e inclinan sin dejar de seguir. La página se desplaza arrastrando fuera del mapa.
   const prevSky = map.getSky?.();
-  const expandedNow = () => hero.classList.contains('expanded');
-  const setTouch = () => { if (box) box.style.touchAction = expandedNow() ? 'none' : 'pan-y'; };
-  map.cooperativeGestures?.disable?.();
-  if (coarse) map.dragPan?.disable?.();
-  map.scrollZoom?.disable?.();
   map.setMaxPitch?.(MAX_PITCH);
   map.dragRotate?.enable?.(); map.touchPitch?.enable?.();
   map.touchZoomRotate?.enable?.({ around: 'center' }); map.touchZoomRotate?.enableRotation?.();
+  map.scrollZoom?.enable?.({ around: 'center' });
   map.setCenterClampedToGround?.(false);
   try { map.setSky?.(SKY); } catch { /* sin cielo: se ve el fondo del mapa */ }
-  setTouch();
   // La capa «background» del estilo calcula su propia cobertura de teselas sin tope (MapLibre 6.11.2): con la cámara a
   // la altura del avión y zoom alto pedía teselas de nivel 26 («z=26 outside of bounds», medido a ~90° y zoom ≈ 19,7).
   // En 3D queda transparente y la tierra la pinta un polígono mundial del mismo color en una fuente GeoJSON (acotada
@@ -381,11 +371,8 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     if (savedPadding) map.setPadding?.(savedPadding);
     map.setCenterClampedToGround?.(true);
     map.dragRotate?.disable?.(); map.touchPitch?.disable?.(); map.touchZoomRotate?.disableRotation?.();
-    map.touchZoomRotate?.enable?.();
-    map.dragPan?.enable?.(); map.scrollZoom?.enable?.();
-    if (!expandedNow()) map.cooperativeGestures?.enable?.();
+    map.touchZoomRotate?.enable?.(); map.scrollZoom?.enable?.();
     try { map.setSky?.(prevSky); } catch { /* ya sin cielo */ }
-    if (box) box.style.touchAction = prevTouch;
     for (const src of lodSources) src.calculateTileZoom = undefined; // la de MapLibre por defecto
     try {
       for (const b of backgrounds) map.setPaintProperty(b.id, 'background-opacity', b.opacity ?? 1);
@@ -473,46 +460,44 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     if (shownHeading !== null) offset = wrap(map.getBearing() - shownHeading);
     followFrame();
   };
-  const onDrag = e => { if (e?.originalEvent) setFollow(false); };
+  // Arrastrar con un dedo (o el ratón) mueve el mapa fuera del avión: deja de seguir. Con dos dedos (girar, inclinar o
+  // pellizcar) el centro puede desplazarse un poco: al acabar, el seguimiento lo vuelve a poner en el avión.
+  const onDrag = e => { const oe = e?.originalEvent; if (oe && !(oe.touches?.length > 1)) setFollow(false); };
   map.on('movestart', onStart); map.on('moveend', onEnd); map.on('dragstart', onDrag);
 
-  // Un dedo: en horizontal, gira alrededor del avión; en vertical, la página se desplaza (dentro de la ficha) o, con el
-  // mapa ampliado, inclina. Un segundo dedo cancela (lo llevan los gestos de MapLibre).
-  const touches = new Set();
-  let drag = null;
-  const camTo = (bearing, pitch) => {
-    autoFrame = false;
-    const p = state().plane;
-    if (shownHeading !== null) offset = wrap(bearing - shownHeading);
-    map.jumpTo({ bearing, pitch, ...(follow && p ? planeCamera(p) : {}) });
-  };
+  // Un dedo con la vista casi horizontal (80° o más, p. ej. «Lado»): MapLibre arrastra sobre el plano del centro de la
+  // cámara, que aquí es la altura del avión y se ve de canto: no movería nada (medido a 90°). Se mueve la cámara aquí, a
+  // la escala del centro de la vista, y también deja de seguir. Por debajo de 80°, el arrastre de MapLibre.
+  const HIGH_PITCH = 80;
+  const box = map.getCanvasContainer?.() ?? null;
+  const prevTouch = box?.style.touchAction ?? '';
+  if (box) box.style.touchAction = 'none'; // un dedo es del mapa, también con el arrastre propio
+  const syncPan = () => { if (map.getPitch() >= HIGH_PITCH) map.dragPan?.disable?.(); else map.dragPan?.enable?.(); };
+  map.on('pitch', syncPan);
+  syncPan();
+  const pointers = new Set();
+  let pan = null;
   const onDown = e => {
-    if (e.pointerType === 'mouse') return;
-    touches.add(e.pointerId);
-    drag = touches.size === 1 ? { id: e.pointerId, x: e.clientX, y: e.clientY, axis: null, bearing: map.getBearing(), pitch: map.getPitch() } : null;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pointers.add(e.pointerId);
+    pan = pointers.size === 1 && map.getPitch() >= HIGH_PITCH ? { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false } : null;
   };
   const onMove = e => {
-    if (!drag || e.pointerId !== drag.id) return;
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    if (!drag.axis) {
-      if (Math.hypot(dx, dy) < 8) return;
-      drag.axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : expandedNow() ? 'v' : null;
-      if (!drag.axis) { drag = null; return; }
-    }
-    if (drag.axis === 'h') camTo(drag.bearing - dx * ORBIT_DEG_PX, map.getPitch());
-    else camTo(map.getBearing(), Math.min(MAX_PITCH, Math.max(0, drag.pitch - dy * 0.3)));
+    if (!pan || e.pointerId !== pan.id || pointers.size > 1) return;
+    const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+    if (!dx && !dy) return;
+    pan.x = e.clientX; pan.y = e.clientY;
+    if (!pan.moved) { pan.moved = true; setFollow(false); }
+    const c = map.getCenter(), b = map.getBearing() * RAD;
+    const mpp = (EARTH_M * Math.cos(c.lat * RAD)) / (512 * 2 ** map.getZoom());
+    // El contenido sigue al dedo: el centro va al lado contrario (derecha de la vista: (cos b, −sen b); delante: (sen b, cos b)).
+    const east = (-dx * Math.cos(b) + dy * Math.sin(b)) * mpp, north = (dx * Math.sin(b) + dy * Math.cos(b)) * mpp;
+    map.jumpTo({ center: [c.lng + east / (111320 * Math.cos(c.lat * RAD)), c.lat + north / 110540] });
   };
-  const onUp = e => { touches.delete(e.pointerId); if (drag?.id === e.pointerId) drag = null; };
-  const onWheel = e => {
-    if (!(e.ctrlKey || e.metaKey || expandedNow())) return; // la rueda sola desplaza la página
-    e.preventDefault();
-    autoFrame = false;
-    map.jumpTo({ zoom: Math.min(22, Math.max(2, map.getZoom() - e.deltaY * (e.ctrlKey ? 0.02 : 0.004))) });
-  };
+  const onUp = e => { pointers.delete(e.pointerId); if (pan?.id === e.pointerId) pan = null; };
   box?.addEventListener('pointerdown', onDown);
   box?.addEventListener('pointermove', onMove);
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) box?.addEventListener(ev, onUp);
-  box?.addEventListener('wheel', onWheel, { passive: false });
 
   let goal = null, goalTimer = null;
   panel.addEventListener('click', e => {
@@ -610,7 +595,6 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     update,
     // El mapa se amplía o vuelve a la ficha: gestos de la página y encuadre del hueco nuevo.
     setExpanded() {
-      setTouch();
       if (autoFrame && follow) { applyView(view, { animate: false }); return; }
       const { top, bottom } = framePadding();
       map.setPadding?.({ top, bottom, left: 0, right: 0 });
@@ -621,11 +605,12 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
       if (frame !== null) clock.caf(frame);
       clearInterval(ageTimer);
       clearTimeout(goalTimer);
-      map.off?.('movestart', onStart); map.off?.('moveend', onEnd); map.off?.('dragstart', onDrag);
+      map.off?.('movestart', onStart); map.off?.('moveend', onEnd); map.off?.('dragstart', onDrag); map.off?.('pitch', syncPan);
       box?.removeEventListener('pointerdown', onDown);
       box?.removeEventListener('pointermove', onMove);
       for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) box?.removeEventListener(ev, onUp);
-      box?.removeEventListener('wheel', onWheel);
+      if (box) box.style.touchAction = prevTouch;
+      map.dragPan?.enable?.();
       teardown();
       panel.remove();
       hero.classList.remove('is-3d');

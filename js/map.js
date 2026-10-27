@@ -226,16 +226,14 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   const routeBounds = boundsOf(route.map(p => [p.lat, p.lon]));
   const map = new ml.Map({
     container: el, style, bounds: routeBounds, fitBoundsOptions: { padding: PAD }, attributionControl: false,
-    dragRotate: false, pitchWithRotate: false, touchPitch: false, renderWorldCopies: false, cooperativeGestures: true,
+    dragRotate: false, pitchWithRotate: false, touchPitch: false, renderWorldCopies: false,
+    // Un dedo mueve el mapa y pellizcar acerca, también dentro de la ficha (sin «gestos cooperativos» de dos dedos): la
+    // página se desplaza arrastrando fuera del mapa (decisión del usuario, 27/10/2026).
+    cooperativeGestures: false,
     // Teselas del mapa base: como mucho de nivel 14 (el máximo de OpenFreeMap), ampliadas por encima. MapLibre 6 las
     // trocea hasta max(14, maxZoom − zoomLevelsToOverscale) = 18 por defecto: en el primer plano del avión en 3D (zoom ≈ 19
     // sobre un suelo 6–11 km más abajo) eran miles de teselas de nivel 18 (5 559 a 45°, medido; 1 fps).
     maxZoom: MAX_ZOOM, zoomLevelsToOverscale: MAX_ZOOM - BASE_MAXZOOM,
-    locale: {
-      'CooperativeGesturesHandler.WindowsHelpText': 'Usa Ctrl + rueda para acercar o alejar el mapa',
-      'CooperativeGesturesHandler.MacHelpText': 'Usa ⌘ + rueda para acercar o alejar el mapa',
-      'CooperativeGesturesHandler.MobileHelpText': 'Usa dos dedos para mover el mapa',
-    },
   });
   map.touchZoomRotate?.disableRotation?.();
   // Una tesela que falla no impide el mapa (se ve sin ella); solo un mapa que no llega a cargarse en LOAD_MS.
@@ -454,7 +452,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     // El avión en pantalla: si está, si se está desplazando hacia la última lectura y de qué identidad es.
     planeState: () => ({ shown: Boolean(plane), moving: anim !== null, identity }),
     trackIdentity: () => (trackOn ? trackId : null),
-    // Ampliado: la ruta entera (prevista, realizada y avión) y gestos normales; al cerrar, la vista y los gestos de antes.
+    // Ampliado: la ruta entera (prevista, realizada y avión); al cerrar, la vista de antes. Los gestos son los mismos.
     expanded(on) {
       map.resize();
       if (on === isExpanded) return;
@@ -462,10 +460,8 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
       if (mode === '3d') { ext3d?.setExpanded(on); return; } // los gestos y el encuadre del 3D los lleva js/map3d.js
       if (on) {
         savedView = { center: map.getCenter(), zoom: map.getZoom() };
-        map.cooperativeGestures?.disable?.();
         fit([...route.map(p => [p.lat, p.lon]), ...trackPts, ...(shown ? [[shown.lat, shown.lon]] : [])]);
       } else {
-        map.cooperativeGestures?.enable?.();
         if (savedView) map.jumpTo(savedView);
         savedView = null;
       }

@@ -96,11 +96,11 @@ Nunca se presenta como exacta una decoración especial ni la configuración de u
 - Perspectivas Detrás (78°), Lado (90°: a la altura del avión), Diagonal (66°) y Arriba (0°). Cada una encuadra el avión
   entero con su largo, envergadura y alto reales y el hueco libre entre la etiqueta y la barra; después se puede
   acercar más. «Restablecer vista» vuelve a ese encuadre.
-- Dentro de la ficha, sin ampliar: un dedo en horizontal gira alrededor del avión y en vertical desplaza la página;
-  pellizcar acerca o aleja sobre el avión; dos dedos giran e inclinan. Botones de zoom, giro e inclinación. Ninguno
-  desactiva «Seguir avión». En pantalla táctil no se arrastra el mapa; con ratón sí, y entonces deja de seguir. La rueda
-  desplaza la página; con Ctrl/⌘ (o pellizco en el panel táctil), acerca. Con el mapa ampliado, un dedo en vertical
-  inclina.
+- Gestos, en 2D y 3D, dentro de la ficha y ampliado: un dedo mueve el mapa (en 3D deja de seguir al avión); pellizcar
+  acerca y aleja (en 3D, sobre el avión); dos dedos giran e inclinan en 3D sin dejar de seguir. «Seguir avión» vuelve a
+  centrarlo y a seguirlo. La página se desplaza arrastrando fuera del mapa. Botones de zoom, giro e inclinación.
+- A 80° o más (p. ej. «Lado»), MapLibre no puede arrastrar el mapa (arrastra sobre el plano de la altura del avión, que
+  se ve de canto): ahí el arrastre de un dedo lo hace Turbi, a la escala del centro de la vista.
 
 ### Límites reales del motor (MapLibre GL JS 6.11.2), medidos
 

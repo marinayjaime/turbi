@@ -79,7 +79,7 @@ describe('createRouteMap', () => {
   it('ruta prevista y aeropuertos; sin el estilo de OpenFreeMap, sobre el fondo liso', async () => {
     await make();
     expect(ctx.log.map.opts.style).toBe(FALLBACK_STYLE);
-    expect(ctx.log.map.opts.cooperativeGestures).toBe(true); // en la ficha, el mapa no captura el desplazamiento de la página
+    expect(ctx.log.map.opts.cooperativeGestures).toBe(false); // un dedo mueve el mapa también en la ficha (la página, fuera de él)
     expect(ctx.log.lines.find(l => l.id === 'route').live).toBe(true);
     expect(ctx.log.airports.map(m => m.el.textContent)).toEqual(['AAA', 'BBB']);
     expect(ctx.log.markers).toHaveLength(0);
@@ -387,13 +387,11 @@ describe('createRouteMap: cámara', () => {
     m.setTrack([[39, 0], [41, 2], [42, 3]], { identity: ID });
     expect(ctx.log.view).toEqual(['fitBounds']);
   });
-  it('ampliado: la ruta entera y gestos normales; al cerrar, la vista y los gestos de antes', async () => {
+  it('ampliado: la ruta entera; al cerrar, la vista de antes (los gestos no cambian)', async () => {
     const m = await make();
     m.expanded(true);
     expect(ctx.log.view).toEqual(['fitBounds']);
-    expect(ctx.log.map.cooperativeGestures.enabled).toBe(false);
     m.expanded(false);
     expect(ctx.log.view).toEqual(['fitBounds', 'jumpTo']);
-    expect(ctx.log.map.cooperativeGestures.enabled).toBe(true);
   });
 });
