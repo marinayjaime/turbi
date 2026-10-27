@@ -3639,3 +3639,36 @@ describe('mapa del vuelo según la fase', () => {
     for (const t of ['830', '10.700', '300']) expect($('.telemetry').textContent).toContain(t);
   });
 });
+
+// Caso real UX6156 (27/10/2026, 09:24Z): Aena con la salida en CER y la llegada en HOR (sin salida real) mientras el
+// radar ya lo ve volando. El Horario decía «El avión aún no ha despegado»; con la lectura del radar, deja de decirlo.
+describe('Horario coherente con el vuelo en el aire (UX6156)', () => {
+  it('antes del radar: «aún no ha despegado»; con el radar volando: «Salió · Hora real no disponible» en Horario y puntualidad, sin recargar', async () => {
+    const dep = Date.now() - 20 * 60000, arr = Date.now() + 35 * 60000;
+    const d = dayOf(dep), sd = formatLocal(dep, MAD), sa = formatLocal(arr, MAD);
+    const leg = { d, o: 'PMI', a: 'BCN', sd, ed: `${d}T${sd}`, sa, ea: `${dayOf(arr)}T${sa}`, td: 'N', ta: 'T1', g: 'D90', st: 'CER', std: 'CER', sta: 'HOR', ac: '738W' };
+    let release;
+    const held = new Promise(r => { release = r; });
+    const base = network({ flights: { UX6156: { name: 'Air Europa', updated: new Date().toISOString(), legs: [leg] } }, openMeteo: () => tooMany });
+    await openApp(vi.fn((url, o) => {
+      const u = String(url);
+      if (u.startsWith(`${LIVE_BASE}/radar/`)) { calls.push(u); return held.then(json); }
+      if (u.startsWith(`${LIVE_BASE}/track/`)) { calls.push(u); return Promise.resolve(notFound); }
+      return base(url, o);
+    }));
+    await search('UX6156', d);
+    await until(() => $('#punctuality .prow'), 'ficha con la puntualidad');
+    const schedule = () => $('details[data-card="schedule"]').textContent.replace(/\s+/g, ' ');
+    expect(schedule()).toContain('El avión aún no ha despegado'); // sin evidencia todavía: lo que dice Aena
+    release({ state: 'volando', source: 'fr24', match: 'fr24', fr24Id: '424f8645', callsign: 'AEA6156', hex: '3443C4', altFt: 18000, altM: 5486,
+      kmh: 617, vRateFpm: -1200, track: 40, seenS: 2, posAgeS: 2, lat: 40.4593, lon: 2.0222, remainingKm: 93, checked: new Date().toISOString() });
+    await until(() => $('.telemetry'), 'radar volando');
+    await networkIdle();
+    expect($('#result .flight .status').textContent).toContain('En vuelo');
+    expect(schedule()).not.toContain('aún no ha despegado');
+    expect(schedule()).toContain('Salió Hora real no disponible Salida');
+    expect(schedule()).toContain(`${sd} Programada Salida`); // la programada, aparte y como programada
+    expect($('#punctuality').textContent).toContain('salió; hora real aún sin publicar');
+    expect(schedule()).not.toMatch(/Real Salida/); // ninguna hora real inventada
+  });
+});

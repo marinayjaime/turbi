@@ -399,6 +399,10 @@ h3.card-head { text-transform: none; letter-spacing: -0.01em; margin: 0 0 14px; 
 .ms-turbi .ms-dot { background: var(--accent); border-color: var(--accent); }
 .ms-aena-est .ms-dot { border-color: var(--text); }
 .ms-pending .ms-dot { background: var(--lvl0); border-color: var(--lvl0); }
+/* Salida confirmada sin hora real (ya en el aire): el punto, verde; el texto, sin hora inventada. */
+.ms-confirmed .ms-dot { background: var(--ok); border-color: var(--ok); }
+.ms-sched + .ms-confirmed::before { background: var(--ok); }
+.ms-confirmed .ms-time { color: var(--ok); font-variant-numeric: normal; }
 .ms-time { margin-top: 10px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ms-time small { margin-left: 2px; font-size: 10px; color: var(--muted); }
 .ms-real .ms-time { color: var(--ok); }

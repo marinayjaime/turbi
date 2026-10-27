@@ -18,22 +18,25 @@ export function signedDelay(min) {
 const kv = (k, v) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
 const bandOf = min => (min <= 15 ? 'ok' : min <= 30 ? 'warn' : min <= 60 ? 'late' : 'bad');
 
-function nowRow(label, side, doneWord) {
+// departed: el vuelo ya salió según la ficha (hasDeparted) aunque Aena aún no publique la salida como real.
+function nowRow(label, side, doneWord, departed = false) {
   if (!side) return '';
   const changed = side.time && side.time !== side.sched;
   const times = changed ? `${esc(side.sched)} → ${esc(side.time)}` : `${esc(side.sched)} <small>(sin cambios)</small>`;
   const delay = typeof side.delay === 'number' && changed ? `<span class="pdelay pband-${bandOf(side.delay)}">${signedDelay(side.delay)}</span>` : '';
   const source = side.source ? ` · según Aena en ${esc(side.source)}` : '';
-  return `<div class="prow"><span class="pk">${label}</span><span>${times}</span>${delay}<small>${side.final ? doneWord : 'prevista'}${source}</small></div>`;
+  const state = side.final ? doneWord : departed ? 'salió; hora real aún sin publicar' : 'prevista';
+  return `<div class="prow"><span class="pk">${label}</span><span>${times}</span>${delay}<small>${state}${source}</small></div>`;
 }
 
-function todayHtml(c) {
+function todayHtml(c, departed = false) {
   return `
-    ${nowRow('Salida', c.dep, 'salió')}${nowRow('Llegada', c.arr, 'llegó')}
+    ${nowRow('Salida', c.dep, 'salió', departed)}${nowRow('Llegada', c.arr, 'llegó')}
     <p class="pbadge pband-${c.band ?? 'ok'}">${esc(c.text)}</p>
     ${c.dep?.alt ? `<p class="mismatch">Aena publica también otra hora de salida para este vuelo: ${c.dep.alt.map(esc).join(', ')}.</p>` : ''}
     ${c.arr?.alt ? `<p class="mismatch">Aena publica también otra hora de llegada para este vuelo: ${c.arr.alt.map(esc).join(', ')}.</p>` : ''}
-    ${c.arr?.beforeTakeoff && c.arr.time ? '<p class="mismatch">El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.</p>' : ''}
+    ${c.arr?.beforeTakeoff && c.arr.time ? `<p class="mismatch">${departed ? 'Aena aún no publica la salida real: la llegada es una estimación y puede cambiar.'
+    : 'El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.'}</p>` : ''}
     <p class="note-small">Horas publicadas por Aena. «Prevista» es una estimación y puede cambiar.</p>`;
 }
 
@@ -91,10 +94,11 @@ function historyHtml(p) {
 }
 
 // p = { current, history (undefined = cargando, null = sin datos), flight, airline, route: [o, a], dow, slot, since }
+// p.departed: la ficha ya sabe que el vuelo salió (hasDeparted; lo pone js/app.js), aunque Aena no lo diga aún.
 export function punctualityHtml(p) {
   return `
     <h4 class="p-title">Puntualidad</h4>
-    ${todayHtml(p.current)}
+    ${todayHtml(p.current, p.departed === true)}
     ${historyHtml(p)}`;
 }
 

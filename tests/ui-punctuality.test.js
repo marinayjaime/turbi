@@ -73,6 +73,13 @@ describe('punctualityHtml', () => {
     expect(h).toContain('El avión aún no ha despegado: la llegada es una estimación de Aena y puede cambiar.');
     expect(h).not.toMatch(/probablemente|no cuadra|no está actualizada/);
   });
+  it('la ficha ya sabe que salió (departed): la salida no se presenta como «prevista» ni dice «aún no ha despegado»', () => {
+    const c = { ...current, dep: { ...current.dep, source: 'PMI', final: false }, arr: { ...current.arr, source: 'MAD', beforeTakeoff: true } };
+    const h = punctualityHtml({ ...base, current: c, departed: true });
+    expect(h).not.toContain('aún no ha despegado');
+    expect(h).toContain('salió; hora real aún sin publicar · según Aena en PMI');
+    expect(h).toContain('Aena aún no publica la salida real: la llegada es una estimación y puede cambiar.');
+  });
   it('estilo de la ficha: datos con .kv (.k / .v), sin título de sección (va dentro del «Horario») ni emojis', () => {
     const h = punctualityHtml(base);
     expect(h).toMatch(/<div class="kv"><span class="k">Retraso habitual<\/span><span class="v">\+6 min<\/span><\/div>/);

@@ -494,6 +494,45 @@ describe('Horario', () => {
     expect(summary).toContain('18:02');
     expect(summary).toContain('El avión aún no ha despegado');
   });
+  // Salida: «sin hora real» NO es «no ha despegado». Caso real UX6156 (27/10/2026): Aena en CER/HOR (sin salida real) y el
+  // radar viéndolo volar; el Horario decía «El avión aún no ha despegado».
+  describe('Horario: ha salido aunque no haya hora real', () => {
+    const before = { state: 'sin-cambios', band: 'ok', basis: 'arr', dep: { sched: '10:15', time: '10:15', delay: 0, final: false },
+      arr: { sched: '11:05', time: '11:12', delay: 7, beforeTakeoff: true } };
+    const flying = { phase: 'en-curso', status: { text: 'Volando', tone: 'info', flying: true },
+      radar: { state: 'volando', source: 'fr24', fr24Id: '424f8645', altFt: 18000, kmh: 617, seenS: 2, posAgeS: 2 }, radarReceivedMono: NOW };
+    const ms = c => [...block(html(c), 'schedule').matchAll(/<li class="ms ms-(\w[\w-]*)">.*?<span class="ms-time">([^<]*)(?:<small>[^<]*<\/small>)?<\/span> <span class="ms-cap">([^<]*)<\/span>/g)]
+      .map(m => [m[1], m[2], m[3]]);
+    const summary = c => { const h = block(html(c), 'schedule'); return h.slice(0, h.indexOf('</summary>')); };
+    it('1) UX6156: programada, sin salida real y el radar lo ve volando → «Salió · Hora real no disponible», sin «aún no ha despegado»', () => {
+      const c = card({ ...flying, punctuality: before });
+      expect(ms(c).slice(0, 2)).toEqual([['sched', '17:55', 'Programada'], ['confirmed', 'Salió', 'Hora real no disponible']]);
+      expect(summary(c)).not.toContain('aún no ha despegado');
+    });
+    it('2) de verdad aún no ha salido (sin radar, sin estado en el aire, sin haberlo visto): pendiente y el aviso de Aena', () => {
+      const c = card({ punctuality: before });
+      expect(ms(c)[1]).toEqual(['pending', '--:--', 'Pendiente']);
+      expect(summary(c)).toContain('El avión aún no ha despegado');
+    });
+    it('3) ya visto volando (seenFlying) y ahora sin lectura del radar: sigue «Salió», nunca vuelve a «aún no ha despegado»', () => {
+      const c = card({ seenFlying: true, punctuality: before });
+      expect(ms(c)[1]).toEqual(['confirmed', 'Salió', 'Hora real no disponible']);
+      expect(summary(c)).not.toContain('aún no ha despegado');
+    });
+    it('4) aterrizado confirmado sin hora real de salida: «Salió», nunca «aún no ha despegado»', () => {
+      const c = card({ phase: 'terminado', status: { text: 'Aterrizado', tone: 'ok', landing: 'confirmed-landed' }, radar: { state: 'aterrizado' }, punctuality: before });
+      expect(ms(c)[1]).toEqual(['confirmed', 'Salió', 'Hora real no disponible']);
+      expect(summary(c)).not.toContain('aún no ha despegado');
+    });
+    it('5) 6) con hora real, la real (verde) y aparte la programada; nunca una hora inventada', () => {
+      const c = card({ ...flying, depFinal: true, dep: { ...card().dep, est: '18:07' } });
+      expect(ms(c).slice(0, 2)).toEqual([['sched', '17:55', 'Programada'], ['real', '18:07', 'Real']]);
+      expect(ms(card({ ...flying }))[0]).toEqual(['sched', '17:55', 'Programada']); // la programada sigue siendo la programada
+    });
+    it('cancelado: sin «Salió» (no hay evidencia de vuelo)', () => {
+      expect(ms(card({ phase: 'cancelado', status: { text: 'Cancelado', tone: 'bad' } }))[1][0]).toBe('pending');
+    });
+  });
   it('contenedor #punctuality en el cuerpo, con el contenido que se le pase', () => {
     const h = block(html(card(), { punctualityBody: '<p>hoy</p>' }), 'schedule');
     expect(h.indexOf('</summary>')).toBeLessThan(h.indexOf('<section id="punctuality">'));

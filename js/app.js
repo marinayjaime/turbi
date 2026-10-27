@@ -24,7 +24,7 @@ import { renderForecast, timelineHtml, segmentDetailHtml, freshnessHtml, aviatio
 import { recordSnapshot, forecastTrend, saveLast, loadLast, flightKey, agoText } from './storage.js';
 import { loadAviation } from './aviation-weather.js';
 import { createRouteMap, wireMapCard, mapTitle, mapHeroHtml } from './map.js';
-import { flightPhase, mapPhase, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
+import { flightPhase, mapPhase, hasDeparted, signalState, planeOnMap, positionAgeS, ageText, monoNow, PLANE_MAX_AGE_S, PLANE_LAST_KNOWN_S, turbNow, sigmetAffectsFlight } from './card-model.js';
 import { startLiveTracker, LIVE_INTERVAL_MS } from './live-tracker.js';
 import { advancedFlightHtml, advancedHistoryHtml, ageSuffix } from './ui-advanced.js';
 import { buildSpeech, canSpeak, speak } from './speech.js';
@@ -889,6 +889,8 @@ async function run(q, handoff = null) {
     const { oTz, dTz, departureMs, durationMin, profile, forecastProfile, etaCtx, eta, officialMs, landedAt, flight } = await buildFlight(q);
     if (stale()) return;
     const punct = flight && q.kind === 'schedule' ? punctualityState(q) : null; // la puntualidad es de Aena
+    if (punct) punct.departed = hasDeparted(flight); // ¿ya salió? (radar, estado, lo ya visto); syncPunctuality lo sigue
+    shownPunct = punct;
     els.changeTime.hidden = Boolean(flight) || q.routeSource === 'aerodatabox'; // con AeroDataBox la hora no es del usuario
     const rel = reliability(departureMs, Date.now());
     // Aviso de llegada: solo con la llegada que muestra la ficha (Aena o estimación Turbi visible), nunca con la
@@ -1069,6 +1071,7 @@ const safely = async fn => { try { await fn(); } catch { /* mejora opcional: si 
 // ---- Presentación de la ficha (rediseño, spec 2026-10-20 §9 bis, §10.2 y §10 bis) ----
 // Solo cómo se pinta: nada de aquí decide cuándo se consulta el radar o Aena, qué nota se muestra ni la ETA.
 let shownCard = null; // la tarjeta del vuelo que hay en pantalla (armazón, repaintFlight o pronóstico guardado)
+let shownPunct = null; // la puntualidad de esa ficha (#punctuality), solo vuelos de Aena
 let routeMap = null; // el mapa (MapLibre) de la ficha: uno solo, sobre el #map del mapa protagonista (heroNode)
 let heroNode = null; // el #map-card del mapa: fuera del HTML que se repinta, colocado en el #map-slot de la ficha
 let mapFailed = false; // el mapa de esta ficha no se pudo crear (sin MapLibre, WebGL o red): no se reintenta en cada repintado
@@ -1080,7 +1083,7 @@ function destroyMap() { mapToken++; routeMap?.destroy(); routeMap = null; heroNo
 // (también uno conservado por «Actualizar» que aún no se montó), el avión retenido y los desplegables pendientes.
 // No va en stopRadarPoll: applyAenaLeg para el radar con la llegada final y el mapa se queda («Ruta realizada»). También
 // el seguimiento en vivo y la última posición real conocida.
-function clearFicha() { destroyMap(); mapFailed = false; dropKeptMap(); stopPlaneTimer(); stopLive(); lastFix = null; reopen.clear(); stopSignal(); shownCard = null; }
+function clearFicha() { shownPunct = null; destroyMap(); mapFailed = false; dropKeptMap(); stopPlaneTimer(); stopLive(); lastFix = null; reopen.clear(); stopSignal(); shownCard = null; }
 
 // ---- «Actualizar» del mismo vuelo físico (decisión de 20/10/2026; solo presentación) ----
 // La consulta es la de siempre (submit → run: Aena, radar con su pollRadar, pronóstico, puntualidad); solo cambia cómo
@@ -1453,6 +1456,16 @@ async function requestTrack(map, card, fr24Id, asked, { load = false } = {}) {
   if (cur.radar?.fr24Id) syncTrack(map, cur); // hasta el avión, si está en el mapa
 }
 
+// La puntualidad (#punctuality, que se conserva entre repintados) dice «aún no ha despegado» solo si nada indica que el
+// vuelo haya salido: cuando la ficha pasa a saberlo (p. ej. llega la lectura del radar), se vuelve a pintar.
+function syncPunctuality(card) {
+  const p = shownPunct, departed = hasDeparted(card);
+  if (!p || p.departed === departed) return;
+  p.departed = departed;
+  const el = $in('punctuality');
+  if (el) el.innerHTML = punctualityHtml(p);
+}
+
 // Lo común del armazón (ficha con pronóstico o con nota): Detalles avanzados y el mapa.
 function initFicha(q, flight, stale) {
   shownCard = flight;
@@ -1482,6 +1495,7 @@ function repaintFlight(card, stale) {
   syncTurbArea(card);
   paintAdvancedFlight(card, open);
   paintHistory(currentView, open);
+  syncPunctuality(card);
   syncMap(lastQuery, stale);
   const title = $in('map-card')?.querySelector('.card-title');
   if (title) title.textContent = mapTitle(mapPhase(card) ?? flightPhase(card));

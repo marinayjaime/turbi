@@ -1,6 +1,6 @@
 import { LEVELS, CAUSES } from './turbulence.js';
 import { icon } from './icons.js';
-import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL, monoNow, mapPhase } from './card-model.js';
+import { flightPhase, mainTime, summaryTiles, milestones, signalState, formatCountdown, turbulenceBars, AIRBORNE_LABEL, monoNow, mapPhase, hasDeparted } from './card-model.js';
 import { formatLocal } from './time.js';
 
 // dot: el punto de color que sustituye al emoji de antes (verde, ámbar, rojo = ligera, moderada, fuerte).
@@ -294,7 +294,8 @@ function scheduleHtml(c, mt, open, punctualityBody) {
   const alerts = [
     p?.dep?.alt && `Aena publica también otra hora de salida: ${p.dep.alt.map(esc).join(', ')}.`,
     p?.arr?.alt && `Aena publica también otra hora de llegada: ${p.arr.alt.map(esc).join(', ')}.`,
-    p?.arr?.beforeTakeoff && p.arr.time && 'El avión aún no ha despegado: la llegada de Aena puede cambiar.',
+    // Solo si NADA indica que haya salido (Aena sin estado de salida no basta: el radar o lo ya visto lo desmienten).
+    p?.arr?.beforeTakeoff && p.arr.time && !hasDeparted(c) && 'El avión aún no ha despegado: la llegada de Aena puede cambiar.',
   ].filter(Boolean).map(t => `\n          <p class="ms-alert">${icon('alert', { size: 16 })}<span>${t}</span></p>`).join('');
   const foot = c.past ? (c.arr?.estimated ? 'Hora de salida publicada por Aena y guardada por Turbi; la llegada es una estimación de Turbi.'
     : c.dep?.estimated ? 'Hora de llegada publicada por Aena y guardada por Turbi; la salida es una estimación de Turbi.'

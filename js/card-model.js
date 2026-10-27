@@ -39,6 +39,11 @@ export function mapPhase(card) {
   return (phase === 'en-curso' && airborne) || card.seenFlying ? 'en-curso' : null;
 }
 
+// ¿Ya ha salido? Solo con EVIDENCIA real, la misma del mapa (mapPhase): el radar lo ve o lo vio volar (seenFlying), el
+// estado del tramo lo da en el aire o aterrizado, o hay hora real. Sin hora real de salida NO significa que no haya
+// despegado: el Horario lo dice («Salió · Hora real no disponible») y nunca «aún no ha despegado». Nunca por la hora.
+export const hasDeparted = card => Boolean(card) && mapPhase(card) !== null;
+
 // 'programado' | 'en-curso' | 'finalizado' | 'cancelado'. Solo agrupa lo que ya dicen la fase del tramo (legPhase o
 // adbPhase), el estado mostrado (Desviado) y el radar (withRadar / withLanding); el orden es el de prioridad.
 export function flightPhase(card) {
@@ -138,6 +143,9 @@ export function summaryTiles(card) {
   return tiles;
 }
 
+// Salida real del Horario cuando el vuelo ya salió (hasDeparted) pero nadie da su hora real: se confirma la salida sin
+// inventar una hora (ni la primera posición del radar ni la de la consulta son la de despegue).
+const departedNoTime = key => ({ key, time: 'Salió', caption: 'Hora real no disponible', kind: 'confirmed' });
 // Cuatro hitos del Horario (§5.6). Un lado estimado por Turbi (etaSide o la salida estimada) no tiene hora programada:
 // su programada es «Pendiente» y la hora se muestra solo como estimación. Lado nulo: los dos hitos, «Pendiente». Un lado
 // `unscheduled` (vuelo que solo encontró Flightradar24) tampoco: su hora es la ETA o la real de FR24.
@@ -151,8 +159,9 @@ function best(key, side, final, finalCaption) {
   return pending(key);
 }
 export function milestones(card) {
+  const depReal = !card.depFinal && hasDeparted(card) ? departedNoTime('dep-real') : best('dep-real', card.dep, card.depFinal, 'Real');
   return [
-    sched('dep-sched', card.dep), best('dep-real', card.dep, card.depFinal, 'Real'),
+    sched('dep-sched', card.dep), depReal,
     sched('arr-sched', card.arr), best('arr-best', card.arr, card.arrFinal, 'Final'),
   ];
 }
