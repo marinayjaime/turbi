@@ -63,30 +63,32 @@ pueden simplificar sin inventar).
 ## Qué avión se muestra
 
 1. **Modelo**: el tipo que da el radar (FR24 `type`, el avión real del vuelo); sin él, el previsto en el horario (Aena
-   `ac`, AeroDataBox). Si viene del horario, la etiqueta lo dice («previsto en el horario»).
+   `ac`, AeroDataBox).
 2. **Operadora**: la confirmada por la ficha (Aena `op`, AeroDataBox «IsOperator», FR24 `operating_as`) y el prefijo
    OACI del indicativo de radio. Nunca la aerolínea del número en un código compartido. Si las dos fuentes existen y no
    señalan la misma decoración (p. ej. un avión fletado), la operadora queda sin confirmar.
 3. **Resultado**: modelo + decoración de la operadora hecha para ese modelo; si no, el modelo con colores neutros y el
    motivo; si el modelo no se conoce o no tiene recurso, el avión genérico (gris, rotulado «Avión genérico»).
 
-Nunca se presenta como exacta una decoración especial ni la configuración de una matrícula concreta: la etiqueta dice
-«colores de X, simplificados».
+Nunca se presenta como exacta una decoración especial ni la configuración de una matrícula concreta. Encima del mapa no se
+escribe nada: el modelo y la operadora están en la ficha; este texto solo llega a los lectores de pantalla (`.map3d-model`,
+`aircraftLabel`), con «colores de X, simplificados» o el motivo de los colores neutros.
 
 ## Fidelidad de los datos
 
 - **Posición**: la real recibida. Entre dos lecturas, el avión hace el mismo recorrido que en 2D (una lectura por
-  detrás, nunca más allá de la última), con la altitud interpolada entre las dos. Sin datos nuevos se queda quieto y,
-  a partir de los 60–105 s, atenuado; pasados 180 s desaparece. La etiqueta muestra siempre la antigüedad de la
-  última posición real.
+  detrás, nunca más allá de la última), con la altitud interpolada entre las dos. Solo cambia la suavidad: en 3D se
+  calcula en cada fotograma de la pantalla (en 2D sigue a ~20 por segundo). Sin datos nuevos se queda quieto y, a partir
+  de los 60–105 s, atenuado; pasados 180 s desaparece.
 - **Altitud**: FR24 (`alt`) y adsb.lol (`alt_baro`) dan altitud barométrica estándar (1013,25 hPa) en pies. El mapa
   no tiene relieve: el avión se sitúa sobre un suelo plano a nivel del mar a esa altitud. La diferencia con la altitud
   geométrica real suele ser de cientos de metros: invisible a esta escala, pero no es una medida de altura sobre el
   terreno.
 - **Orientación**: solo se recibe la dirección de desplazamiento (`track`), no el rumbo del morro; el avión se orienta
-  según la trayectoria y la etiqueta lo dice. Con viento cruzado el morro real puede desviarse unos grados.
+  según la trayectoria. Con viento cruzado el morro real puede desviarse unos grados. Un cambio de `track` se presenta
+  poco a poco (~1 s) y por el camino corto; la dirección de destino es siempre la medida.
 - **Actitud**: alas y morro siempre nivelados; no se recibe la inclinación y no se inventa.
-- **Tamaño**: el avión se amplía para verse (unos 70 px de largo); la etiqueta dice «tamaño ×N». Las
+- **Tamaño**: de cerca, a su escala real; al alejar la cámara se amplía para verse (unos 70 px de largo). Las
   posiciones y altitudes no se exageran.
 - **Estela**: la misma estela real del 2D, a la altitud de cada punto (cinta con la escala de color de FR24 y una
   cortina tenue hasta el suelo). Un tramo sin altitud no se dibuja en 3D (en 2D sigue en el suelo, en neutro).
@@ -94,13 +96,54 @@ Nunca se presenta como exacta una decoración especial ni la configuración de u
 ## Cámara y gestos
 
 - Perspectivas Detrás (78°), Lado (90°: a la altura del avión), Diagonal (66°) y Arriba (0°). Cada una encuadra el avión
-  entero con su largo, envergadura y alto reales y el hueco libre entre la etiqueta y la barra; después se puede
-  acercar más. «Restablecer vista» vuelve a ese encuadre.
-- Gestos, en 2D y 3D, dentro de la ficha y ampliado: un dedo mueve el mapa (en 3D deja de seguir al avión); pellizcar
-  acerca y aleja (en 3D, sobre el avión); dos dedos giran e inclinan en 3D sin dejar de seguir. «Seguir avión» vuelve a
-  centrarlo y a seguirlo. La página se desplaza arrastrando fuera del mapa. Botones de zoom, giro e inclinación.
+  entero con su largo, envergadura y alto reales y el hueco libre entre los botones de arriba y la barra de abajo; después
+  se puede acercar más. «Restablecer vista» vuelve a ese encuadre.
+- Gestos, en 2D y 3D, dentro de la ficha y ampliado: un dedo mueve el mapa (en 3D deja de seguir al avión y se queda donde
+  se suelte); pellizcar acerca y aleja (en 3D, sobre el avión); dos dedos giran e inclinan en 3D sin dejar de seguir. La
+  página se desplaza arrastrando fuera del mapa. Botones de zoom siempre visibles; giro e inclinación, plegados.
 - A 80° o más (p. ej. «Lado»), MapLibre no puede arrastrar el mapa (arrastra sobre el plano de la altura del avión, que
   se ve de canto): ahí el arrastre de un dedo lo hace Turbi, a la escala del centro de la vista.
+
+### Cómo se mueve (`loop` en `js/map3d.js`)
+
+- **Un solo bucle por fotograma**: posición del avión (`advance`, de `js/map.js`), giro y cámara, en este orden. Con
+  bucles separados la cámara iría a veces un fotograma por detrás: a escala real el avión recorre de 700 a 1 800 px/s en el
+  plano del avión, decenas de píxeles por fotograma.
+- **Cámara siguiendo**: el centro va pegado al avión. Un retraso de la cámara, aunque fuera de 0,3 s, sacaría el avión del
+  encuadre a esa velocidad en pantalla; lo que se amortigua es la dirección (la cámara gira algo más despacio que el avión),
+  que es lo que da la sensación de cámara siguiendo a un objeto. El suelo, a 11 km, se mueve unos 30 px/s.
+- **Transiciones** (perspectivas, volver a seguir, botones): un solo mecanismo que mezcla el desvío respecto al destino vivo,
+  con el zoom y la inclinación en línea recta, y el rumbo por el camino corto.
+- **Gestos**: mientras haya un dedo en el mapa o dure la inercia no se llama a `map.jumpTo`, porque llama a `stop()` y reinicia
+  los manejadores de gestos de MapLibre (con el seguimiento activo el dedo no llegaba a mover el mapa). El gesto se aplica sin
+  suavizado y, si se sigue al avión, solo el centro lo acompaña, directo sobre `map._camera.transform` (privado: comprobarlo al
+  actualizar MapLibre). Al terminar, el encuadre del gesto pasa a ser el elegido y cualquier diferencia se recorre con transición.
+- `prefers-reduced-motion`: sin recorrido, sin giro suavizado y sin transiciones.
+
+### Contexto geográfico
+
+Con la cámara a unos 100 m del avión y el suelo a ~11 km, MapLibre mide todo en la escala del plano del avión:
+
+- **Etiquetas**: no desaparecían por `maxzoom` (`label_city` y `label_town` no lo tienen; `label_state` y `label_country_*`
+  sí, 8 y 9). `CollisionIndex` descarta toda etiqueta con factor de perspectiva `0,5 + 0,5 · (cámara-centro / cámara-etiqueta)`
+  menor que 0,6, y aquí vale ~0,504. Mientras dure el 3D ese corte queda en 0 (`keepDistantLabels`; propiedad privada de la
+  copia fija de MapLibre 6.11.2: **al actualizar MapLibre, comprobarla**. Si falta, las ciudades se fuerzan con
+  `text-allow-overlap`). Esa escala también las pinta a la mitad: de ahí el doble de tamaño de cerca. Un filtro por nivel de
+  tesela evita que París u Oslo se amontonen en el horizonte desde Valencia.
+- **Líneas**: un ancho de N px en el plano del avión se ve ~100 veces más fino en el suelo. Las capas `map3d-*` compensan esa
+  escala con una función exponencial del zoom (`groundWidthStops`), recalculada solo si cambia la altitud un 15 %.
+- **Capas del 3D** (`contextLayers`, de la misma fuente `openmaptiles`): agua y costa con más contraste, vegetación y zonas
+  urbanas muy tenues; ríos, pistas, autopistas, carreteras principales y fronteras; capitales, ciudades, poblaciones,
+  aeropuertos, mares y países. Sin calles, comercios ni puntos de interés. Las demás líneas y etiquetas del estilo se apagan y
+  al salir todo vuelve a su estado (ninguna fuente, API ni coste nuevo).
+- **Edificios y relieve**: probados sobre Valencia a 36 000 ft y descartados (04/11/2026). Los edificios solo vienen en las
+  teselas de nivel 14 (23 geometrías cargadas en esa vista) y no cambiaban la imagen; el relieve de OpenFreeMap (`ne2_shaded`,
+  nivel 6) era un tinte uniforme, sin relieve que leer. Ninguno bajaba de 60 fps; simplemente no aportan. Las manchas urbanas
+  (`landuse`) sí se ven.
+- **Horizonte**: la niebla de MapLibre no tiñe un suelo plano, así que la capa pinta una banda de neblina (`drawHaze`) encima
+  del suelo y debajo del avión; sin ella el terreno acaba en una línea dura contra el cielo.
+- **Cortina de la estela**: más tenue que antes (0,09 arriba) porque pasa a pocos metros de la cámara y cubría media vista con
+  un velo de un solo color; la cinta, a su altura, no cambia.
 
 ### Límites reales del motor (MapLibre GL JS 6.11.2), medidos
 
@@ -114,7 +157,8 @@ Nunca se presenta como exacta una decoración especial ni la configuración de u
   (`zoomLevelsToOverscale`), la ruta y la estela GeoJSON llegan a nivel 12, el detalle de las fuentes se acota en 3D y,
   en 3D, la capa `background` se sustituye por un polígono del mismo color. Resultado medido: 15–43 teselas en
   cualquier inclinación y sin errores.
-- El rendimiento en móvil no está validado: las medidas son de Chrome con WebGL por software en el Mac.
+- El rendimiento en un teléfono real sigue sin validar: las medidas son de Chrome en el Mac (GPU real con la CPU frenada y
+  pantalla de móvil emulada, y WebGL por software como caso peor).
 
 ## Rendimiento y alternativa 2D
 

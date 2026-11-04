@@ -71,12 +71,12 @@ const PAINT = {
   water: { 'fill-color': '#cbd9e4' },
   waterway: { 'line-color': '#cbd9e4' },
 };
-const NAME = ['coalesce', ['get', 'name:es'], ['get', 'name:latin'], ['get', 'name']];
+export const PLACE_NAME = ['coalesce', ['get', 'name:es'], ['get', 'name:latin'], ['get', 'name']];
 export function lightStyle(style) {
   if (!Array.isArray(style?.layers) || !style.layers.length) return null;
   const layers = style.layers.filter(l => !DROP.test(l.id)).map(l => {
     const out = PAINT[l.id] ? { ...l, paint: { ...l.paint, ...PAINT[l.id] } } : l;
-    return out.type === 'symbol' && out.layout?.['text-field'] ? { ...out, layout: { ...out.layout, 'text-field': NAME } } : out;
+    return out.type === 'symbol' && out.layout?.['text-field'] ? { ...out, layout: { ...out.layout, 'text-field': PLACE_NAME } } : out;
   });
   return { ...style, layers };
 }
@@ -188,7 +188,9 @@ function bearing(a, b) {
 const flatKm = (a, b) => Math.hypot((b.lat - a.lat) * 111, (b.lon - a.lon) * 111 * Math.cos(((a.lat + b.lat) / 2) * RAD));
 // Ángulo equivalente a deg en [-180, 180).
 const wrap = deg => ((((deg + 180) % 360) + 360) % 360) - 180;
-const FRAME_MS = 50; // ~20 fotogramas por segundo bastan para un avión que se mueve unos píxeles por segundo
+// Solo en 2D: ~20 fotogramas por segundo bastan para un icono que se mueve unos píxeles por segundo. En 3D, con el avión
+// a su tamaño real, recorre cientos de píxeles por segundo y el bucle de js/map3d.js lo mueve a la frecuencia de la pantalla.
+const FRAME_MS = 50;
 const defaultClock = {
   raf: cb => globalThis.requestAnimationFrame?.(cb) ?? setTimeout(() => cb(Date.now()), 16),
   caf: id => (globalThis.cancelAnimationFrame ? globalThis.cancelAnimationFrame(id) : clearTimeout(id)),
@@ -313,7 +315,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     ext3d?.update({ trail: true });
   };
   const stop = () => { if (frame !== null) clock.caf(frame); frame = null; anim = null; pending = []; };
-  const put = (p, { track = true } = {}) => { shown = p; plane.setLngLat([p.lon, p.lat]); if (track) drawTrack(); else ext3d?.update(); };
+  const put = (p, { track = true } = {}) => { shown = p; plane.setLngLat([p.lon, p.lat]); if (track) drawTrack(); };
   // Gira el icono a `heading` (rumbo, 0 = norte) por el camino corto; la primera vez, en [-180, 180).
   const turn = heading => {
     if (!Number.isFinite(heading)) return;
@@ -325,13 +327,16 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
   // Atenuado (.plane-old): falta la lectura esperada y lo que se ve es solo la última posición conocida.
   const age = dimmed => { dimNow = dimmed === true; rotEl?.classList.toggle('plane-old', dimNow); };
 
+  // En 3D, un solo bucle (js/map3d.js) mueve el avión y la cámara en el mismo fotograma: con dos bucles, la cámara iría a
+  // veces un fotograma por detrás del avión, que a tamaño real son decenas de píxeles.
+  const schedule = () => { if (!ext3d) frame = clock.raf(step); };
   // Un fotograma del recorrido: dónde está el avión a esta hora, sin pasar nunca del último punto real.
   const step = () => {
     frame = null;
     if (!anim) return;
     const t = clock.now();
     const k = Math.min(1, Math.max(0, (t - anim.t0) / anim.dur));
-    if (k < 1 && t - lastFrame < FRAME_MS) { frame = clock.raf(step); return; }
+    if (!ext3d && k < 1 && t - lastFrame < FRAME_MS) { frame = clock.raf(step); return; }
     lastFrame = t;
     const d = glide(k) * anim.total;
     let i = 1;
@@ -343,12 +348,13 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     // La altitud, entre las de los dos puntos reales (solo si los dos la tienen; si no, la del punto al que va).
     const alt = Number.isFinite(a.alt) && Number.isFinite(b.alt) ? a.alt + (b.alt - a.alt) * f : b.alt ?? null;
     const pos = k >= 1 ? anim.pts.at(-1) : { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f, alt };
-    // La estela, como mucho ~5 veces por segundo (y siempre al terminar): crece detrás del avión.
-    const track = k >= 1 || t - lastTrackDraw >= 200;
+    // La estela, como mucho ~5 veces por segundo (y siempre al terminar): crece detrás del avión. En 3D, solo al terminar:
+    // el último tramo hasta el avión lo dibuja js/map3d.js en cada fotograma y rehacer aquí toda la estela daría tirones.
+    const track = k >= 1 || (!ext3d && t - lastTrackDraw >= 200);
     if (track) lastTrackDraw = t;
     put(pos, { track });
     if (k >= 1) anim = null;
-    else frame = clock.raf(step);
+    else schedule();
   };
   // De lo que se ve hasta `next` pasando por lo que aún queda por recorrer (sin recortar), en PLANE_GLIDE_MS.
   const glideTo = next => {
@@ -362,7 +368,7 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     anim = { pts, cum, total, t0: clock.now(), dur: PLANE_GLIDE_MS };
     pending = pts.slice(1);
     lastFrame = -Infinity;
-    frame = clock.raf(step);
+    schedule();
     drawTrack();
   };
 
@@ -475,10 +481,11 @@ export async function createRouteMap(el, { origin, destination, route }, clock =
     setMode(next) {
       modeBusy = (modeBusy ?? Promise.resolve()).then(async () => {
         if (next === mode) return mode;
-        if (next === '2d') { ext3d?.destroy(); ext3d = null; mode = '2d'; return mode; }
+        if (next === '2d') { ext3d?.destroy(); ext3d = null; mode = '2d'; if (anim && frame === null) schedule(); return mode; }
         try {
           const { enable3d } = await import('./map3d.js');
-          ext3d = await enable3d({ map, ml, hero, state: state3d });
+          ext3d = await enable3d({ map, ml, hero, state: state3d, advance: () => { if (anim) step(); }, clock });
+          if (frame !== null) { clock.caf(frame); frame = null; }
           mode = '3d';
         } catch { ext3d = null; mode = '2d'; }
         return mode;

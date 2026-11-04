@@ -3,45 +3,53 @@
 // altura (cinta con el color de la altitud de FR24 y una cortina tenue hasta el suelo) y una cámara que gira alrededor
 // del avión. Todo sale de lo que el mapa 2D ya tiene: ninguna consulta de seguimiento nueva.
 //
-// Fidelidad (lo que se ve y lo que se dice):
+// Fidelidad:
 // - Posición y altitud: las reales recibidas; entre dos lecturas, el mismo recorrido del 2D (js/map.js, una lectura por
 //   detrás y nunca más allá de la última), con la altitud interpolada entre las dos. Sin datos nuevos, quieto; pasados
-//   180 s, fuera (como en 2D). La antigüedad de la última posición real se ve siempre.
+//   180 s, fuera (como en 2D).
 // - Altitud: la barométrica estándar (1013,25 hPa) que dan FR24 (`alt`) y adsb.lol (`alt_baro`), en pies. El mapa no
 //   tiene relieve: el avión se sitúa sobre un suelo plano a nivel del mar a esa altitud (diferencia típica con la real:
 //   cientos de metros, invisible a esta escala; en tierra queda a 0).
-// - Orientación: la dirección de desplazamiento (`track`, o el rumbo entre dos posiciones reales). No se recibe el rumbo
-//   del morro: se dice. Alas y morro, siempre nivelados: no se recibe la actitud y no se inventa.
-// - Tamaño: el avión se amplía para que se vea (×N, siempre indicado); la altitud y las posiciones no se exageran.
-import { altitudeColor } from './map.js';
-import { monoNow } from './card-model.js';
-import { esc } from './ui.js';
+// - Orientación: la dirección de desplazamiento (`track`, o el rumbo entre dos posiciones reales). Alas y morro, siempre
+//   nivelados: no se recibe la actitud y no se inventa.
+// - Encima del mapa no hay texto: el modelo y la operadora están en la ficha (y aquí, solo para lectores de pantalla).
+//
+// Un solo bucle por fotograma (loop): primero la posición del avión (advance, de js/map.js), luego su giro y por último la
+// cámara. Avión y cámara se calculan juntos y la cámara solo se recoloca sola cuando nadie toca el mapa.
+import { altitudeColor, PLACE_NAME } from './map.js';
 import { loadCatalogIndex, loadModel, loadLivery, resolveAircraft, buildAircraftGeometry, paintLivery, TEXTURE_SIZE,
   NEUTRAL_PAINT, GENERIC_PAINT, GENERIC_SPEC } from './aircraft3d.js';
 
 const FT_TO_M = 0.3048;
 const PLANE_PX = 70; // largo aproximado del avión en pantalla (px CSS) cuando hay que ampliarlo
 const RIBBON_PX = 2.2; // media anchura de la cinta de la estela (px CSS en el centro de la vista)
-const TURN_DEG_S = 90; // giro del avión y de la cámara hacia una dirección nueva (grados por segundo)
+// Suavizado de la dirección (solo presentación; la medida no cambia): el avión gira en ~1 s y la cámara, algo más despacio.
+const PLANE_TURN_TAU_MS = 900, CAMERA_TURN_TAU_MS = 1800;
+// Transiciones de la cámara (ms): cambio de perspectiva, volver a seguir, botones y entrada en 3D.
+const VIEW_MS = 900, RESUME_MS = 1000, BUTTON_MS = 260, ENTER_MS = 1200;
 // 90°: la cámara a la altura del avión (vista lateral de verdad). MapLibre 6 admite hasta 180°, pero por encima de 90°
 // se mira el avión desde abajo con el suelo cortado por arriba: no aporta y no se ofrece.
 const MAX_PITCH = 90;
 const TILT_STEP = 10;
-const ORBIT_DEG_PX = 0.35; // giro de la cámara por píxel arrastrado con un dedo
 export const VIEWS = {
   behind: { label: 'Detrás', offset: 0, pitch: 78 },
   side: { label: 'Lado', offset: 90, pitch: 90 },
   diagonal: { label: 'Diagonal', offset: 40, pitch: 66 },
   top: { label: 'Arriba', offset: 0, pitch: 0 },
 };
-// Cielo del modo 3D: sin él, al mirar cerca del horizonte queda una franja vacía por encima del suelo. La niebla,
-// del color del fondo del mapa, funde el borde lejano del suelo (MapLibre deja de dibujar teselas a cierta distancia).
-const SKY = { 'sky-color': '#a9cdee', 'horizon-color': '#e6eff8', 'fog-color': '#eef1f2', 'sky-horizon-blend': 0.7,
-  'horizon-fog-blend': 0.9, 'fog-ground-blend': 0.85, 'atmosphere-blend': 0 };
+const HAZE_CSS = '#e3edf6', HAZE_RGB = [0xe3 / 255, 0xed / 255, 0xf6 / 255];
+// Cielo del modo 3D: degradado hasta una neblina clara, con el suelo lejano fundido en ella (sin una línea blanca dura).
+const SKY = { 'sky-color': '#9fc6ea', 'horizon-color': HAZE_CSS, 'fog-color': HAZE_CSS, 'sky-horizon-blend': 0.75,
+  'horizon-fog-blend': 0.9, 'fog-ground-blend': 0.55, 'atmosphere-blend': 0 };
+// La niebla de MapLibre no tiñe un suelo plano: sin más, el terreno acaba en una línea dura contra el cielo. La capa pinta una
+// banda de neblina del color del horizonte, encima del suelo y debajo del avión: esta fracción del alto de la vista.
+const HAZE_BAND = 0.2;
+// Tierra y agua del 3D: más contraste que el 2D para leer la costa desde la altitud de crucero, sin ser un mapa oscuro.
+const GROUND_COLOR = '#ebeadf', WATER_COLOR = '#b3cde0';
 const EARTH_M = 40075016.686;
 const RAD = Math.PI / 180;
-// Encuadre de cada vista: el avión completo ocupa como mucho esta fracción del hueco libre (entre la etiqueta y la barra).
-const FILL = 0.8;
+// Encuadre de cada vista: el avión completo ocupa como mucho esta fracción del hueco libre (dejando ver el terreno).
+const FILL = 0.68;
 
 // ---- Matrices 4×4 (columnas, como WebGL) ----
 const mat = () => { const m = new Float64Array(16); m[0] = m[5] = m[10] = m[15] = 1; return m; };
@@ -58,6 +66,91 @@ const translate = (x, y, z) => { const m = mat(); m[12] = x; m[13] = y; m[14] = 
 const scale = (x, y, z) => { const m = mat(); m[0] = x; m[5] = y; m[10] = z; return m; };
 const rotZ = a => { const m = mat(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[1] = s; m[4] = -s; m[5] = c; return m; };
 const wrap = d => ((((d + 180) % 360) + 360) % 360) - 180;
+// Pasos puros de la cámara (exportados para las pruebas).
+export function smoothAngle(cur, target, dtMs, tauMs) {
+  const d = wrap(target - cur);
+  if (Math.abs(d) < 0.02) return target;
+  return cur + d * (1 - Math.exp(-dtMs / tauMs));
+}
+const smootherstep = k => k * k * k * (k * (k * 6 - 15) + 10);
+// Un punto de la transición de la cámara, de `from` a `to`: la inclinación y el zoom en línea recta; el rumbo, por el
+// camino corto (nunca una vuelta de 360°).
+export function blendCamera(from, to, k) {
+  const e = smootherstep(k), mix = (a, b) => a + (b - a) * e;
+  const out = {
+    center: [mix(from.center[0], to.center[0]), mix(from.center[1], to.center[1])], elevation: mix(from.elevation, to.elevation),
+    zoom: mix(from.zoom, to.zoom), pitch: mix(from.pitch, to.pitch), bearing: from.bearing + wrap(to.bearing - from.bearing) * e,
+  };
+  if (from.padding && to.padding) out.padding = { top: mix(from.padding.top, to.padding.top), bottom: mix(from.padding.bottom, to.padding.bottom), left: 0, right: 0 };
+  return out;
+}
+
+// ---- Contexto geográfico del 3D ----
+// La cámara está a unos 100 m del avión y el suelo a unos 11 km: desde el suelo, todo lo que MapLibre mide en píxeles del
+// plano del avión se ve ~100 veces más pequeño. Por eso el 3D no usa las líneas y etiquetas del estilo 2D, sino estas:
+// - Líneas: el ancho que se quiere ver en el suelo (px), compensado con esa escala. Sale del zoom con una función exponencial
+//   (crece ×2 por nivel desde zc, donde la cámara está tan lejos del centro como el suelo), sin recalcular nada por fotograma.
+// - Etiquetas: MapLibre las dibuja a la mitad de su tamaño a esta distancia (su factor de perspectiva tiende a 0,5), de ahí
+//   el doble de tamaño de cerca. El filtro con ['zoom'] mira el nivel de la tesela: las teselas lejanas, de nivel bajo,
+//   no aportan nombres; sin él, París y Oslo se amontonan en el horizonte vistos desde Valencia.
+export function groundWidthStops(px, zc) {
+  if (!Number.isFinite(zc)) return px;
+  const z = Math.min(23, Math.max(1, zc));
+  return ['interpolate', ['exponential', 2], ['zoom'], 0, px, z, px * 2, 24, px * (1 + 2 ** (24 - z))];
+}
+const labelSize = base => ['interpolate', ['linear'], ['zoom'], 9, base, 14, base * 1.15, 17, base * 1.75, 19, base * 2];
+const LINE_STYLES = {
+  'map3d-river': { px: 1, color: '#aecbe0', layer: 'waterway', filter: ['in', ['get', 'class'], ['literal', ['river', 'canal']]] },
+  'map3d-runway': { px: 1.4, color: '#a9adb3', layer: 'aeroway', filter: ['==', ['get', 'class'], 'runway'] },
+  'map3d-road-major': { px: 0.7, color: '#d8c7a6', layer: 'transportation', filter: ['in', ['get', 'class'], ['literal', ['trunk', 'primary']]] },
+  'map3d-road-motorway': { px: 1.3, color: '#d0a772', layer: 'transportation', filter: ['==', ['get', 'class'], 'motorway'] },
+  'map3d-border-region': { px: 0.8, color: '#a39bb0', layer: 'boundary', dash: [3, 2], filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]] },
+  'map3d-border-country': { px: 1.6, color: '#75688a', layer: 'boundary', dash: [4, 2], filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]] },
+};
+const label = (id, layer, filter, base, font, extra = {}, color = '#1d2733') => ({
+  id, type: 'symbol', source: 'openmaptiles', 'source-layer': layer, filter,
+  layout: { 'text-field': PLACE_NAME, 'text-font': [font], 'text-size': labelSize(base), 'text-max-width': 8, 'text-padding': 6, ...extra },
+  paint: { 'text-color': color, 'text-halo-color': 'rgba(255, 255, 255, 0.92)', 'text-halo-width': 1.6 },
+});
+const placeIs = (cls, minTileZoom, capital = null) => ['all', ['==', ['get', 'class'], cls], ['>=', ['zoom'], minTileZoom],
+  ...(capital === null ? [] : [[capital ? '==' : '!=', ['get', 'capital'], 2]])];
+// Las capas del 3D, de abajo arriba. under: bajo el agua del estilo; over: sobre ella. overlap: sin colisión (ver
+// keepDistantLabels). De arriba abajo de importancia: lo que se coloca primero gana el sitio.
+export function contextLayers({ zc = NaN, overlap = false } = {}) {
+  const force = overlap ? { 'text-allow-overlap': true } : {};
+  const under = [
+    { id: 'map3d-green', type: 'fill', source: 'openmaptiles', 'source-layer': 'landcover', filter: ['in', ['get', 'class'], ['literal', ['wood', 'grass']]], paint: { 'fill-color': '#cfdcbd', 'fill-opacity': 0.55 } },
+    { id: 'map3d-urban', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', filter: ['in', ['get', 'class'], ['literal', ['residential', 'suburb', 'neighbourhood', 'industrial', 'commercial']]], paint: { 'fill-color': '#d6d3cc' } },
+  ];
+  const over = [
+    ...Object.entries(LINE_STYLES).map(([id, l]) => ({ id, type: 'line', source: 'openmaptiles', 'source-layer': l.layer, filter: l.filter,
+      layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': l.color, 'line-width': groundWidthStops(l.px, zc), ...(l.dash ? { 'line-dasharray': l.dash } : {}) } })),
+    label('map3d-water-name', 'water_name', ['all', ['==', ['geometry-type'], 'Point'], ['>=', ['zoom'], 4]], 13, 'Noto Sans Italic', {}, '#45708f'),
+    label('map3d-airport', 'aerodrome_label', ['>=', ['zoom'], 10], 11.5, 'Noto Sans Regular', {}, '#4b5563'),
+    label('map3d-town', 'place', placeIs('town', 10), 13, 'Noto Sans Regular'),
+    label('map3d-city', 'place', placeIs('city', 7, false), 16, 'Noto Sans Bold', force),
+    label('map3d-capital', 'place', placeIs('city', 5, true), 18, 'Noto Sans Bold', force),
+    label('map3d-country', 'place', ['all', ['==', ['get', 'class'], 'country'], ['>=', ['zoom'], 4]], 14, 'Noto Sans Bold', { 'text-transform': 'uppercase', 'text-letter-spacing': 0.12 }, '#5b5468'),
+  ];
+  return { under, over };
+}
+// MapLibre descarta toda etiqueta con 0,5 + 0,5·(distancia cámara-centro / distancia cámara-etiqueta) < 0,6
+// (CollisionIndex.perspectiveRatioCutoff): con la cámara a 100 m del avión y el suelo a 11 km, todas. Da igual su maxzoom o
+// el sitio libre. Mientras dure el 3D, ese corte queda en 0 (no hay otra forma pública; MapLibre va en una copia fija,
+// js/vendor/maplibre). Devuelve cómo quitarlo, o null si esta versión ya no lo tiene: entonces las ciudades se fuerzan.
+export function keepDistantLabels(map) {
+  const index = map.style?.placement?.collisionIndex;
+  if (!index || !('perspectiveRatioCutoff' in index)) return null;
+  const proto = Object.getPrototypeOf(index);
+  Object.defineProperty(proto, 'perspectiveRatioCutoff', { configurable: true, get: () => 0, set() {} });
+  return () => { delete proto.perspectiveRatioCutoff; };
+}
+// Dónde cae el horizonte de un suelo plano, en coordenadas de recorte (+1 arriba, −1 abajo). fov: el vertical de la cámara
+// (grados); centerY: el centro de la vista con el hueco del encuadre. > 1: por encima de la vista, sin banda.
+export function horizonClipY(pitchDeg, fovDeg, centerY = 0) {
+  const a = (90 - pitchDeg) * RAD;
+  return a <= 1e-3 ? centerY : centerY + Math.tan(a) / Math.tan(fovDeg * RAD / 2);
+}
 const rgba = (css, a) => { const [r, g, b] = (css.match(/\d+/g) ?? [125, 143, 163]).map(Number); return [r / 255 * a, g / 255 * a, b / 255 * a, a]; };
 
 // ---- Sombreadores ----
@@ -81,6 +174,14 @@ uniform mat4 u_matrix; uniform float u_half; out vec4 v_col;
 void main() { v_col = a_col; gl_Position = u_matrix * vec4(a_pos.xy + a_off * u_half, a_pos.z, 1.0); }`;
 const LINE_FS = `#version 300 es
 precision mediump float; in vec4 v_col; uniform float u_fade; out vec4 color; void main() { color = v_col * u_fade; }`;
+
+const HAZE_VS = `#version 300 es
+out float v_y; void main() { vec2 p = vec2(float((gl_VertexID & 1) * 4 - 1), float((gl_VertexID & 2) * 2 - 1)); v_y = p.y; gl_Position = vec4(p, 0.0, 1.0); }`;
+const HAZE_FS = `#version 300 es
+precision mediump float; in float v_y; uniform float u_horizon; uniform float u_band; uniform vec3 u_color; out vec4 color;
+// Sube en un tercio de la banda por encima del horizonte, se mantiene y baja: sin bordes (el suelo de MapLibre acaba algo por
+// debajo del horizonte geométrico, y esa línea queda dentro de la zona plena).
+void main() { float d = (u_horizon - v_y) / u_band; float a = (d < 0.0 ? smoothstep(-0.35, 0.0, d) : 1.0 - smoothstep(0.3, 1.0, d)) * 0.95; color = vec4(u_color * a, a); }`;
 
 function program(gl, vs, fs) {
   const sh = (type, src) => {
@@ -112,7 +213,8 @@ export function trailGeometry(pts, project, origin = null) {
     if (!(len > 0)) continue;
     const nx = -dy / len, ny = dx / len;
     const col = rgba(altitudeColor(b[2]), 1);
-    const top = rgba(altitudeColor(b[2]), 0.3), low = rgba(altitudeColor(b[2]), 0.04);
+    // Cortina tenue: la cámara va a pocos metros de ella y, si no, cubre media vista con un velo de un solo color.
+    const top = rgba(altitudeColor(b[2]), 0.09), low = rgba(altitudeColor(b[2]), 0.02);
     const v = (p, ox, oy, c) => [p[0], p[1], p[2], ox, oy, ...c];
     ribbon.push(...v(A, nx, ny, col), ...v(A, -nx, -ny, col), ...v(B, -nx, -ny, col), ...v(A, nx, ny, col), ...v(B, -nx, -ny, col), ...v(B, nx, ny, col));
     const A0 = [A[0], A[1], 0], B0 = [B[0], B[1], 0];
@@ -135,26 +237,33 @@ export function aircraftLabel(res, ident, modelName) {
 const svg = d => `<svg class="icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const TILT_SIDE = svg('<path d="M3 16h18"/><path d="M12 12V4"/><path d="M8.5 8.5 12 12l3.5-3.5"/>');
 const TILT_TOP = svg('<path d="M3 16h18"/><path d="M12 4v8"/><path d="M8.5 7.5 12 4l3.5 3.5"/>');
+const FOLLOW = svg('<circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>');
+const RESET = svg('<path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4.5v4.2h4.2"/>');
+const MORE = svg('<path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="m16.5 3.5 4 .5-.5 4"/><path d="M12 8v4l3 2"/>');
 const CONTROLS = `<div class="map3d-ui">
-  <p class="map3d-info" aria-live="polite"><span class="map3d-model"></span><span class="map3d-age"></span><span class="map3d-note">Orientado según la trayectoria; inclinación no medida</span></p>
-  <div class="map3d-zoom">
+  <p class="sr-only map3d-model"></p>
+  <div class="map3d-side">
     <button type="button" class="map-btn" data-cam="in" aria-label="Acercar" title="Acercar">+</button>
     <button type="button" class="map-btn" data-cam="out" aria-label="Alejar" title="Alejar">−</button>
-    <button type="button" class="map-btn" data-cam="left" aria-label="Girar la cámara a la izquierda" title="Girar a la izquierda">⟲</button>
-    <button type="button" class="map-btn" data-cam="right" aria-label="Girar la cámara a la derecha" title="Girar a la derecha">⟳</button>
-    <button type="button" class="map-btn" data-cam="tilt-side" aria-label="Inclinar: ver más de lado" title="Ver más de lado">${TILT_SIDE}</button>
-    <button type="button" class="map-btn" data-cam="tilt-top" aria-label="Inclinar: ver más desde arriba" title="Ver más desde arriba">${TILT_TOP}</button>
+    <button type="button" class="map-btn" data-cam="more" aria-label="Girar e inclinar" title="Girar e inclinar" aria-expanded="false">${MORE}</button>
+    <div class="map3d-more" hidden>
+      <button type="button" class="map-btn" data-cam="left" aria-label="Girar la cámara a la izquierda" title="Girar a la izquierda">⟲</button>
+      <button type="button" class="map-btn" data-cam="right" aria-label="Girar la cámara a la derecha" title="Girar a la derecha">⟳</button>
+      <button type="button" class="map-btn" data-cam="tilt-side" aria-label="Inclinar: ver más de lado" title="Ver más de lado">${TILT_SIDE}</button>
+      <button type="button" class="map-btn" data-cam="tilt-top" aria-label="Inclinar: ver más desde arriba" title="Ver más desde arriba">${TILT_TOP}</button>
+    </div>
   </div>
   <div class="map3d-bar">
     <div class="map3d-views" role="group" aria-label="Perspectiva">${Object.entries(VIEWS).map(([k, v]) => `<button type="button" data-view="${k}">${v.label}</button>`).join('')}</div>
-    <button type="button" class="map3d-follow" data-cam="follow" aria-pressed="true">Seguir avión</button>
-    <button type="button" class="map3d-reset" data-cam="reset">Restablecer vista</button>
+    <button type="button" class="map3d-icon map3d-follow" data-cam="follow" aria-pressed="true" aria-label="Seguir avión" title="Seguir avión">${FOLLOW}</button>
+    <button type="button" class="map3d-icon map3d-reset" data-cam="reset" aria-label="Restablecer vista" title="Restablecer vista">${RESET}</button>
   </div>
 </div>`;
 
 // map, ml: el mapa y MapLibre; hero: el #map-card; state(): lo que pinta el 2D (ver createRouteMap.state3d).
 // Rechaza si no hay WebGL 2 o la capa no se puede crear: quien llama vuelve al 2D.
-export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requestAnimationFrame(cb), caf: id => cancelAnimationFrame(id) } }) {
+// advance(): lleva el avión de js/map.js a su posición de este fotograma.
+export async function enable3d({ map, ml, hero, state, advance = null, clock = { raf: cb => requestAnimationFrame(cb), caf: id => cancelAnimationFrame(id) } }) {
   const gl0 = map.painter?.context?.gl ?? map.getCanvas?.()?.getContext?.('webgl2');
   if (!(globalThis.WebGL2RenderingContext && gl0 instanceof WebGL2RenderingContext)) throw new Error('3D no disponible');
   const reduced = Boolean(globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
@@ -174,12 +283,12 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     paint = res.level === 'generic' ? GENERIC_PAINT : res.level === 'exact' ? l.paint : NEUTRAL_PAINT;
     geometryDirty = true;
     info(ident);
-    if (autoFrame && follow && state().plane) applyView(view, { animate: false }); // el encuadre, con las medidas del modelo real
+    if (autoFrame && follow && state().plane) { frameGoal(view); transition(VIEW_MS / 2); } // el encuadre, con las medidas del modelo real
     map.triggerRepaint();
   }
 
   // ---- Capa WebGL ----
-  let gl = null, meshProg = null, lineProg = null, mesh = null, tex = null, ribbonBuf = null, curtainBuf = null, dropBuf = null;
+  let gl = null, meshProg = null, lineProg = null, hazeProg = null, mesh = null, tex = null, ribbonBuf = null, curtainBuf = null, dropBuf = null;
   let tipRibbonBuf = null, tipCurtainBuf = null;
   let trail = { origin: null, ribbonN: 0, curtainN: 0, last: null }, trailDirty = true, failed = false;
   const del = () => {
@@ -189,7 +298,8 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     if (tex) gl.deleteTexture(tex);
     if (meshProg) gl.deleteProgram(meshProg);
     if (lineProg) gl.deleteProgram(lineProg);
-    mesh = tex = ribbonBuf = curtainBuf = dropBuf = tipRibbonBuf = tipCurtainBuf = meshProg = lineProg = null;
+    if (hazeProg) gl.deleteProgram(hazeProg);
+    mesh = tex = ribbonBuf = curtainBuf = dropBuf = tipRibbonBuf = tipCurtainBuf = meshProg = lineProg = hazeProg = null;
   };
   function uploadAircraft() {
     geometryDirty = false;
@@ -255,6 +365,19 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     gl.drawArrays(mode, 0, n);
     for (const l of ls) gl.disableVertexAttribArray(l);
   };
+  // La banda de neblina, de arriba abajo desde el horizonte, sin tocar la profundidad: el avión y la estela van delante.
+  function drawHaze() {
+    const H = map.getContainer().clientHeight || 1, pad = map.getPadding?.() ?? { top: 0, bottom: 0 };
+    const y = horizonClipY(map.getPitch(), map.getVerticalFieldOfView?.() ?? 36.87, (pad.bottom - pad.top) / H);
+    if (y > 1 + HAZE_BAND * 2) return;
+    gl.useProgram(hazeProg);
+    gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
+    gl.uniform1f(gl.getUniformLocation(hazeProg, 'u_horizon'), y);
+    gl.uniform1f(gl.getUniformLocation(hazeProg, 'u_band'), HAZE_BAND * 2);
+    gl.uniform3fv(gl.getUniformLocation(hazeProg, 'u_color'), HAZE_RGB);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+  }
   let lastScale = 1;
   // Mirando casi en horizontal, la cortina de la estela taparía media vista: se atenúa (la cinta, a su altura, se queda).
   const curtainFade = () => { const p = map.getPitch(); return p <= 65 ? 1 : Math.max(0.4, 1 - ((p - 65) / 25) * 0.6); };
@@ -262,7 +385,7 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     id: 'aircraft-3d', type: 'custom', renderingMode: '3d',
     onAdd(_map, g) {
       gl = g;
-      try { meshProg = program(gl, MESH_VS, MESH_FS); lineProg = program(gl, LINE_VS, LINE_FS); } catch { failed = true; }
+      try { meshProg = program(gl, MESH_VS, MESH_FS); lineProg = program(gl, LINE_VS, LINE_FS); hazeProg = program(gl, HAZE_VS, HAZE_FS); } catch { failed = true; }
     },
     render(g, args) {
       if (failed || !meshProg) return;
@@ -276,6 +399,7 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
       gl.disable(gl.CULL_FACE);
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      drawHaze();
       const tip = tipTrail(s);
       if (trail.origin) {
         const m = mult(main, translate(trail.origin[0], trail.origin[1], 0));
@@ -325,12 +449,13 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
 
   // ---- Cámara ----
   const saved = { center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing?.() ?? 0, pitch: map.getPitch?.() ?? 0 };
-  let view = 'diagonal', offset = VIEWS.diagonal.offset, follow = true, interacting = false, easing = false;
-  // autoFrame: el encuadre es el de la vista elegida (si llega el modelo real, se reajusta); un zoom manual lo deja.
-  let shownHeading = null, targetHeading = null, frame = null, lastT = null, autoFrame = true;
+  let view = 'diagonal', follow = true, frameId = null, lastT = null, autoFrame = true;
+  // shownHeading: el rumbo del avión en pantalla; camHeading: el que sigue la cámara (más despacio, para no dar bandazos).
+  let shownHeading = null, camHeading = null;
   // Gestos del 3D (los del 2D más giro e inclinación), también dentro de la ficha sin ampliar: un dedo mueve el mapa
   // (y deja de seguir al avión); pellizcar o la rueda acercan y alejan sobre el centro (el avión, si se sigue); dos dedos
-  // giran e inclinan sin dejar de seguir. La página se desplaza arrastrando fuera del mapa.
+  // giran e inclinan sin dejar de seguir. La página se desplaza arrastrando fuera del mapa. Mientras se toca, el mapa
+  // responde al gesto sin suavizado.
   const prevSky = map.getSky?.();
   map.setMaxPitch?.(MAX_PITCH);
   map.dragRotate?.enable?.(); map.touchPitch?.enable?.();
@@ -340,17 +465,30 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
   try { map.setSky?.(SKY); } catch { /* sin cielo: se ve el fondo del mapa */ }
   // La capa «background» del estilo calcula su propia cobertura de teselas sin tope (MapLibre 6.11.2): con la cámara a
   // la altura del avión y zoom alto pedía teselas de nivel 26 («z=26 outside of bounds», medido a ~90° y zoom ≈ 19,7).
-  // En 3D queda transparente y la tierra la pinta un polígono mundial del mismo color en una fuente GeoJSON (acotada
-  // abajo como las demás). Al volver a 2D, todo como estaba.
-  const backgrounds = (map.getStyle?.()?.layers ?? []).filter(l => l.type === 'background').map(l => ({ id: l.id, opacity: map.getPaintProperty?.(l.id, 'background-opacity') }));
-  const groundColor = (backgrounds[0] && map.getPaintProperty?.(backgrounds[0].id, 'background-color')) || '#f4f5f2';
-  const firstLayer = (map.getStyle?.()?.layers ?? []).find(l => l.type !== 'background')?.id;
+  // En 3D queda transparente y la tierra la pinta un polígono mundial en una fuente GeoJSON (acotada abajo como las demás).
+  // Las líneas y etiquetas del estilo se apagan y entran las de contextLayers, de las MISMAS teselas (ninguna fuente nueva).
+  // Al volver a 2D, todo como estaba.
+  const styleLayers = map.getStyle?.()?.layers ?? [];
+  const backgrounds = styleLayers.filter(l => l.type === 'background').map(l => ({ id: l.id, opacity: map.getPaintProperty?.(l.id, 'background-opacity') }));
+  const firstLayer = styleLayers.find(l => l.type !== 'background')?.id;
+  const removeLabelPatch = keepDistantLabels(map);
+  const hasBase = Boolean(map.getSource?.('openmaptiles'));
+  // Solo el agua y el hielo siguen con el estilo: son rellenos y no dependen de la escala.
+  const hidden = hasBase ? styleLayers.filter(l => l.source === 'openmaptiles' && (l.type === 'line' || l.type === 'symbol' || l.type === 'fill') && !/^(water$|landcover_(ice|glacier))/.test(l.id))
+    .map(l => ({ id: l.id, visibility: map.getLayoutProperty?.(l.id, 'visibility') })) : [];
+  const waterColor = hasBase && map.getLayer?.('water') ? map.getPaintProperty?.('water', 'fill-color') : undefined;
+  const context = hasBase ? contextLayers({ overlap: !removeLabelPatch }) : { under: [], over: [] };
   try {
     map.addSource('map3d-ground', { type: 'geojson', maxzoom: 4,
       data: { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } });
-    map.addLayer({ id: 'map3d-ground', type: 'fill', source: 'map3d-ground', paint: { 'fill-color': typeof groundColor === 'string' ? groundColor : '#f4f5f2' } }, firstLayer);
+    map.addLayer({ id: 'map3d-ground', type: 'fill', source: 'map3d-ground', paint: { 'fill-color': GROUND_COLOR } }, firstLayer);
     for (const b of backgrounds) map.setPaintProperty(b.id, 'background-opacity', 0);
-  } catch { /* sin suelo propio: se queda el fondo del estilo */ }
+    for (const l of hidden) map.setLayoutProperty(l.id, 'visibility', 'none');
+    if (waterColor !== undefined) map.setPaintProperty('water', 'fill-color', WATER_COLOR);
+    for (const l of context.under) map.addLayer(l, firstLayer);
+    const above = map.getLayer?.('route') ? 'route' : undefined;
+    for (const l of context.over) map.addLayer(l, above);
+  } catch { /* sin suelo propio o sin contexto: se queda lo que haya */ }
   // Detalle de las teselas con la cámara a la altura del avión: la función de MapLibre (la de setSourceTileLodParams, con
   // sus valores por defecto 9,314 y 3) no tiene tope cuando una tesela queda justo bajo la cámara elevada, y en las fuentes
   // vectoriales ese valor pasa a ser el nivel de la tesela: «z=26 outside of bounds» y desbordamiento de pila (medido a
@@ -375,7 +513,10 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     try { map.setSky?.(prevSky); } catch { /* ya sin cielo */ }
     for (const src of lodSources) src.calculateTileZoom = undefined; // la de MapLibre por defecto
     try {
-      for (const b of backgrounds) map.setPaintProperty(b.id, 'background-opacity', b.opacity ?? 1);
+      for (const l of [...context.over, ...context.under]) if (map.getLayer?.(l.id)) map.removeLayer(l.id);
+      for (const l of hidden) map.setLayoutProperty(l.id, 'visibility', l.visibility);
+      if (waterColor !== undefined) map.setPaintProperty('water', 'fill-color', waterColor);
+      for (const b of backgrounds) map.setPaintProperty(b.id, 'background-opacity', b.opacity);
       if (map.getLayer?.('map3d-ground')) map.removeLayer('map3d-ground');
       if (map.getSource?.('map3d-ground')) map.removeSource('map3d-ground');
     } catch { /* el mapa ya no existe */ }
@@ -392,22 +533,16 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
   const $ = sel => panel.querySelector(sel);
 
   const planeCamera = p => ({ center: [p.lon, p.lat], elevation: Number.isFinite(p.alt) ? Math.max(0, p.alt * FT_TO_M) : 0 });
-  const bearingNow = () => (shownHeading ?? 0) + offset;
-  function followFrame() {
-    const p = state().plane;
-    if (!follow || !p || interacting || easing) return;
-    map.jumpTo({ ...planeCamera(p), bearing: bearingNow() });
-  }
   function setFollow(on) {
     follow = on && Boolean(state().plane);
     $('[data-cam="follow"]').setAttribute('aria-pressed', String(follow));
   }
-  // Hueco libre para el avión: entre la etiqueta (arriba) y la barra de perspectivas (abajo). El centro de la cámara
-  // va al medio de ese hueco (padding de MapLibre).
+  // Hueco libre para el avión: entre los botones de arriba (2D/3D) y la barra de perspectivas. El centro de la cámara va
+  // al medio de ese hueco (padding de MapLibre).
   function framePadding() {
     const mr = map.getContainer().getBoundingClientRect();
-    const top = Math.max(0, $('.map3d-info').getBoundingClientRect().bottom - mr.top) + 10;
-    const bottom = Math.max(0, mr.bottom - $('.map3d-bar').getBoundingClientRect().top) + 10;
+    const top = Math.max(0, (hero.querySelector('.map-mode')?.getBoundingClientRect().bottom ?? mr.top) - mr.top);
+    const bottom = Math.max(0, mr.bottom - $('.map3d-bar').getBoundingClientRect().top);
     const free = mr.height - top - bottom;
     return free >= 80 ? { top, bottom, left: 0, right: 0, width: mr.width, height: free } : { top: 0, bottom: 0, left: 0, right: 0, width: mr.width, height: mr.height };
   }
@@ -425,45 +560,82 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     const mpp = Math.max(across / ((pad.width - 24) * FILL), tall / (pad.height * FILL));
     return Math.min(21, Math.max(3, Math.log2((EARTH_M * Math.cos(p.lat * RAD)) / (512 * mpp))));
   }
-  // Animación de la cámara que el seguimiento no interrumpe (followFrame espera a que acabe y luego recoloca el centro).
-  // Cada animación lleva su número: al empezar otra, MapLibre da por acabada la anterior (moveend) y solo la última
-  // devuelve el control al seguimiento.
-  let easeId = 0;
-  function easeCam(target, duration = 300) {
-    if (reduced) { map.jumpTo(target); return; }
-    const id = ++easeId;
-    easing = true;
-    map.easeTo({ ...target, duration });
-    map.once('moveend', () => { if (id === easeId) { easing = false; followFrame(); } });
-  }
-  const easeAround = (opts, duration) => {
-    const p = state().plane;
-    easeCam({ ...opts, ...(follow && p ? { ...planeCamera(p), bearing: opts.bearing ?? bearingNow() } : {}) }, duration);
+  // ---- Cámara: destino y transición ----
+  // goal: el encuadre pedido (zoom, inclinación, hueco y, siguiendo, el giro respecto al avión; sin seguir, el rumbo).
+  // Siguiendo, el centro va pegado al avión: a tamaño real recorre de 700 a 1 800 px/s, así que un retraso de la cámara de 0,3 s lo
+  // sacaría del encuadre; lo suave son la dirección (camHeading) y cada transición. La transición mezcla el punto de partida
+  // con el destino VIVO: el avión sigue moviéndose durante ella y la cámara llega donde está, sin saltos.
+  const goal = { zoom: map.getZoom(), pitch: map.getPitch?.() ?? 0, offset: VIEWS.diagonal.offset, bearing: map.getBearing?.() ?? 0, padding: null };
+  let moving = null;
+  const nowCam = () => {
+    const c = map.getCenter(), pad = map.getPadding?.();
+    return { center: [c.lng, c.lat], elevation: map.getCenterElevation?.() ?? 0, zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing(),
+      padding: pad ? { top: pad.top, bottom: pad.bottom, left: 0, right: 0 } : null };
   };
+  const transition = dur => { moving = reduced ? null : { from: nowCam(), dur, t0: null }; };
+  function cameraTarget(p) {
+    const c = map.getCenter();
+    return { ...(follow && p ? planeCamera(p) : { center: [c.lng, c.lat], elevation: map.getCenterElevation?.() ?? 0 }),
+      zoom: goal.zoom, pitch: goal.pitch, bearing: follow && p ? (camHeading ?? 0) + goal.offset : goal.bearing, ...(goal.padding ? { padding: goal.padding } : {}) };
+  }
+  function frameGoal(key) {
+    const p = state().plane, pad = framePadding();
+    goal.pitch = VIEWS[key].pitch; goal.offset = VIEWS[key].offset; goal.padding = { top: pad.top, bottom: pad.bottom, left: 0, right: 0 };
+    if (p) goal.zoom = fitZoom(key, p, pad);
+    else goal.bearing = map.getBearing();
+  }
   function applyView(key, { animate = true } = {}) {
-    view = key; offset = VIEWS[key].offset; autoFrame = true;
+    view = key; autoFrame = true;
     for (const b of panel.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === key));
-    const p = state().plane;
     setFollow(true);
-    const pad = framePadding();
-    map.setPadding?.({ top: pad.top, bottom: pad.bottom, left: 0, right: 0 });
-    const target = { pitch: VIEWS[key].pitch, bearing: p ? bearingNow() : map.getBearing(), ...(p ? { ...planeCamera(p), zoom: fitZoom(key, p, pad) } : {}) };
-    if (!animate) { easeId++; easing = false; map.jumpTo(target); return; }
-    easeCam(target, 700);
+    frameGoal(key);
+    if (animate) transition(VIEW_MS); else moving = null;
   }
-  // El usuario gira, inclina o acerca: el encuadre elegido pasa a ser ese (sigue siguiendo); si arrastra el mapa, deja de seguir.
-  const onStart = e => { if (e?.originalEvent) interacting = true; };
-  const onEnd = e => {
-    if (!e?.originalEvent && !interacting) return;
-    interacting = false;
-    autoFrame = false;
-    if (shownHeading !== null) offset = wrap(map.getBearing() - shownHeading);
-    followFrame();
-  };
-  // Arrastrar con un dedo (o el ratón) mueve el mapa fuera del avión: deja de seguir. Con dos dedos (girar, inclinar o
-  // pellizcar) el centro puede desplazarse un poco: al acabar, el seguimiento lo vuelve a poner en el avión.
+  // Fin de un gesto: el encuadre elegido pasa a ser ese (si no ha cambiado nada, era un toque y no se pierde la vista).
+  function adoptGesture() {
+    const was = nowCam();
+    if (Math.abs(was.zoom - goal.zoom) > 0.01 || Math.abs(was.pitch - goal.pitch) > 0.1 || Math.abs(wrap(was.bearing - (follow ? (camHeading ?? 0) + goal.offset : goal.bearing))) > 0.1) autoFrame = false;
+    goal.zoom = was.zoom; goal.pitch = was.pitch; goal.bearing = was.bearing;
+    if (camHeading !== null) goal.offset = wrap(was.bearing - camHeading);
+  }
+  // Un gesto en curso: desde que un dedo toca el mapa hasta que acaba su inercia. map.jumpTo aquí sería cortarlo: llama a
+  // stop() y reinicia los manejadores de gestos de MapLibre (por eso el mapa «peleaba» con el dedo). Solo se lleva el
+  // centro con el avión, directo sobre la transformación y sin tocar ni el giro, ni la inclinación, ni el zoom del usuario.
+  const pointers = new Set();
+  let wasManual = false;
+  const manualNow = () => pointers.size > 0 || Boolean(map.isMoving?.());
+  function trackDirect(p) {
+    const tr = map._camera?.transform; // privado en MapLibre 6 (js/vendor/maplibre, copia fija); sin él, adoptGesture lo arregla
+    if (!tr?.setCenter || !tr.setElevation) return;
+    const c = planeCamera(p);
+    tr.setCenter(new ml.LngLat(c.center[0], c.center[1]));
+    tr.setElevation(c.elevation);
+  }
+  function cameraStep(t, p) {
+    if (manualNow()) {
+      wasManual = true; moving = null;
+      if (follow && p) { trackDirect(p); map.triggerRepaint(); }
+      return;
+    }
+    // Al acabar, la vuelta al avión (si hiciera falta) siempre con transición: nunca un salto.
+    if (wasManual) { wasManual = false; adoptGesture(); transition(RESUME_MS); }
+    const to = cameraTarget(p);
+    if (moving) {
+      // Lo que se mezcla es el desvío respecto al destino, no el punto de partida: el avión sigue volando (a tamaño real,
+      // cientos de píxeles en una transición) y, si ya se le seguía, no debe moverse en pantalla.
+      if (moving.t0 === null) { moving.t0 = t; moving.gap = [moving.from.center[0] - to.center[0], moving.from.center[1] - to.center[1], moving.from.elevation - to.elevation]; }
+      const k = Math.min(1, (t - moving.t0) / moving.dur), { gap } = moving;
+      map.jumpTo(k >= 1 ? to : blendCamera({ ...moving.from, center: [to.center[0] + gap[0], to.center[1] + gap[1]], elevation: to.elevation + gap[2] }, to, k));
+      if (k >= 1) moving = null;
+      return;
+    }
+    const c = map.getCenter();
+    if (c.lng === to.center[0] && c.lat === to.center[1] && map.getZoom() === to.zoom && map.getPitch() === to.pitch && Math.abs(wrap(map.getBearing() - to.bearing)) < 1e-3) return;
+    map.jumpTo(to);
+  }
+  // Un dedo o el ratón arrastran el mapa fuera del avión: deja de seguir y se queda donde lo dejen.
   const onDrag = e => { const oe = e?.originalEvent; if (oe && !(oe.touches?.length > 1)) setFollow(false); };
-  map.on('movestart', onStart); map.on('moveend', onEnd); map.on('dragstart', onDrag);
+  map.on('dragstart', onDrag);
 
   // Un dedo con la vista casi horizontal (80° o más, p. ej. «Lado»): MapLibre arrastra sobre el plano del centro de la
   // cámara, que aquí es la altura del avión y se ve de canto: no movería nada (medido a 90°). Se mueve la cámara aquí, a
@@ -475,7 +647,6 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
   const syncPan = () => { if (map.getPitch() >= HIGH_PITCH) map.dragPan?.disable?.(); else map.dragPan?.enable?.(); };
   map.on('pitch', syncPan);
   syncPan();
-  const pointers = new Set();
   let pan = null;
   const onDown = e => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -497,84 +668,82 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
   const onUp = e => { pointers.delete(e.pointerId); if (pan?.id === e.pointerId) pan = null; };
   box?.addEventListener('pointerdown', onDown);
   box?.addEventListener('pointermove', onMove);
-  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) box?.addEventListener(ev, onUp);
+  // En la ventana: un dedo o el ratón que se sueltan fuera del mapa también acaban el gesto.
+  for (const ev of ['pointerup', 'pointercancel']) globalThis.addEventListener?.(ev, onUp);
 
-  let goal = null, goalTimer = null;
   panel.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    // Pulsaciones seguidas: cada una parte del destino de la anterior (no de un punto a mitad de animación).
-    const at = goal ?? { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
+    const cam = b.dataset.cam;
     if (b.dataset.view) applyView(b.dataset.view);
-    else if (b.dataset.cam === 'reset') applyView(view);
-    else if (b.dataset.cam === 'follow') { if (follow) setFollow(false); else applyView(view); }
-    else if (b.dataset.cam === 'in' || b.dataset.cam === 'out') {
-      autoFrame = false;
-      goal = { ...at, zoom: Math.min(22, Math.max(2, at.zoom + (b.dataset.cam === 'in' ? 1 : -1))) };
-      easeAround({ zoom: goal.zoom });
-    } else if (b.dataset.cam === 'tilt-side' || b.dataset.cam === 'tilt-top') {
-      autoFrame = false;
-      goal = { ...at, pitch: Math.min(MAX_PITCH, Math.max(0, at.pitch + (b.dataset.cam === 'tilt-side' ? TILT_STEP : -TILT_STEP))) };
-      easeAround({ pitch: goal.pitch });
-    } else if (b.dataset.cam === 'left' || b.dataset.cam === 'right') {
-      const d = b.dataset.cam === 'left' ? -30 : 30;
-      goal = { ...at, bearing: at.bearing + d };
-      offset = wrap(offset + d);
-      easeAround({ bearing: goal.bearing });
+    else if (cam === 'reset') applyView(view);
+    else if (cam === 'more') {
+      const more = $('.map3d-more');
+      more.hidden = !more.hidden;
+      b.setAttribute('aria-expanded', String(!more.hidden));
+    } else if (cam === 'follow') {
+      if (follow) setFollow(false);
+      else { setFollow(true); if (autoFrame) frameGoal(view); transition(RESUME_MS); } // con el encuadre que tuviera
+    } else {
+      // Pulsaciones seguidas: cada una parte del destino de la anterior (no de un punto a mitad de transición).
+      if (cam === 'in' || cam === 'out') { autoFrame = false; goal.zoom = Math.min(22, Math.max(2, goal.zoom + (cam === 'in' ? 1 : -1))); }
+      else if (cam === 'tilt-side' || cam === 'tilt-top') { autoFrame = false; goal.pitch = Math.min(MAX_PITCH, Math.max(0, goal.pitch + (cam === 'tilt-side' ? TILT_STEP : -TILT_STEP))); }
+      else if (cam === 'left' || cam === 'right') { const d = cam === 'left' ? -30 : 30; goal.offset = wrap(goal.offset + d); goal.bearing += d; }
+      else return;
+      transition(BUTTON_MS);
     }
-    if (!b.dataset.cam?.match(/^(in|out|tilt-side|tilt-top|left|right)$/)) goal = null;
-    clearTimeout(goalTimer);
-    goalTimer = setTimeout(() => { goal = null; }, 400);
   });
 
-  // ---- Giro suave hacia la dirección nueva (solo presentación; la dirección es siempre la medida) ----
-  function tick(t) {
-    frame = null;
+  // ---- El bucle: avión, giro y cámara, en este orden y en el mismo fotograma ----
+  let lastDrawn = null;
+  function loop(t) {
+    frameId = clock.raf(loop);
     const dt = lastT === null ? 16 : Math.min(100, t - lastT);
     lastT = t;
-    if (targetHeading === null) return;
-    if (shownHeading === null || reduced) shownHeading = targetHeading;
+    advance?.();
+    const p = state().plane;
+    if (!p && follow) setFollow(false);
+    const h = p && Number.isFinite(p.heading) ? p.heading : null;
+    if (h === null) shownHeading = camHeading = null;
+    else if (shownHeading === null || reduced) shownHeading = camHeading = h;
     else {
-      const d = wrap(targetHeading - shownHeading), stepDeg = TURN_DEG_S * dt / 1000;
-      shownHeading = Math.abs(d) <= stepDeg ? targetHeading : shownHeading + Math.sign(d) * stepDeg;
+      shownHeading = smoothAngle(shownHeading, h, dt, PLANE_TURN_TAU_MS);
+      camHeading = smoothAngle(camHeading, h, dt, CAMERA_TURN_TAU_MS);
     }
-    followFrame();
-    map.triggerRepaint();
-    if (shownHeading !== targetHeading) frame = clock.raf(tick);
-    else lastT = null;
+    cameraStep(t, p);
+    syncLineWidths(p);
+    // Sin nada que se mueva, MapLibre no vuelve a dibujar (ahorra batería).
+    const key = p ? `${p.lat},${p.lon},${p.alt},${shownHeading}` : 'none';
+    if (key !== lastDrawn) { lastDrawn = key; map.triggerRepaint(); }
+  }
+  // Ancho de las líneas del suelo: depende de a qué altura está la cámara y del alto del mapa. Se recalcula solo cuando
+  // esa referencia cambia de verdad (un 15 %): subir y bajar es lento y no hace falta en cada fotograma.
+  let widthAlt = null, widthH = null;
+  function syncLineWidths(p) {
+    if (!context.over.length) return;
+    const elevation = map.getCenterElevation?.() ?? (p ? planeCamera(p).elevation : 0), H = map.getContainer().clientHeight || 400;
+    const alt = Math.max(1, elevation);
+    if (widthAlt !== null && widthH === H && Math.abs(alt - widthAlt) / widthAlt < 0.15) return;
+    widthAlt = alt; widthH = H;
+    // zc: el zoom con el que la cámara está tan lejos del centro como el centro del suelo (mirando en ~35° de media).
+    const lat = (p?.lat ?? map.getCenter().lat) * RAD;
+    const zc = alt < 50 ? NaN : Math.log2((1.5 * H * EARTH_M * Math.cos(lat)) / (512 * alt * 1.25));
+    for (const [id, l] of Object.entries(LINE_STYLES)) if (map.getLayer?.(id)) map.setPaintProperty(id, 'line-width', groundWidthStops(l.px, zc));
   }
 
-  // ---- Etiqueta: modelo y decoración, antigüedad de la posición y tamaño ----
   function info(ident = lastIdent) {
     if (!res) return;
     $('.map3d-model').textContent = aircraftLabel(res, ident, spec?.name ?? '');
     hero.dataset.aircraft3d = res.level;
   }
-  function ageText() {
-    const p = state().plane;
-    if (!p) return 'Sin posición reciente del avión';
-    const ageS = Number.isFinite(p.obsMono) ? Math.max(0, Math.round((monoNow() - p.obsMono) / 1000)) : null;
-    const age = ageS === null ? 'Posición real' : ageS < 60 ? `Posición real de hace ${ageS} s` : `Posición real de hace ${Math.floor(ageS / 60)} min ${ageS % 60} s`;
-    return `${age}${lastScale > 1.5 ? ` · tamaño ×${Math.round(lastScale)}` : ''}`;
-  }
-  const showAge = () => {
-    const t = ageText();
-    if ($('.map3d-age').textContent !== t) $('.map3d-age').textContent = t;
-    $('.map3d-note').hidden = !state().plane;
-  };
-  const ageTimer = setInterval(showAge, 1000);
 
   let lastIdent = null;
+  // Datos nuevos desde js/map.js (una lectura, la estela o el avión identificado); el movimiento lo lleva el bucle.
   function update({ trail: trailChanged = false } = {}) {
     const s = state();
     const key = JSON.stringify(s.aircraft ?? null);
     if (key !== identKey) { identKey = key; lastIdent = s.aircraft; loadAircraft(s.aircraft).catch(() => {}); }
     if (trailChanged) trailDirty = true;
-    const h = s.plane && Number.isFinite(s.plane.heading) ? s.plane.heading : null;
-    if (h !== targetHeading) { targetHeading = h; if (h === null) shownHeading = null; else if (frame === null) frame = clock.raf(tick); }
-    if (!s.plane && follow) setFollow(false);
-    showAge();
-    followFrame();
     map.triggerRepaint();
   }
 
@@ -584,12 +753,14 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
   }
   // Primera vista: diagonal siguiendo al avión; sin avión (aterrizado), la estela inclinada donde estaba la vista.
   update({ trail: true });
-  if (state().plane) applyView('diagonal');
+  if (state().plane) { applyView('diagonal'); if (moving) moving.dur = ENTER_MS; }
   else {
     setFollow(false);
     for (const b of panel.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', 'false');
-    map.easeTo({ pitch: 60, duration: reduced ? 0 : 600 });
+    goal.pitch = 60;
+    transition(ENTER_MS / 2);
   }
+  frameId = clock.raf(loop);
 
   return {
     update,
@@ -597,18 +768,19 @@ export async function enable3d({ map, ml, hero, state, clock = { raf: cb => requ
     setExpanded() {
       if (autoFrame && follow) { applyView(view, { animate: false }); return; }
       const { top, bottom } = framePadding();
-      map.setPadding?.({ top, bottom, left: 0, right: 0 });
+      goal.padding = { top, bottom, left: 0, right: 0 };
+      map.setPadding?.(goal.padding);
     },
     // Vuelta al 2D: fuera la capa, los recursos de WebGL, los controles y los gestos de giro; la vista 2D de antes.
     destroy({ restore = true } = {}) {
       loadToken++;
-      if (frame !== null) clock.caf(frame);
-      clearInterval(ageTimer);
-      clearTimeout(goalTimer);
-      map.off?.('movestart', onStart); map.off?.('moveend', onEnd); map.off?.('dragstart', onDrag); map.off?.('pitch', syncPan);
+      if (frameId !== null) clock.caf(frameId);
+      frameId = null;
+      removeLabelPatch?.();
+      map.off?.('dragstart', onDrag); map.off?.('pitch', syncPan);
       box?.removeEventListener('pointerdown', onDown);
       box?.removeEventListener('pointermove', onMove);
-      for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) box?.removeEventListener(ev, onUp);
+      for (const ev of ['pointerup', 'pointercancel']) globalThis.removeEventListener?.(ev, onUp);
       if (box) box.style.touchAction = prevTouch;
       map.dragPan?.enable?.();
       teardown();
