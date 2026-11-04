@@ -133,9 +133,13 @@ export function contextLayers({ zc = NaN, overlap = false } = {}) {
     // De menos a más importante: lo último se coloca primero y se queda el sitio. Lo que dice por dónde se pasa, por delante.
     label('map3d-water-name', 'water_name', ['all', ['==', ['geometry-type'], 'Point'], ['>=', ['zoom'], 4]], 13, 'Noto Sans Italic', {}, '#45708f'),
     label('map3d-country', 'place', ['all', ['==', ['get', 'class'], 'country'], ['>=', ['zoom'], 4]], 14, 'Noto Sans Bold', { 'text-transform': 'uppercase', 'text-letter-spacing': 0.12 }, '#5b5468'),
-    // Solo aeropuertos con código IATA: los aeródromos se llaman a menudo como su pueblo («Yecla» salía dos veces, a 3 km).
-    label('map3d-airport', 'aerodrome_label', ['all', ['>=', ['zoom'], 10], ['has', 'iata'], ['!=', ['get', 'iata'], '']], 11.5, 'Noto Sans Regular', {}, '#4b5563'),
     label('map3d-town', 'place', placeIs('town', 7), 13, 'Noto Sans Regular'),
+    // Aeropuertos: solo con código IATA (los aeródromos se llaman a menudo como su pueblo: «Yecla» salía dos veces, a 3 km) y solo
+    // el código: «MAD» cabe junto a «Madrid», y el nombre completo perdía la colisión contra su ciudad. Por delante de las
+    // poblaciones, por detrás de las ciudades, y a un lado o a otro de su punto si hace falta: conviven, sin forzar solapes (forzarlos
+    // se saltaría también labelCutoff). Sin filtro de nivel alto: a 40-60 km su tesela es de nivel 9.
+    label('map3d-airport', 'aerodrome_label', ['all', ['>=', ['zoom'], 7], ['has', 'iata'], ['!=', ['get', 'iata'], '']], 13.5, 'Noto Sans Bold',
+      { 'text-field': ['get', 'iata'], 'text-letter-spacing': 0.04, 'text-padding': 2, 'text-variable-anchor': ['top', 'bottom', 'left', 'right'], 'text-radial-offset': 0.4 }, '#2c5f8f'),
     label('map3d-city', 'place', placeIs('city', 5, false), 16, 'Noto Sans Bold', force),
     label('map3d-capital', 'place', placeIs('city', 4, true), 18, 'Noto Sans Bold', force),
   ];

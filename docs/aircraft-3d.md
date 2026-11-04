@@ -134,8 +134,11 @@ Con la cámara a unos 100 m del avión y el suelo a ~11 km, MapLibre mide todo e
   Alicante. Es una propiedad privada de la copia fija de MapLibre 6.11.2: **al actualizar MapLibre, comprobarla**. Si falta, las
   ciudades se fuerzan con `text-allow-overlap`. Esa escala también las pinta a la mitad: de ahí el doble de tamaño de cerca. Un
   filtro por nivel de tesela solo quita lo que traen las de nivel muy bajo.
-- **Prioridad**: capitales, ciudades, poblaciones y aeropuertos se colocan antes que países y mares. De aeródromos, solo los que
-  tienen código IATA: los demás se llaman a menudo como su pueblo («Yecla», población y aeródromo a 3 km).
+- **Prioridad** (la primera se coloca antes): capitales, ciudades, aeropuertos con IATA, poblaciones, países y mares.
+- **Aeropuertos**: solo los que tienen código IATA (los demás se llaman a menudo como su pueblo: «Yecla», población y aeródromo a
+  3 km) y solo el código (`MAD`): el nombre completo perdía la colisión contra su ciudad. Pueden ponerse a un lado de su punto para
+  convivir con ella, sin forzar solapes (`text-allow-overlap` se saltaría también el corte de distancia). Sin filtro de nivel alto:
+  a 40-60 km su tesela es de nivel 9. OpenMapTiles no trae todos en todos los niveles (BCN no viene en su tesela de nivel 9).
 - **Líneas**: un ancho de N px en el plano del avión se ve ~100 veces más fino en el suelo. Las capas `map3d-*` compensan esa
   escala con una función exponencial del zoom (`groundWidthStops`), recalculada solo si cambia la altitud un 15 %.
 - **Capas del 3D** (`contextLayers`, de la misma fuente `openmaptiles`): agua y costa con más contraste, vegetación y zonas

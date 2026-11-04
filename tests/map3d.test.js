@@ -331,13 +331,29 @@ describe('modo 3D: contexto geográfico y rendimiento', () => {
     expect(placed(labelCutoff({ ...cruise, elevation: 1000 }), 55000, cameraM)).toBe(true);
     expect(labelCutoff({ ...cruise, zoom: 6 })).toBeCloseTo(0.6, 5);
     const order = contextLayers().over.filter(l => l.type === 'symbol').map(l => l.id); // la última se coloca primero
-    expect(order).toEqual(['map3d-water-name', 'map3d-country', 'map3d-airport', 'map3d-town', 'map3d-city', 'map3d-capital']);
+    expect(order).toEqual(['map3d-water-name', 'map3d-country', 'map3d-town', 'map3d-airport', 'map3d-city', 'map3d-capital']);
   });
 
-  it('sin el duplicado de «Yecla»: de aeródromos, solo los que tienen código IATA', () => {
-    const filter = JSON.stringify(contextLayers().over.find(l => l.id === 'map3d-airport').filter);
-    expect(filter).toContain('["has","iata"]');
-    expect(filter).toContain('["!=",["get","iata"],""]');
+  it('aeropuertos: solo con IATA (sin el «Yecla» doble), con su código, también a 40-60 km y sin forzar solapes ni quitar la ciudad', () => {
+    const { over } = contextLayers();
+    const airport = over.find(l => l.id === 'map3d-airport');
+    // El filtro, evaluado como MapLibre: props de la entidad y zoom = nivel de la tesela.
+    const passes = (e, props, zoom) => {
+      const [op, a, b] = e, v = x => (Array.isArray(x) ? (x[0] === 'zoom' ? zoom : x[0] === 'get' ? props[x[1]] : x) : x);
+      if (op === 'all') return e.slice(1).every(x => passes(x, props, zoom));
+      if (op === 'has') return a in props;
+      return op === '>=' ? v(a) >= v(b) : op === '!=' ? v(a) !== v(b) : v(a) === v(b);
+    };
+    expect(passes(airport.filter, { iata: 'MAD', class: 'international' }, 9)).toBe(true); // a 46 km, su tesela es de nivel 9
+    expect(passes(airport.filter, { class: 'other' }, 14)).toBe(false); // el aeródromo «Yecla»
+    expect(passes(airport.filter, { iata: '', class: 'other' }, 14)).toBe(false);
+    expect(airport.layout['text-field']).toEqual(['get', 'iata']);
+    expect(airport.layout['text-allow-overlap']).toBeUndefined(); // forzarlo se saltaría también labelCutoff
+    expect(airport.layout['text-variable-anchor'].length).toBeGreaterThan(1); // puede ponerse a un lado de su ciudad
+    const at = id => over.findIndex(l => l.id === id); // la última capa se coloca primero
+    expect(at('map3d-airport')).toBeGreaterThan(at('map3d-town')); // gana a las poblaciones…
+    expect(at('map3d-airport')).toBeLessThan(at('map3d-city')); // …y no le quita el sitio a la ciudad
+    expect(at('map3d-airport')).toBeLessThan(at('map3d-capital'));
   });
 
   it('cortina de la estela: más ligera que la cinta, tenue hacia el suelo y sin cambiar ni un punto de la estela', () => {
