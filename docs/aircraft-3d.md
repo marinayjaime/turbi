@@ -114,6 +114,9 @@ escribe nada: el modelo y la operadora están en la ficha; este texto solo llega
   que es lo que da la sensación de cámara siguiendo a un objeto. El suelo, a 11 km, se mueve unos 30 px/s.
 - **Transiciones** (perspectivas, volver a seguir, botones): un solo mecanismo que mezcla el desvío respecto al destino vivo,
   con el zoom y la inclinación en línea recta, y el rumbo por el camino corto.
+- **Un control pulsado gana siempre** (`endGesture`): para la inercia y los manejadores (`map.stop()`), recoge el encuadre del
+  gesto en ese momento y solo entonces aplica el control, sin esperas. Si se dejara al bucle, primero anularía la transición por
+  creer que sigue el gesto y luego pisaría el destino pedido con el encuadre del gesto.
 - **Gestos**: mientras haya un dedo en el mapa o dure la inercia no se llama a `map.jumpTo`, porque llama a `stop()` y reinicia
   los manejadores de gestos de MapLibre (con el seguimiento activo el dedo no llegaba a mover el mapa). El gesto se aplica sin
   suavizado y, si se sigue al avión, solo el centro lo acompaña, directo sobre `map._camera.transform` (privado: comprobarlo al
@@ -126,10 +129,13 @@ Con la cámara a unos 100 m del avión y el suelo a ~11 km, MapLibre mide todo e
 
 - **Etiquetas**: no desaparecían por `maxzoom` (`label_city` y `label_town` no lo tienen; `label_state` y `label_country_*`
   sí, 8 y 9). `CollisionIndex` descarta toda etiqueta con factor de perspectiva `0,5 + 0,5 · (cámara-centro / cámara-etiqueta)`
-  menor que 0,6, y aquí vale ~0,504. Mientras dure el 3D ese corte queda en 0 (`keepDistantLabels`; propiedad privada de la
-  copia fija de MapLibre 6.11.2: **al actualizar MapLibre, comprobarla**. Si falta, las ciudades se fuerzan con
-  `text-allow-overlap`). Esa escala también las pinta a la mitad: de ahí el doble de tamaño de cerca. Un filtro por nivel de
-  tesela evita que París u Oslo se amontonen en el horizonte desde Valencia.
+  menor que 0,6, y aquí vale ~0,504. Mientras dure el 3D ese corte se usa como distancia máxima a la cámara (`keepDistantLabels`,
+  `labelCutoff`: 12 veces la altitud, entre 60 y 140 km): sin él salían Lisboa o Rabat, a más de 700 km, en el horizonte de
+  Alicante. Es una propiedad privada de la copia fija de MapLibre 6.11.2: **al actualizar MapLibre, comprobarla**. Si falta, las
+  ciudades se fuerzan con `text-allow-overlap`. Esa escala también las pinta a la mitad: de ahí el doble de tamaño de cerca. Un
+  filtro por nivel de tesela solo quita lo que traen las de nivel muy bajo.
+- **Prioridad**: capitales, ciudades, poblaciones y aeropuertos se colocan antes que países y mares. De aeródromos, solo los que
+  tienen código IATA: los demás se llaman a menudo como su pueblo («Yecla», población y aeródromo a 3 km).
 - **Líneas**: un ancho de N px en el plano del avión se ve ~100 veces más fino en el suelo. Las capas `map3d-*` compensan esa
   escala con una función exponencial del zoom (`groundWidthStops`), recalculada solo si cambia la altitud un 15 %.
 - **Capas del 3D** (`contextLayers`, de la misma fuente `openmaptiles`): agua y costa con más contraste, vegetación y zonas
@@ -142,8 +148,9 @@ Con la cámara a unos 100 m del avión y el suelo a ~11 km, MapLibre mide todo e
   (`landuse`) sí se ven.
 - **Horizonte**: la niebla de MapLibre no tiñe un suelo plano, así que la capa pinta una banda de neblina (`drawHaze`) encima
   del suelo y debajo del avión; sin ella el terreno acaba en una línea dura contra el cielo.
-- **Cortina de la estela**: más tenue que antes (0,09 arriba) porque pasa a pocos metros de la cámara y cubría media vista con
-  un velo de un solo color; la cinta, a su altura, no cambia.
+- **Cortina de la estela**: tenue (0,055 arriba y 0,015 en el suelo) porque pasa a pocos metros de la cámara y cubriría media vista
+  con un velo de un solo color. Además se desvanece hacia el avión (`u_tipFade`, en distancia de cámara), para no acabar en una pared bajo él. Es solo
+  presentación: los puntos y altitudes son los mismos. La cinta, a su altura, no cambia.
 
 ### Límites reales del motor (MapLibre GL JS 6.11.2), medidos
 

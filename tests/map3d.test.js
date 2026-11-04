@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createRouteMap, PLANE_GLIDE_MS } from '../js/map.js';
-import { contextLayers, keepDistantLabels, groundWidthStops, smoothAngle, blendCamera, horizonClipY } from '../js/map3d.js';
+import { contextLayers, keepDistantLabels, labelCutoff, groundWidthStops, smoothAngle, blendCamera, horizonClipY, trailGeometry, VIEWS } from '../js/map3d.js';
 import { fakeMapLibre } from './fixtures/fake-maplibre.js';
 
 const OPTS = { origin: { iata: 'AAA', lat: 39, lon: 0 }, destination: { iata: 'BBB', lat: 42, lon: 3 }, route: [{ lat: 39, lon: 0 }, { lat: 42, lon: 3 }] };
@@ -55,6 +55,7 @@ function fake3dMap(Base) {
     setPadding(p) { this.padding = p; }
     getCenterElevation() { return this.elevation; }
     isMoving() { return this.moving; }
+    stop() { this.moving = false; this.stops = (this.stops ?? 0) + 1; }
     triggerRepaint() {}
     jumpTo(v) {
       this.jumps.push(v);
@@ -222,6 +223,69 @@ describe('modo 3D: la cámara no pelea con el gesto', () => {
   });
 });
 
+describe('modo 3D: un control pulsado gana al gesto anterior', () => {
+  const twoFingers = () => { point('pointerdown', 1); point('pointerdown', 2); tick(); map.bearing = wrap(map.bearing + 40); map.pitch = 50; map.zoom = 16; };
+  const release = () => { point('pointerup', 1, window); point('pointerup', 2, window); };
+  const pressed = () => [...hero.querySelectorAll('[data-view][aria-pressed="true"]')].map(b => b.dataset.view);
+  const settle = () => { for (let i = 0; i < 80; i++) tick(); };
+
+  // Los tres momentos reales: con la inercia en marcha, recién soltado (aún sin ningún fotograma) y un dedo aún en el mapa.
+  it.each(Object.keys(VIEWS).flatMap(v => [[v, 'inercia'], [v, 'recién soltado'], [v, 'dedo puesto']]))('%s, pulsado tras dos dedos (%s): al primer toque y sin espera', async (view, when) => {
+    await setup3d();
+    press('[data-view="side"]'); settle(); // que ninguna de las cuatro sea ya la vista actual
+    press('[data-view="diagonal"]'); settle();
+    twoFingers();
+    if (when !== 'dedo puesto') release();
+    if (when === 'inercia') { map.moving = true; tick(); }
+    press(`[data-view="${view}"]`);
+    expect(map.moving).toBe(false); // la inercia, cerrada
+    // Un moveend atrasado del gesto no devuelve la cámara a donde estaba.
+    map.fire('moveend', { originalEvent: {} });
+    settle();
+    expect(map.pitch).toBe(VIEWS[view].pitch);
+    expect(pressed()).toEqual([view]);
+    expect(followOn()).toBe(true);
+    // Sin más gestos, se queda ahí (nada lo recoge después).
+    const z = map.zoom; settle();
+    expect([map.pitch, map.zoom]).toEqual([VIEWS[view].pitch, z]);
+  });
+
+  it('dos pulsaciones rápidas: gana la última; y con prefers-reduced-motion, directo y también al primer toque', async () => {
+    await setup3d();
+    twoFingers(); release();
+    press('[data-view="top"]'); tick();
+    press('[data-view="side"]');
+    settle();
+    expect(map.pitch).toBe(90);
+    expect(pressed()).toEqual(['side']);
+    vi.unstubAllGlobals();
+    vi.stubGlobal('WebGL2RenderingContext', class {}); vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
+    reduced = true; vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    await setup3d();
+    twoFingers(); release(); map.moving = true;
+    press('[data-view="top"]');
+    tick();
+    expect(map.pitch).toBe(0);
+    expect(pressed()).toEqual(['top']);
+  });
+
+  it('los botones de zoom parten de lo que dejó el gesto; y sin pulsar nada, soltar no salta ni pierde el seguimiento', async () => {
+    await setup3d();
+    twoFingers(); release(); map.moving = true;
+    press('[data-cam="in"]');
+    settle();
+    expect(map.zoom).toBe(17); // 16 del gesto + 1, no el zoom de antes
+    expect(map.pitch).toBe(50);
+    // El gesto normal: no se llama a stop() y su inercia acaba por sí sola.
+    const stops = map.stops;
+    twoFingers(); const chosen = map.bearing; release();
+    map.moving = true; tick(); tick(); map.moving = false; tick();
+    expect(map.stops).toBe(stops);
+    expect(Math.abs(wrap(map.bearing - chosen))).toBeLessThan(0.5);
+    expect([map.pitch, map.zoom, followOn()]).toEqual([50, 16, true]);
+  });
+});
+
 describe('modo 3D: contexto geográfico y rendimiento', () => {
   it('ciudades, costa, fronteras y carreteras a los zooms de la cámara 3D; sin calles, comercios ni otras fuentes', () => {
     const { under, over } = contextLayers({ zc: 7 });
@@ -241,6 +305,54 @@ describe('modo 3D: contexto geográfico y rendimiento', () => {
     expect(w.slice(0, 3)).toEqual(['interpolate', ['exponential', 2], ['zoom']]);
     expect(w.at(-1)).toBeCloseTo(1 + 2 ** 17, 5);
     expect(groundWidthStops(1, NaN)).toBe(1);
+  });
+
+  it('carreteras: autopistas y principales reforzadas, sin ramales ni vías menores', () => {
+    const { over } = contextLayers({ zc: 7 });
+    const motorway = over.find(l => l.id === 'map3d-road-motorway'), major = over.find(l => l.id === 'map3d-road-major');
+    expect(motorway.paint['line-width'][4]).toBe(3);
+    expect(major.paint['line-width'][4]).toBeCloseTo(1.7);
+    expect(motorway.paint['line-width'][4]).toBeGreaterThan(major.paint['line-width'][4]);
+    for (const l of [motorway, major]) expect(JSON.stringify(l.filter)).toContain('"ramp"');
+    expect(JSON.stringify(over.filter(l => l['source-layer'] === 'transportation').map(l => l.filter))).not.toMatch(/secondary|tertiary|minor|service|track|path/);
+  });
+
+  it('etiquetas: las lejanas no se colocan (Lisboa desde Alicante), las cercanas sí, y lo que dice por dónde se pasa va primero', () => {
+    const placed = (cut, depthM, cameraM) => 0.5 + 0.5 * (cameraM / depthM) >= cut; // lo que comprueba MapLibre
+    // A 11 km, con la cámara de cerca: a 455 m del avión a zoom ≈ 18,2 en un móvil.
+    const cruise = { zoom: 18.2, lat: 38.5, height: 844, elevation: 11000 };
+    const cameraM = (1.5 * 844 * 40075016.686 * Math.cos(38.5 * Math.PI / 180)) / (512 * 2 ** 18.2);
+    const cut = labelCutoff(cruise);
+    expect(placed(cut, 72000, cameraM)).toBe(true); // Albacete
+    expect(placed(cut, 130000, cameraM)).toBe(true);
+    expect(placed(cut, 282000, cameraM)).toBe(false); // Jaén
+    expect(placed(cut, 700000, cameraM)).toBe(false); // Lisboa
+    // Baja altitud: al menos 60 km. Mapa alejado: nunca más estricto que los 0,6 de MapLibre.
+    expect(placed(labelCutoff({ ...cruise, elevation: 1000 }), 55000, cameraM)).toBe(true);
+    expect(labelCutoff({ ...cruise, zoom: 6 })).toBeCloseTo(0.6, 5);
+    const order = contextLayers().over.filter(l => l.type === 'symbol').map(l => l.id); // la última se coloca primero
+    expect(order).toEqual(['map3d-water-name', 'map3d-country', 'map3d-airport', 'map3d-town', 'map3d-city', 'map3d-capital']);
+  });
+
+  it('sin el duplicado de «Yecla»: de aeródromos, solo los que tienen código IATA', () => {
+    const filter = JSON.stringify(contextLayers().over.find(l => l.id === 'map3d-airport').filter);
+    expect(filter).toContain('["has","iata"]');
+    expect(filter).toContain('["!=",["get","iata"],""]');
+  });
+
+  it('cortina de la estela: más ligera que la cinta, tenue hacia el suelo y sin cambiar ni un punto de la estela', () => {
+    const project = (lon, lat, z) => ({ x: lon, y: lat, z });
+    const pts = [[10, 20, 30000], [10.5, 20.5, 31000]];
+    const { ribbon, curtain } = trailGeometry(pts, project);
+    expect(ribbon[8]).toBe(1); // alfa de la cinta (a su altura real)
+    expect(curtain[8]).toBeCloseTo(0.055); // arriba
+    expect(curtain[8 + 9]).toBeCloseTo(0.015); // en el suelo
+    expect(curtain[2]).toBeCloseTo(30000 * 0.3048, 3); // misma altitud real
+    expect(curtain[9 + 2]).toBe(0);
+    // Y se desvanece junto al avión (en el sombreador, sobre los mismos vértices).
+    const src = readFileSync('js/map3d.js', 'utf8');
+    expect(src).toContain('uniform float u_tipFade');
+    expect(src).toContain('smoothstep(0.0, 1.0, distance(v_xy, u_tip) / u_tipFade)');
   });
 
   it('las etiquetas lejanas no se descartan solo mientras dure el 3D (el corte vuelve al salir)', () => {
@@ -266,7 +378,8 @@ describe('modo 3D: contexto geográfico y rendimiento', () => {
     expect(map.paintP['background/background-opacity']).toBe(0); // la capa background, sin su cobertura de teselas
     expect(map.layout['label_city/visibility']).toBe('none');
     expect(map.layers.some(l => l.id === 'map3d-city')).toBe(true);
-    expect(new CollisionIndex().perspectiveRatioCutoff).toBe(0);
+    expect(new CollisionIndex().perspectiveRatioCutoff).toBeGreaterThan(0.5);
+    expect(new CollisionIndex().perspectiveRatioCutoff).toBeLessThan(0.6); // ya no descarta lo cercano
     await rm.setMode('2d');
     expect(map.layers.filter(l => !['route', 'track', 'track-halo'].includes(l.id))).toEqual(before);
     expect(map.layout['label_city/visibility']).toBeUndefined(); // como estaba: sin nada explícito

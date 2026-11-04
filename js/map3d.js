@@ -50,6 +50,9 @@ const EARTH_M = 40075016.686;
 const RAD = Math.PI / 180;
 // Encuadre de cada vista: el avión completo ocupa como mucho esta fracción del hueco libre (dejando ver el terreno).
 const FILL = 0.68;
+// La cortina de la estela llega a su opacidad a esta fracción de la distancia cámara-avión, detrás de él. Lo que tiñe la pantalla
+// es la parte que pasa junto a la cámara (a cientos de metros): medido en altitud, desaparecería entera.
+const CURTAIN_FADE_CAMERA = 0.3;
 
 // ---- Matrices 4×4 (columnas, como WebGL) ----
 const mat = () => { const m = new Float64Array(16); m[0] = m[5] = m[10] = m[15] = 1; return m; };
@@ -91,8 +94,9 @@ export function blendCamera(from, to, k) {
 // - Líneas: el ancho que se quiere ver en el suelo (px), compensado con esa escala. Sale del zoom con una función exponencial
 //   (crece ×2 por nivel desde zc, donde la cámara está tan lejos del centro como el suelo), sin recalcular nada por fotograma.
 // - Etiquetas: MapLibre las dibuja a la mitad de su tamaño a esta distancia (su factor de perspectiva tiende a 0,5), de ahí
-//   el doble de tamaño de cerca. El filtro con ['zoom'] mira el nivel de la tesela: las teselas lejanas, de nivel bajo,
-//   no aportan nombres; sin él, París y Oslo se amontonan en el horizonte vistos desde Valencia.
+//   el doble de tamaño de cerca. El filtro con ['zoom'] mira el nivel de la tesela: solo quita lo que traen las de nivel muy bajo
+//   (el corte por distancia, labelCutoff, es quien decide lo lejano; un filtro más alto dejaría sin nombre poblaciones cercanas
+//   en las vistas casi horizontales, donde las teselas son de nivel bajo).
 export function groundWidthStops(px, zc) {
   if (!Number.isFinite(zc)) return px;
   const z = Math.min(23, Math.max(1, zc));
@@ -102,8 +106,9 @@ const labelSize = base => ['interpolate', ['linear'], ['zoom'], 9, base, 14, bas
 const LINE_STYLES = {
   'map3d-river': { px: 1, color: '#aecbe0', layer: 'waterway', filter: ['in', ['get', 'class'], ['literal', ['river', 'canal']]] },
   'map3d-runway': { px: 1.4, color: '#a9adb3', layer: 'aeroway', filter: ['==', ['get', 'class'], 'runway'] },
-  'map3d-road-major': { px: 0.7, color: '#d8c7a6', layer: 'transportation', filter: ['in', ['get', 'class'], ['literal', ['trunk', 'primary']]] },
-  'map3d-road-motorway': { px: 1.3, color: '#d0a772', layer: 'transportation', filter: ['==', ['get', 'class'], 'motorway'] },
+  // Autopistas, autovías y carreteras principales, sin sus ramales (a esta escala solo son ruido en los enlaces).
+  'map3d-road-major': { px: 1.7, color: '#c4a56e', layer: 'transportation', filter: ['all', ['in', ['get', 'class'], ['literal', ['trunk', 'primary']]], ['!=', ['get', 'ramp'], 1]] },
+  'map3d-road-motorway': { px: 3, color: '#b67f3f', layer: 'transportation', filter: ['all', ['==', ['get', 'class'], 'motorway'], ['!=', ['get', 'ramp'], 1]] },
   'map3d-border-region': { px: 0.8, color: '#a39bb0', layer: 'boundary', dash: [3, 2], filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]] },
   'map3d-border-country': { px: 1.6, color: '#75688a', layer: 'boundary', dash: [4, 2], filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]] },
 };
@@ -125,25 +130,36 @@ export function contextLayers({ zc = NaN, overlap = false } = {}) {
   const over = [
     ...Object.entries(LINE_STYLES).map(([id, l]) => ({ id, type: 'line', source: 'openmaptiles', 'source-layer': l.layer, filter: l.filter,
       layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': l.color, 'line-width': groundWidthStops(l.px, zc), ...(l.dash ? { 'line-dasharray': l.dash } : {}) } })),
+    // De menos a más importante: lo último se coloca primero y se queda el sitio. Lo que dice por dónde se pasa, por delante.
     label('map3d-water-name', 'water_name', ['all', ['==', ['geometry-type'], 'Point'], ['>=', ['zoom'], 4]], 13, 'Noto Sans Italic', {}, '#45708f'),
-    label('map3d-airport', 'aerodrome_label', ['>=', ['zoom'], 10], 11.5, 'Noto Sans Regular', {}, '#4b5563'),
-    label('map3d-town', 'place', placeIs('town', 10), 13, 'Noto Sans Regular'),
-    label('map3d-city', 'place', placeIs('city', 7, false), 16, 'Noto Sans Bold', force),
-    label('map3d-capital', 'place', placeIs('city', 5, true), 18, 'Noto Sans Bold', force),
     label('map3d-country', 'place', ['all', ['==', ['get', 'class'], 'country'], ['>=', ['zoom'], 4]], 14, 'Noto Sans Bold', { 'text-transform': 'uppercase', 'text-letter-spacing': 0.12 }, '#5b5468'),
+    // Solo aeropuertos con código IATA: los aeródromos se llaman a menudo como su pueblo («Yecla» salía dos veces, a 3 km).
+    label('map3d-airport', 'aerodrome_label', ['all', ['>=', ['zoom'], 10], ['has', 'iata'], ['!=', ['get', 'iata'], '']], 11.5, 'Noto Sans Regular', {}, '#4b5563'),
+    label('map3d-town', 'place', placeIs('town', 7), 13, 'Noto Sans Regular'),
+    label('map3d-city', 'place', placeIs('city', 5, false), 16, 'Noto Sans Bold', force),
+    label('map3d-capital', 'place', placeIs('city', 4, true), 18, 'Noto Sans Bold', force),
   ];
   return { under, over };
 }
 // MapLibre descarta toda etiqueta con 0,5 + 0,5·(distancia cámara-centro / distancia cámara-etiqueta) < 0,6
 // (CollisionIndex.perspectiveRatioCutoff): con la cámara a 100 m del avión y el suelo a 11 km, todas. Da igual su maxzoom o
-// el sitio libre. Mientras dure el 3D, ese corte queda en 0 (no hay otra forma pública; MapLibre va en una copia fija,
+// el sitio libre. Mientras dure el 3D, el corte lo da cutoff() (no hay otra forma pública; MapLibre va en una copia fija,
 // js/vendor/maplibre). Devuelve cómo quitarlo, o null si esta versión ya no lo tiene: entonces las ciudades se fuerzan.
-export function keepDistantLabels(map) {
+export function keepDistantLabels(map, cutoff = () => 0) {
   const index = map.style?.placement?.collisionIndex;
   if (!index || !('perspectiveRatioCutoff' in index)) return null;
   const proto = Object.getPrototypeOf(index);
-  Object.defineProperty(proto, 'perspectiveRatioCutoff', { configurable: true, get: () => 0, set() {} });
+  Object.defineProperty(proto, 'perspectiveRatioCutoff', { configurable: true, get: cutoff, set() {} });
   return () => { delete proto.perspectiveRatioCutoff; };
+}
+// El mismo corte, usado como distancia: una etiqueta a más de maxM de la cámara no se coloca. Interesa lo que hay cerca del
+// avión: desde 11 km se ve hasta ~370 km, pero Lisboa o Rabat en el horizonte de Alicante no dicen por dónde se pasa. Se
+// adapta a la altitud (lo que se distingue a simple vista) entre 60 y 140 km. Al alejar la cámara (mapa visto de lejos)
+// nunca es más estricto que el de MapLibre, que equivale a 5 veces su distancia al centro.
+export function labelCutoff({ zoom, lat, height, elevation }) {
+  const cameraM = (1.5 * height * EARTH_M * Math.cos(lat * RAD)) / (512 * 2 ** zoom);
+  const maxM = Math.max(Math.min(140000, Math.max(60000, elevation * 12)), cameraM * 5);
+  return 0.5 + 0.5 * (cameraM / maxM);
 }
 // Dónde cae el horizonte de un suelo plano, en coordenadas de recorte (+1 arriba, −1 abajo). fov: el vertical de la cámara
 // (grados); centerY: el centro de la vista con el hueco del encuadre. > 1: por encima de la vista, sin banda.
@@ -170,10 +186,12 @@ void main() {
 }`;
 const LINE_VS = `#version 300 es
 in vec3 a_pos; in vec2 a_off; in vec4 a_col;
-uniform mat4 u_matrix; uniform float u_half; out vec4 v_col;
-void main() { v_col = a_col; gl_Position = u_matrix * vec4(a_pos.xy + a_off * u_half, a_pos.z, 1.0); }`;
+uniform mat4 u_matrix; uniform float u_half; out vec4 v_col; out vec2 v_xy;
+void main() { v_col = a_col; v_xy = a_pos.xy; gl_Position = u_matrix * vec4(a_pos.xy + a_off * u_half, a_pos.z, 1.0); }`;
 const LINE_FS = `#version 300 es
-precision mediump float; in vec4 v_col; uniform float u_fade; out vec4 color; void main() { color = v_col * u_fade; }`;
+precision highp float; in vec4 v_col; in vec2 v_xy; uniform float u_fade; uniform vec2 u_tip; uniform float u_tipFade; out vec4 color;
+// u_tipFade > 0: transparente en el avión (u_tip) y plena a esa distancia: la cortina no acaba en una pared bajo el avión.
+void main() { float k = u_tipFade > 0.0 ? smoothstep(0.0, 1.0, distance(v_xy, u_tip) / u_tipFade) : 1.0; color = v_col * u_fade * k; }`;
 
 const HAZE_VS = `#version 300 es
 out float v_y; void main() { vec2 p = vec2(float((gl_VertexID & 1) * 4 - 1), float((gl_VertexID & 2) * 2 - 1)); v_y = p.y; gl_Position = vec4(p, 0.0, 1.0); }`;
@@ -213,8 +231,9 @@ export function trailGeometry(pts, project, origin = null) {
     if (!(len > 0)) continue;
     const nx = -dy / len, ny = dx / len;
     const col = rgba(altitudeColor(b[2]), 1);
-    // Cortina tenue: la cámara va a pocos metros de ella y, si no, cubre media vista con un velo de un solo color.
-    const top = rgba(altitudeColor(b[2]), 0.09), low = rgba(altitudeColor(b[2]), 0.02);
+    // Cortina atmosférica: la cámara va a pocos metros de ella y, si no, cubre media vista con un velo de un solo color. Lo que
+    // se dibuja junto al avión, además, se desvanece (drawLines, u_tipFade): la cinta es la protagonista.
+    const top = rgba(altitudeColor(b[2]), 0.055), low = rgba(altitudeColor(b[2]), 0.015);
     const v = (p, ox, oy, c) => [p[0], p[1], p[2], ox, oy, ...c];
     ribbon.push(...v(A, nx, ny, col), ...v(A, -nx, -ny, col), ...v(B, -nx, -ny, col), ...v(A, nx, ny, col), ...v(B, -nx, -ny, col), ...v(B, nx, ny, col));
     const A0 = [A[0], A[1], 0], B0 = [B[0], B[1], 0];
@@ -354,7 +373,7 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
     gl.bindBuffer(gl.ARRAY_BUFFER, tipCurtainBuf); gl.bufferData(gl.ARRAY_BUFFER, t.curtain, gl.DYNAMIC_DRAW);
     return { origin, n: t.ribbon.length / 9 };
   }
-  const drawLines = (buf, n, mode, matrix, half, fade = 1) => {
+  const drawLines = (buf, n, mode, matrix, half, fade = 1, tip = null, tipFade = 0) => {
     gl.useProgram(lineProg);
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     const at = (name, size, off) => { const l = gl.getAttribLocation(lineProg, name); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, gl.FLOAT, false, 36, off); return l; };
@@ -362,6 +381,8 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
     gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'u_matrix'), false, Float32Array.from(matrix));
     gl.uniform1f(gl.getUniformLocation(lineProg, 'u_half'), half);
     gl.uniform1f(gl.getUniformLocation(lineProg, 'u_fade'), fade);
+    gl.uniform2f(gl.getUniformLocation(lineProg, 'u_tip'), tip?.[0] ?? 0, tip?.[1] ?? 0);
+    gl.uniform1f(gl.getUniformLocation(lineProg, 'u_tipFade'), tip ? tipFade : 0);
     gl.drawArrays(mode, 0, n);
     for (const l of ls) gl.disableVertexAttribArray(l);
   };
@@ -401,17 +422,21 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       drawHaze();
       const tip = tipTrail(s);
+      // La cortina se desvanece junto al avión: sin una pared que acabe de golpe bajo él.
+      const near = s.plane ? project(s.plane.lon, s.plane.lat, 0) : null;
+      const nearM = near ? CURTAIN_FADE_CAMERA * ((1.5 * (map.getContainer().clientHeight || 400)) / worldPx) : 0;
+      const nearOf = o => (near ? [near.x - o[0], near.y - o[1]] : null);
       if (trail.origin) {
         const m = mult(main, translate(trail.origin[0], trail.origin[1], 0));
         gl.depthMask(false);
-        if (trail.curtainN) drawLines(curtainBuf, trail.curtainN, gl.TRIANGLES, m, 0, curtainFade());
+        if (trail.curtainN) drawLines(curtainBuf, trail.curtainN, gl.TRIANGLES, m, 0, curtainFade(), nearOf(trail.origin), nearM);
         gl.depthMask(true);
         if (trail.ribbonN) drawLines(ribbonBuf, trail.ribbonN, gl.TRIANGLES, m, RIBBON_PX / worldPx);
       }
       if (tip) {
         const m = mult(main, translate(tip.origin[0], tip.origin[1], 0));
         gl.depthMask(false);
-        drawLines(tipCurtainBuf, tip.n, gl.TRIANGLES, m, 0, curtainFade());
+        drawLines(tipCurtainBuf, tip.n, gl.TRIANGLES, m, 0, curtainFade(), nearOf(tip.origin), nearM);
         gl.depthMask(true);
         drawLines(tipRibbonBuf, tip.n, gl.TRIANGLES, m, RIBBON_PX / worldPx);
       }
@@ -425,7 +450,7 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
         const h = shownHeading ?? 0;
         // Vertical del avión al suelo: ayuda a leer la altura (un trazo fino, del color neutro del 2D).
         dropBuf ??= gl.createBuffer();
-        const col = rgba('rgb(30, 40, 55)', 0.45);
+        const col = rgba('rgb(30, 40, 55)', 0.2);
         gl.bindBuffer(gl.ARRAY_BUFFER, dropBuf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, c.z, 0, 0, ...col, 0, 0, 0, 0, 0, ...col]), gl.DYNAMIC_DRAW);
         drawLines(dropBuf, 2, gl.LINES, mult(main, translate(c.x, c.y, 0)), 0);
@@ -471,7 +496,8 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
   const styleLayers = map.getStyle?.()?.layers ?? [];
   const backgrounds = styleLayers.filter(l => l.type === 'background').map(l => ({ id: l.id, opacity: map.getPaintProperty?.(l.id, 'background-opacity') }));
   const firstLayer = styleLayers.find(l => l.type !== 'background')?.id;
-  const removeLabelPatch = keepDistantLabels(map);
+  let cutoffNow = 0;
+  const removeLabelPatch = keepDistantLabels(map, () => cutoffNow);
   const hasBase = Boolean(map.getSource?.('openmaptiles'));
   // Solo el agua y el hielo siguen con el estilo: son rellenos y no dependen de la escala.
   const hidden = hasBase ? styleLayers.filter(l => l.source === 'openmaptiles' && (l.type === 'line' || l.type === 'symbol' || l.type === 'fill') && !/^(water$|landcover_(ice|glacier))/.test(l.id))
@@ -671,10 +697,20 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
   // En la ventana: un dedo o el ratón que se sueltan fuera del mapa también acaban el gesto.
   for (const ev of ['pointerup', 'pointercancel']) globalThis.addEventListener?.(ev, onUp);
 
+  // Un control pulsado manda sobre el gesto anterior, aunque siga su inercia o aún no se haya dado por acabado: se para (stop()
+  // cierra la inercia y los manejadores de MapLibre) y el encuadre del gesto se recoge AHORA, antes de aplicar el control; si se
+  // recogiera en el siguiente fotograma, pisaría el destino recién pedido. Sin esperas.
+  function endGesture() {
+    map.stop?.();
+    pointers.clear();
+    pan = null;
+    if (wasManual) { wasManual = false; adoptGesture(); }
+  }
   panel.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
     const cam = b.dataset.cam;
+    if (cam !== 'more') endGesture();
     if (b.dataset.view) applyView(b.dataset.view);
     else if (cam === 'reset') applyView(view);
     else if (cam === 'more') {
@@ -712,6 +748,7 @@ export async function enable3d({ map, ml, hero, state, advance = null, clock = {
     }
     cameraStep(t, p);
     syncLineWidths(p);
+    cutoffNow = labelCutoff({ zoom: map.getZoom(), lat: map.getCenter().lat, height: map.getContainer().clientHeight || 400, elevation: map.getCenterElevation?.() ?? 0 });
     // Sin nada que se mueva, MapLibre no vuelve a dibujar (ahorra batería).
     const key = p ? `${p.lat},${p.lon},${p.alt},${shownHeading}` : 'none';
     if (key !== lastDrawn) { lastDrawn = key; map.triggerRepaint(); }
