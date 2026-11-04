@@ -286,6 +286,58 @@ describe('modo 3D: un control pulsado gana al gesto anterior', () => {
   });
 });
 
+describe('modo 3D: los marcadores HTML de aeropuerto del 2D', () => {
+  // El CSS real sobre el DOM real: los marcadores y la etiqueta, donde los pone MapLibre (dentro del mapa).
+  const attach = () => {
+    const style = document.createElement('style');
+    style.textContent = readFileSync('css/style.css', 'utf8');
+    document.head.append(style);
+    const label = document.createElement('span');
+    label.className = 'map-label';
+    hero.append(label);
+    const inMap = document.getElementById('map');
+    for (const m of ctx.log.airports) inMap.append(m.el);
+    inMap.append(ctx.log.markers.at(-1).el);
+    return { style, label, nodes: ctx.log.airports.map(m => m.el), plane: ctx.log.markers.at(-1).el };
+  };
+  const shows = el => getComputedStyle(el).display !== 'none';
+
+  it('se ocultan solo en 3D y vuelven al salir, los mismos nodos y sin duplicarse, ciclo tras ciclo', async () => {
+    await setup3d();
+    await rm.setMode('2d');
+    const { style, label, nodes, plane } = attach();
+    expect(nodes).toHaveLength(2);
+    for (let i = 0; i < 3; i++) {
+      for (const el of [...nodes, plane, label]) expect(shows(el)).toBe(true); // 2D
+      await rm.setMode('3d');
+      expect(hero.classList.contains('is-3d')).toBe(true);
+      for (const el of [...nodes, plane, label]) expect(shows(el)).toBe(false); // 3D
+      await rm.setMode('2d');
+    }
+    for (const el of [...nodes, plane, label]) expect(shows(el)).toBe(true);
+    expect(ctx.log.airports).toHaveLength(2); // ninguno recreado
+    expect(document.querySelectorAll('.map-airport')).toHaveLength(2);
+    expect([...document.querySelectorAll('.map-airport')]).toEqual(nodes);
+    style.remove();
+  });
+
+  it('si el 3D no llega a arrancar, siguen visibles', async () => {
+    await setup3d();
+    await rm.setMode('2d');
+    const { style, nodes } = attach();
+    const addLayer = map.addLayer;
+    map.addLayer = l => { if (l.id === 'aircraft-3d') throw new Error('sin capa'); return addLayer.call(map, l); }; // falla la capa propia
+    expect(await rm.setMode('3d')).toBe('2d');
+    expect(hero.classList.contains('is-3d')).toBe(false);
+    for (const el of nodes) expect(shows(el)).toBe(true);
+    map.painter = { context: { gl: {} } }; // y sin WebGL 2
+    expect(await rm.setMode('3d')).toBe('2d');
+    expect(hero.classList.contains('is-3d')).toBe(false);
+    for (const el of nodes) expect(shows(el)).toBe(true);
+    style.remove();
+  });
+});
+
 describe('modo 3D: contexto geográfico y rendimiento', () => {
   it('ciudades, costa, fronteras y carreteras a los zooms de la cámara 3D; sin calles, comercios ni otras fuentes', () => {
     const { under, over } = contextLayers({ zc: 7 });

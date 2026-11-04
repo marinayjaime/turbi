@@ -139,6 +139,7 @@ Con la cámara a unos 100 m del avión y el suelo a ~11 km, MapLibre mide todo e
   3 km) y solo el código (`MAD`): el nombre completo perdía la colisión contra su ciudad. Pueden ponerse a un lado de su punto para
   convivir con ella, sin forzar solapes (`text-allow-overlap` se saltaría también el corte de distancia). Sin filtro de nivel alto:
   a 40-60 km su tesela es de nivel 9. OpenMapTiles no trae todos en todos los niveles (BCN no viene en su tesela de nivel 9).
+  Los marcadores HTML de origen y destino del 2D se ocultan en 3D con CSS (`.is-3d`): no respetan el corte de distancia.
 - **Líneas**: un ancho de N px en el plano del avión se ve ~100 veces más fino en el suelo. Las capas `map3d-*` compensan esa
   escala con una función exponencial del zoom (`groundWidthStops`), recalculada solo si cambia la altitud un 15 %.
 - **Capas del 3D** (`contextLayers`, de la misma fuente `openmaptiles`): agua y costa con más contraste, vegetación y zonas

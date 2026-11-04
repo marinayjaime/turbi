@@ -637,7 +637,8 @@ details.raw code { display: block; white-space: pre-wrap; word-break: break-word
 .map-hero.expanded .map-mode { top: calc(env(safe-area-inset-top) + 8px); }
 /* Modo 3D (js/map3d.js): el mapa y el avión. Ningún texto encima: controles flotantes y discretos, a la derecha el zoom y el
    giro (plegado), abajo las perspectivas en una sola fila. */
-.map-hero.is-3d .plane-marker, .map-hero.is-3d .map-label { display: none; }
+/* Los marcadores HTML de aeropuerto, tampoco: no respetan el corte de distancia (flotarían en el horizonte) y el 3D ya pone su código. */
+.map-hero.is-3d .plane-marker, .map-hero.is-3d .map-label, .map-hero.is-3d .map-airport { display: none; }
 .map3d-ui > :not(.sr-only) { position: absolute; z-index: 2; }
 .map3d-side { top: 54px; right: max(8px, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
 .map3d-more { display: flex; flex-direction: column; gap: 5px; }
